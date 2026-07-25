@@ -70,7 +70,7 @@ const EDICOES = [
 ];
 
 /* Planilha (Google Apps Script) que guarda os votos — vale para todos os anos */
-const API_URL = 'https://script.google.com/macros/s/AKfycbx_HwHNycDjcKfSsYfVm6j1JyLL0OXR0F8lNlG-sa-f4VYCJRWdSO2Y-CDngSUQEgfGfA/exec';
+const API_URL = 'https://script.google.com/macros/s/AKfycbwuwKpZ8XUWKHKlw3ZiPS-1HiWvt6hqwHAFtsLS10Rf_ToI3h_eIaDdXIY-ZlQcUuJLQg/exec';
 
 /* Nota máxima aceita nos formulários (mantenha igual ao MAX_RATING do Apps Script) */
 const NOTA_MAXIMA = 10;
