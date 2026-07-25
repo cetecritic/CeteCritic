@@ -4908,6 +4908,15 @@ async function paginaConfig(){
       <div class="cfg-msg" id="cfgNotifMsg"></div>
     </div>
 
+    <div class="cfg-group">
+      <h2>Sessão</h2>
+      <div class="cfg-row">
+        <div class="cfg-info"><div class="cfg-label">Sair da conta</div>
+          <div class="cfg-desc">Encerra a sessão neste aparelho. Seus dados continuam salvos — é só entrar de novo depois.</div></div>
+        <div class="cfg-ctrl"><button class="btn btn-ghost" id="cfgSair">Sair</button></div>
+      </div>
+    </div>
+
     <div class="cfg-group cfg-danger">
       <h2>Zona de perigo</h2>
       <div class="cfg-group-sub">Ação permanente.</div>
@@ -4956,7 +4965,13 @@ async function paginaConfig(){
     if(v){
       msg.textContent = 'Ativando…';
       const r = await ativarPush();
-      if(!r.ok){ if(el) el.checked = false; msg.textContent = r.error || 'não foi possível ativar'; return; }
+      if(!r.ok){
+        if(el) el.checked = false;
+        const motivo = r.error || 'não foi possível ativar';
+        msg.textContent = motivo;
+        alert('Push não ativou:\n\n' + motivo);   // TEMP: mostra o motivo no celular
+        return;
+      }
     } else {
       await desativarPush();
     }
@@ -4996,6 +5011,12 @@ async function paginaConfig(){
       })();
     }
   }
+
+  document.getElementById('cfgSair').addEventListener('click', () => {
+    if(!confirm('Sair da sua conta neste aparelho?')) return;
+    sairSessao();
+    location.href = BASE + 'index.html';
+  });
 
   document.getElementById('cfgExcluir').addEventListener('click', async () => {
     const msg = document.getElementById('cfgExcluirMsg');
