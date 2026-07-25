@@ -4,6 +4,9 @@
   ],
   "rewrites": [
     { "source": "/config.js", "destination": "/api/content?file=config" },
+    { "source": "/hall-dados.js", "destination": "/api/content?file=hall" },
+    { "source": "/perfil.js", "destination": "/api/content?file=perfil" },
+    { "source": "/home-dados.js", "destination": "/api/content?file=home" },
     { "source": "/:ano(\\d{4})/edicao.js", "destination": "/api/content?file=edicao&ano=:ano" },
     { "source": "/:ano(\\d{4})/noites/noite-:n(\\d+).js", "destination": "/api/content?file=noites&ano=:ano&noite=:n" }
   ]

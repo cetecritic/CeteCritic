@@ -121,6 +121,10 @@ async function handleGet(req, res) {
     return jsResp(res, js);
   }
 
+  if (q.file === 'hall') { const cfg = await lerConfig(); return jsResp(res, `/* gerado por /api/content (hall) */\nconst HALL = ${JSON.stringify(cfg.HALL || {})};\n`); }
+  if (q.file === 'perfil') { const cfg = await lerConfig(); return jsResp(res, `/* gerado por /api/content (perfil) */\nconst PERFIL = ${JSON.stringify(cfg.PERFIL || {})};\n`); }
+  if (q.file === 'home') { const cfg = await lerConfig(); return jsResp(res, `/* gerado por /api/content (home) */\nconst HOME_DADOS = ${JSON.stringify(cfg.HOME_DADOS || {})};\n`); }
+
   if (q.file === 'edicao') {
     const ano = Number(q.ano);
     const { data } = await sb.from('edicoes').select('*').eq('ano', ano).limit(1);

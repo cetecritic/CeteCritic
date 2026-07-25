@@ -125,39 +125,52 @@ async function criarNotif(usuario, tipo, id, titulo, corpo, url){
 }
 
 function codigo6(){ return String(Math.floor(100000 + Math.random() * 900000)); }
-async function enviarEmail2fa(to, usuario, code){
-  if(!process.env.RESEND_API_KEY || !process.env.RESEND_FROM) return;
-  const html = `<div style="font-family:Arial,Helvetica,sans-serif;max-width:480px;margin:0 auto;">
-    <div style="background:#6d28d9;color:#fff;padding:18px 22px;border-radius:12px 12px 0 0;font-weight:800;font-size:16px;">CETECritic · Código de acesso</div>
-    <div style="border:1px solid #ececf0;border-top:0;padding:26px 22px;border-radius:0 0 12px 12px;color:#222;">
-      <p style="margin:0 0 10px;">Olá, <b>${usuario}</b>!</p>
-      <p style="margin:0 0 6px;color:#444;">Use este código para entrar na sua conta. Ele é essencial para garantir a segurança da sua conta.</p>
-      <div style="background:#f3f3f6;border-radius:10px;text-align:center;font-size:34px;font-weight:800;letter-spacing:8px;padding:20px;margin:18px 0;color:#111;">${code}</div>
-      <p style="margin:0 0 6px;color:#666;">O código tem validade de <b>5 minutos</b>.</p>
-      <p style="margin:0;color:#888;font-size:13px;">Se não reconhece essa solicitação, ignore este e-mail — sua senha continua a mesma.</p>
+
+// molde do e-mail com a identidade do site: logo no topo, fundo escuro, amarelo
+// padrão (#f5c518) e o mesmo rodapé do site. `inner` é o miolo de cada e-mail.
+const RODAPE_EMAIL = 'Esse site não é filiado, ou mantém qualquer relação de forma oficial com nenhuma mantida da FUCS';
+function emailWrap(inner){
+  return `<div style="background:#0e0f12;margin:0;padding:16px 0;font-family:Arial,Helvetica,sans-serif;">
+    <div style="max-width:480px;margin:0 auto;">
+      <div style="text-align:center;padding:22px 20px 10px;">
+        <img src="${SITE_URL}/assets/logo.png" alt="CETECritic" width="140" style="display:inline-block;max-width:170px;height:auto;">
+      </div>
+      <div style="height:3px;background:#f5c518;margin:0 18px;border-radius:3px;"></div>
+      <div style="background:#17181c;border:1px solid #2c2e33;border-radius:12px;margin:16px 16px 0;padding:24px 22px;color:#eceef2;font-size:15px;line-height:1.55;">
+        ${inner}
+      </div>
+      <div style="background:#0e0f12;text-align:center;padding:22px 20px 30px;color:#9a9ea6;font-size:12px;line-height:1.7;">
+        <img src="${SITE_URL}/assets/logo-rodape.png" alt="" width="90" style="max-width:110px;height:auto;opacity:.85;margin-bottom:8px;"><br>
+        <div>${RODAPE_EMAIL}</div>
+        <div>Contato e contribuições: <a href="mailto:cetecritic@gmail.com" style="color:#f5c518;text-decoration:none;">cetecritic@gmail.com</a></div>
+        <div><a href="${SITE_URL}/termos.pdf" style="color:#f5c518;text-decoration:none;">Termos de Serviço e Política de Privacidade</a></div>
+      </div>
     </div></div>`;
+}
+async function enviarEmailResend(to, subject, inner){
+  if(!process.env.RESEND_API_KEY || !process.env.RESEND_FROM) return;
   try{
     await fetch('https://api.resend.com/emails', {
       method:'POST', headers:{ 'Authorization':'Bearer '+process.env.RESEND_API_KEY, 'Content-Type':'application/json' },
-      body: JSON.stringify({ from: process.env.RESEND_FROM, to, subject:'CETECritic — seu código de acesso', html })
+      body: JSON.stringify({ from: process.env.RESEND_FROM, to, subject, html: emailWrap(inner) })
     });
-  }catch(e){}
+  }catch(e){ /* cota/erro: silencioso */ }
+}
+async function enviarEmail2fa(to, usuario, code){
+  const inner = `<p style="margin:0 0 10px;">Olá, <b>${usuario}</b>!</p>
+    <p style="margin:0 0 6px;color:#b9bdc6;">Use este código para entrar na sua conta. Ele é essencial para garantir a segurança da sua conta.</p>
+    <div style="background:#0e0f12;border:1px solid #2c2e33;border-radius:10px;text-align:center;font-size:34px;font-weight:800;letter-spacing:8px;padding:20px;margin:18px 0;color:#f5c518;">${code}</div>
+    <p style="margin:0 0 6px;color:#9a9ea6;">O código tem validade de <b style="color:#eceef2;">5 minutos</b>.</p>
+    <p style="margin:0;color:#7e828b;font-size:13px;">Se não reconhece essa solicitação, ignore este e-mail — sua senha continua a mesma.</p>`;
+  await enviarEmailResend(to, 'CETECritic — seu código de acesso', inner);
 }
 async function enviarEmailReset(to, usuario, link){
-  if(!process.env.RESEND_API_KEY || !process.env.RESEND_FROM) return; // sem provedor: não envia
-  try{
-    await fetch('https://api.resend.com/emails', {
-      method:'POST',
-      headers:{ 'Authorization':'Bearer '+process.env.RESEND_API_KEY, 'Content-Type':'application/json' },
-      body: JSON.stringify({
-        from: process.env.RESEND_FROM, to,
-        subject: 'CETECritic — redefinir senha',
-        html: 'Olá, ' + usuario + '!<br><br>Recebemos um pedido para redefinir a senha da sua conta no CETECritic. ' +
-              'Clique no link abaixo (vale por 1 hora):<br><br><a href="'+link+'">'+link+'</a><br><br>' +
-              'Se não foi você, ignore este e-mail — sua senha continua a mesma.'
-      })
-    });
-  }catch(e){ /* estourou cota / erro: ainda responde genérico */ }
+  const inner = `<p style="margin:0 0 10px;">Olá, <b>${usuario}</b>!</p>
+    <p style="margin:0 0 14px;color:#b9bdc6;">Recebemos um pedido para redefinir a senha da sua conta no CETECritic. Clique no botão abaixo (o link vale por 1 hora):</p>
+    <div style="text-align:center;margin:18px 0;"><a href="${link}" style="display:inline-block;background:#f5c518;color:#0b0c0f;font-weight:800;text-decoration:none;padding:12px 26px;border-radius:10px;">Redefinir senha</a></div>
+    <p style="margin:0 0 6px;color:#7e828b;font-size:12px;word-break:break-all;">Ou copie este link: <a href="${link}" style="color:#f5c518;">${link}</a></p>
+    <p style="margin:8px 0 0;color:#7e828b;font-size:13px;">Se não foi você, ignore este e-mail — sua senha continua a mesma.</p>`;
+  await enviarEmailResend(to, 'CETECritic — redefinir senha', inner);
 }
 
 /* ==================================================================

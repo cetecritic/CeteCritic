@@ -35,13 +35,19 @@ function rodarJs(arquivo, contextoInicial) {
   const ctx = Object.assign({ NOITES: {}, __CAP__: {} }, contextoInicial || {});
   vm.createContext(ctx);
   const nomes = ['EDICOES','EDICAO_EM_DESTAQUE','SLOGAN_HOME','RODAPE','EMAIL_CONTATO',
-    'ANO_EDICAO_HISTORICA','ANO_VOTOS_ANTIGOS','COOLDOWN_MINUTOS','NOTA_MAXIMA','VAPID_PUBLIC_KEY','EDICAO'];
+    'ANO_EDICAO_HISTORICA','ANO_VOTOS_ANTIGOS','COOLDOWN_MINUTOS','NOTA_MAXIMA','VAPID_PUBLIC_KEY',
+    'EDICAO','HALL','PERFIL','HOME_DADOS'];
   const captura = '\n;try{__CAP__={' +
     nomes.map(n => `${n}:(typeof ${n}!=='undefined'?${n}:undefined)`).join(',') + '};}catch(e){}';
   vm.runInContext(code + captura, ctx, { filename: arquivo });
   return Object.assign({}, ctx.__CAP__, { NOITES: ctx.NOITES });
 }
 
+function lerArquivoOpcional(nome, chave) {
+  const p = path.join(raiz, nome);
+  if (!fs.existsSync(p)) return undefined;
+  try { return rodarJs(p)[chave]; } catch (e) { console.warn('  ! erro lendo', nome, e.message); return undefined; }
+}
 async function migrarConfig() {
   const ctx = rodarJs(path.join(raiz, 'config.js'));
   const dados = {
@@ -54,10 +60,14 @@ async function migrarConfig() {
     COOLDOWN_MINUTOS: ctx.COOLDOWN_MINUTOS,
     NOTA_MAXIMA: ctx.NOTA_MAXIMA,
     API_URL: '/api/db',
-    VAPID_PUBLIC_KEY: ctx.VAPID_PUBLIC_KEY
+    VAPID_PUBLIC_KEY: ctx.VAPID_PUBLIC_KEY,
+    // configs avançadas dos outros .js
+    HALL: lerArquivoOpcional('hall-dados.js', 'HALL') || {},
+    PERFIL: lerArquivoOpcional('perfil.js', 'PERFIL') || {},
+    HOME_DADOS: lerArquivoOpcional('home-dados.js', 'HOME_DADOS') || {}
   };
   await sb.from('config_site').upsert({ id: 1, dados }, { onConflict: 'id' });
-  console.log('config_site migrado.');
+  console.log('config_site migrado (incl. HALL / PERFIL / HOME_DADOS).');
   return ctx.EDICOES || [];
 }
 

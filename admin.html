@@ -76,6 +76,26 @@
       <div class="msg" id="cfgMsg"></div>
     </div>
 
+    <!-- HALL / AVANÇADO -->
+    <div class="card">
+      <h2>🏆 Hall da Fama &amp; configs avançadas</h2>
+      <div class="row3">
+        <div><label>Mín. de votos p/ aparecer no Hall</label><input id="hallMin" type="number"></div>
+        <div><label>Edições realizadas (texto)</label><input id="hallEdicoes" type="text"></div>
+        <div><label>Público estimado (texto)</label><input id="hallPublico" type="text"></div>
+      </div>
+      <div class="toolbar"><button id="btnSalvarHall">Salvar Hall</button></div>
+      <div class="msg" id="hallMsg"></div>
+      <details style="margin-top:14px;">
+        <summary style="cursor:pointer;color:var(--muted);font-size:13px;">Editar JSON avançado (Hall, Perfil, Home) — ordem das seções, badges manuais, curiosidades, XP, carimbos, linha do tempo…</summary>
+        <label style="margin-top:10px;">HALL (JSON)</label><textarea id="jsonHall" style="min-height:150px;font-family:monospace;font-size:12px;"></textarea>
+        <label>PERFIL (JSON)</label><textarea id="jsonPerfil" style="min-height:150px;font-family:monospace;font-size:12px;"></textarea>
+        <label>HOME_DADOS (JSON)</label><textarea id="jsonHome" style="min-height:150px;font-family:monospace;font-size:12px;"></textarea>
+        <div class="toolbar"><button id="btnSalvarJson">Salvar JSON avançado</button></div>
+        <div class="msg" id="jsonMsg"></div>
+      </details>
+    </div>
+
     <!-- EDIÇÕES -->
     <div class="card">
       <h2>🎬 Edições</h2>
@@ -208,7 +228,36 @@ async function carregarConfig(){
   $('cfgEmail').value = CFG.EMAIL_CONTATO || '';
   $('cfgSlogan').value = CFG.SLOGAN_HOME || '';
   $('cfgRodape').value = CFG.RODAPE || '';
+  carregarAvancado();
 }
+/* ---- Hall / avançado ---- */
+function carregarAvancado(){
+  const H = CFG.HALL || {}, P = CFG.PERFIL || {}, HD = CFG.HOME_DADOS || {};
+  $('hallMin').value = (H.minAvaliacoes != null) ? H.minAvaliacoes : '';
+  $('hallEdicoes').value = H.edicoesRealizadas || '';
+  $('hallPublico').value = H.publicoEstimado || '';
+  $('jsonHall').value = JSON.stringify(H, null, 2);
+  $('jsonPerfil').value = JSON.stringify(P, null, 2);
+  $('jsonHome').value = JSON.stringify(HD, null, 2);
+}
+async function salvarDados(dados, msgEl){
+  if(msgEl) msgEl.textContent = 'Salvando…';
+  const r = await post('salvarConfig', { dados });
+  if(r && r.ok){ CFG = dados; if(msgEl) msgEl.textContent = 'Salvo ✓'; carregarAvancado(); }
+  else if(msgEl) msgEl.textContent = 'Erro: ' + ((r&&r.error)||'');
+}
+document.addEventListener('click', ev => {
+  if(ev.target && ev.target.id === 'btnSalvarHall'){
+    const H = Object.assign({}, CFG.HALL || {}, { minAvaliacoes: Number($('hallMin').value) || 0, edicoesRealizadas: $('hallEdicoes').value.trim(), publicoEstimado: $('hallPublico').value.trim() });
+    salvarDados(Object.assign({}, CFG, { HALL: H }), $('hallMsg'));
+  }
+  if(ev.target && ev.target.id === 'btnSalvarJson'){
+    let H, P, HD;
+    try{ H = JSON.parse($('jsonHall').value || '{}'); P = JSON.parse($('jsonPerfil').value || '{}'); HD = JSON.parse($('jsonHome').value || '{}'); }
+    catch(e){ $('jsonMsg').textContent = 'JSON inválido: ' + e.message; return; }
+    salvarDados(Object.assign({}, CFG, { HALL: H, PERFIL: P, HOME_DADOS: HD }), $('jsonMsg'));
+  }
+});
 $('btnSalvarConfig').addEventListener('click', async () => {
   const dados = Object.assign({}, CFG, {
     EDICAO_EM_DESTAQUE: Number($('cfgDestaque').value) || null,
