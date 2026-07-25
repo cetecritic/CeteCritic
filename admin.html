@@ -301,7 +301,11 @@ function reduzirImg(file, maxLarg, q){
       const w = Math.round(img.width * escala), h = Math.round(img.height * escala);
       const cv = document.createElement('canvas'); cv.width = w; cv.height = h;
       cv.getContext('2d').drawImage(img, 0, 0, w, h);
-      try{ res(cv.toDataURL('image/jpeg', q)); }catch(e){ res(reader.result); }
+      // tenta WebP (comprime bem mais); se o navegador não gerar WebP, cai no JPEG
+      let out;
+      try{ out = cv.toDataURL('image/webp', q); if(out.indexOf('data:image/webp') !== 0) out = cv.toDataURL('image/jpeg', q); }
+      catch(e){ try{ out = cv.toDataURL('image/jpeg', q); }catch(e2){ out = reader.result; } }
+      res(out);
     }; img.onerror = () => res(reader.result); img.src = reader.result; };
     reader.onerror = () => rej(reader.error); reader.readAsDataURL(file);
   });
@@ -310,8 +314,9 @@ async function uploadImg(file, nome, msgEl){
   if(!file) return;
   if(msgEl) msgEl.textContent = 'Enviando imagem…';
   try{
-    const dataUrl = await reduzirImg(file, 1200, 0.85);
-    const r = await post('uploadImagem', { data: dataUrl, nome: nome + '.jpg', pasta: 'edicoes' });
+    const dataUrl = await reduzirImg(file, 1400, 0.8);
+    const ext = dataUrl.indexOf('data:image/webp') === 0 ? '.webp' : '.jpg';
+    const r = await post('uploadImagem', { data: dataUrl, nome: nome + ext, pasta: 'edicoes' });
     if(r && r.ok){ if(msgEl) msgEl.textContent = 'Enviada ✓'; return r.url; }
     if(msgEl) msgEl.textContent = 'Erro: ' + ((r&&r.error)||'');
   }catch(e){ if(msgEl) msgEl.textContent = 'Falha ao processar a imagem.'; }

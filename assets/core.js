@@ -396,6 +396,7 @@ async function apiPost(payload){
 }
 async function apiRegistrar(user, senha, email){ return apiPost({ action:'registrar', user, senha, email }); }
 async function apiLogin(user, senha){ return apiPost({ action:'login', user, senha }); }
+async function apiLogin2fa(user, code){ return apiPost({ action:'login2fa', user, code }); }
 async function apiEnviarPalpite(year, palpites){
   const s = usuarioLogado();
   if(!s) return { ok:false, error:'faça login' };
@@ -624,6 +625,14 @@ function htmlModalLogin(){
           <button type="button" id="loginEsqueciBtn">Esqueci a senha</button>
         </div>
       </div>
+      <div class="login-form" id="login2faWrap" style="display:none;">
+        <div class="modal-sub">Enviamos um código de 6 dígitos pro seu e-mail. Ele vale por 5 minutos.</div>
+        <label for="login2faCode">Código de acesso</label>
+        <input type="text" id="login2faCode" inputmode="numeric" maxlength="6" autocomplete="one-time-code" placeholder="000000" style="letter-spacing:8px; text-align:center; font-size:20px;">
+        <div class="login-erro" id="login2faErro"></div>
+        <button class="submit-btn" id="login2faSubmit">Confirmar código</button>
+        <div class="login-toggle"><button type="button" id="login2faVoltar">Voltar</button></div>
+      </div>
     </div>
   </div>`;
 }
@@ -645,6 +654,14 @@ function wireLogin(){
   const senha2Wrap = document.getElementById('loginSenha2Wrap');
   const inpEmail = document.getElementById('loginEmail');
   const emailWrap = document.getElementById('loginEmailWrap');
+  /* etapa de 2FA (código por e-mail) */
+  const formPrincipal = overlay.querySelector('.login-form');   // o primeiro .login-form = o formulário normal
+  const wrap2fa = document.getElementById('login2faWrap');
+  const inp2fa = document.getElementById('login2faCode');
+  const erro2fa = document.getElementById('login2faErro');
+  let pending2faUser = null;
+  function mostrar2fa(u){ pending2faUser = u; if(erro2fa) erro2fa.textContent = ''; if(formPrincipal) formPrincipal.style.display = 'none'; if(wrap2fa) wrap2fa.style.display = ''; if(submit) submit.disabled = false; if(inp2fa){ inp2fa.value = ''; setTimeout(() => inp2fa.focus(), 60); } }
+  function voltar2fa(){ pending2faUser = null; if(wrap2fa) wrap2fa.style.display = 'none'; if(formPrincipal) formPrincipal.style.display = ''; aplicarModo(); }
 
   function aplicarModo(){
     const ent = modo === 'login';
@@ -656,6 +673,8 @@ function wireLogin(){
     if(inpSenha2) inpSenha2.value = '';
     if(emailWrap) emailWrap.style.display = ent ? 'none' : 'block';      // e-mail opcional só ao criar conta
     if(inpEmail && ent) inpEmail.value = '';
+    if(wrap2fa) wrap2fa.style.display = 'none';                          // sempre volta pro formulário normal
+    if(formPrincipal) formPrincipal.style.display = '';
     const esq = document.getElementById('loginEsqueci');
     if(esq) esq.style.display = ent ? 'flex' : 'none';   // "esqueci a senha" só no login
     const tosWrap = document.getElementById('loginTosWrap');
@@ -708,6 +727,7 @@ function wireLogin(){
     erro.textContent = '';
     try{
       const r = modo === 'login' ? await apiLogin(user, senha) : await apiRegistrar(user, senha, email);
+      if(r && r.need2fa){ mostrar2fa(r.user); return; }   // conta com 2FA: vai pra etapa do código
       if(r && r.ok){
         salvarSessao(r.user, r.token, r.admin);
         location.reload();
@@ -721,6 +741,22 @@ function wireLogin(){
     submit.textContent = original;
   }
   submit.addEventListener('click', enviar);
+  /* etapa 2FA: confirmar código / voltar */
+  const btn2faVoltar = document.getElementById('login2faVoltar');
+  if(btn2faVoltar) btn2faVoltar.addEventListener('click', voltar2fa);
+  async function enviar2fa(){
+    const code = (inp2fa.value || '').trim();
+    if(code.length < 6){ erro2fa.textContent = 'Digite os 6 dígitos.'; return; }
+    erro2fa.textContent = 'Verificando…';
+    try{
+      const r = await apiLogin2fa(pending2faUser, code);
+      if(r && r.ok){ salvarSessao(r.user, r.token, r.admin); location.reload(); return; }
+      erro2fa.textContent = (r && r.error) ? r.error : 'Código inválido.';
+    }catch(e){ erro2fa.textContent = 'Falha de conexão. Tente de novo.'; }
+  }
+  const btn2faSubmit = document.getElementById('login2faSubmit');
+  if(btn2faSubmit) btn2faSubmit.addEventListener('click', enviar2fa);
+  if(inp2fa) inp2fa.addEventListener('keydown', ev => { if(ev.key === 'Enter') enviar2fa(); });
   const loginTosChk = document.getElementById('loginTos');
   if(loginTosChk) loginTosChk.addEventListener('change', () => {
     if(loginTosChk.checked){
@@ -836,10 +872,10 @@ function htmlSidebar(){
   h += '</div>'; /* fecha .sidebar-nav */
   /* barra fixa no rodapé do menu (desktop): Perfil + Configurações */
   h += `<div class="sidebar-account-bar">
-    <a href="${BASE}perfil.html"${PAGINA.tipo === 'perfil' ? ' class="active"' : ''}>👤 Perfil</a>
-    <a href="${BASE}notificacoes.html"${PAGINA.tipo === 'notif' ? ' class="active"' : ''}>🔔 Notif.<span class="notif-badge" id="notifBadgeBar" style="display:none;"></span></a>
-    <a href="${BASE}configuracoes.html"${PAGINA.tipo === 'config' ? ' class="active"' : ''}>⚙️ Config</a>
-    ${_sessAdmin ? `<a href="${BASE}admin.html"${PAGINA.tipo === 'admin' ? ' class="active"' : ''}>💻 Admin</a>` : ''}
+    <a href="${BASE}perfil.html"${PAGINA.tipo === 'perfil' ? ' class="active"' : ''} title="Perfil" aria-label="Perfil">👤</a>
+    <a href="${BASE}notificacoes.html"${PAGINA.tipo === 'notif' ? ' class="active"' : ''} title="Notificações" aria-label="Notificações">🔔<span class="notif-badge" id="notifBadgeBar" style="display:none;"></span></a>
+    <a href="${BASE}configuracoes.html"${PAGINA.tipo === 'config' ? ' class="active"' : ''} title="Configurações" aria-label="Configurações">⚙️</a>
+    ${_sessAdmin ? `<a href="${BASE}admin.html"${PAGINA.tipo === 'admin' ? ' class="active"' : ''} title="Painel admin" aria-label="Painel admin">💻</a>` : ''}
   </div>`;
   return h;
 }
@@ -4995,6 +5031,11 @@ async function paginaConfig(){
           <div class="cfg-desc">Tira você da busca e do "adicionar amigo". Seu perfil ainda abre por link direto. <</div></div>
         <div class="cfg-ctrl">${switchHtml('cfgPrivado', !!cfg.privado)}</div>
       </div>
+      <div class="cfg-row">
+        <div class="cfg-info"><div class="cfg-label">🔒 Verificação em duas etapas (2FA)</div>
+          <div class="cfg-desc">Ao entrar, além da senha pedimos um código enviado pro seu e-mail. Precisa ter um e-mail cadastrado acima.</div></div>
+        <div class="cfg-ctrl">${switchHtml('cfg2fa', !!cfg.twofa)}</div>
+      </div>
       <div class="cfg-msg" id="cfgContaMsg"></div>
     </div>
 
@@ -5058,6 +5099,15 @@ async function paginaConfig(){
     return salvarMerge(patch, document.getElementById('cfgContaMsg'));
   });
   wireSwitch('cfgPrivado', v => salvarMerge({ privado: v }, document.getElementById('cfgContaMsg')));
+  wireSwitch('cfg2fa', v => {
+    const msg = document.getElementById('cfgContaMsg');
+    if(v && !String(cfg.email || '').trim()){
+      msg.textContent = 'Cadastre um e-mail acima antes de ativar o 2FA.';
+      const el = document.getElementById('cfg2fa'); if(el) el.checked = false;
+      return;
+    }
+    return salvarMerge({ twofa: v }, msg);
+  });
 
   function salvarNotif(patch){
     const novoNotif = Object.assign({}, (cfg.notif || {}), patch);

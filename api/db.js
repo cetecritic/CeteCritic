@@ -124,6 +124,25 @@ async function criarNotif(usuario, tipo, id, titulo, corpo, url){
   return true;
 }
 
+function codigo6(){ return String(Math.floor(100000 + Math.random() * 900000)); }
+async function enviarEmail2fa(to, usuario, code){
+  if(!process.env.RESEND_API_KEY || !process.env.RESEND_FROM) return;
+  const html = `<div style="font-family:Arial,Helvetica,sans-serif;max-width:480px;margin:0 auto;">
+    <div style="background:#6d28d9;color:#fff;padding:18px 22px;border-radius:12px 12px 0 0;font-weight:800;font-size:16px;">CETECritic · Código de acesso</div>
+    <div style="border:1px solid #ececf0;border-top:0;padding:26px 22px;border-radius:0 0 12px 12px;color:#222;">
+      <p style="margin:0 0 10px;">Olá, <b>${usuario}</b>!</p>
+      <p style="margin:0 0 6px;color:#444;">Use este código para entrar na sua conta. Ele é essencial para garantir a segurança da sua conta.</p>
+      <div style="background:#f3f3f6;border-radius:10px;text-align:center;font-size:34px;font-weight:800;letter-spacing:8px;padding:20px;margin:18px 0;color:#111;">${code}</div>
+      <p style="margin:0 0 6px;color:#666;">O código tem validade de <b>5 minutos</b>.</p>
+      <p style="margin:0;color:#888;font-size:13px;">Se não reconhece essa solicitação, ignore este e-mail — sua senha continua a mesma.</p>
+    </div></div>`;
+  try{
+    await fetch('https://api.resend.com/emails', {
+      method:'POST', headers:{ 'Authorization':'Bearer '+process.env.RESEND_API_KEY, 'Content-Type':'application/json' },
+      body: JSON.stringify({ from: process.env.RESEND_FROM, to, subject:'CETECritic — seu código de acesso', html })
+    });
+  }catch(e){}
+}
 async function enviarEmailReset(to, usuario, link){
   if(!process.env.RESEND_API_KEY || !process.env.RESEND_FROM) return; // sem provedor: não envia
   try{
@@ -256,6 +275,33 @@ async function apiLogin(body){
     await sb.from('usuarios').update({ tentativas: tent }).eq('usuario', u.usuario);
     return { ok:false, error:'senha incorreta ('+(MAX_TENTATIVAS-tent)+' tentativa(s) restante(s))' };
   }
+  // senha certa: se a conta tem 2FA ligado e e-mail, manda o código e NÃO emite token ainda
+  const perfil = asObj(u.perfil);
+  if(perfil.twofa === true && String(perfil.email || '').trim()){
+    const code = codigo6();
+    await sb.from('login_codes').upsert({ usuario: u.usuario, code, exp: Date.now() + 5*60*1000, tentativas: 0 }, { onConflict: 'usuario' });
+    await enviarEmail2fa(String(perfil.email).trim(), u.usuario, code);
+    await sb.from('usuarios').update({ tentativas:0, lock_until:0 }).eq('usuario', u.usuario);
+    return { ok:false, need2fa:true, user:u.usuario };
+  }
+  const token = novoToken();
+  await sb.from('usuarios').update({ token, tentativas:0, lock_until:0 }).eq('usuario', u.usuario);
+  return { ok:true, user:u.usuario, token, admin: u.admin === true };
+}
+
+// segunda etapa: confere o código de 6 dígitos e só então emite o token
+async function apiLogin2fa(body){
+  const usuario = String(body.user||'').trim();
+  const code = String(body.code||'').trim();
+  const u = await acharUsuario(usuario);
+  if(!u) return { ok:false, error:'usuário não encontrado' };
+  const { data } = await sb.from('login_codes').select('*').ilike('usuario', usuario);
+  const row = (data||[]).find(r => norm(r.usuario) === norm(usuario));
+  if(!row) return { ok:false, error:'peça um novo código (entre de novo)' };
+  if((row.tentativas||0) >= 5){ await sb.from('login_codes').delete().eq('usuario', row.usuario); return { ok:false, error:'muitas tentativas — entre de novo' }; }
+  if(Date.now() > Number(row.exp)){ await sb.from('login_codes').delete().eq('usuario', row.usuario); return { ok:false, error:'código expirado — entre de novo' }; }
+  if(String(row.code) !== code){ await sb.from('login_codes').update({ tentativas:(row.tentativas||0)+1 }).eq('usuario', row.usuario); return { ok:false, error:'código incorreto' }; }
+  await sb.from('login_codes').delete().eq('usuario', row.usuario);
   const token = novoToken();
   await sb.from('usuarios').update({ token, tentativas:0, lock_until:0 }).eq('usuario', u.usuario);
   return { ok:true, user:u.usuario, token, admin: u.admin === true };
@@ -505,7 +551,7 @@ async function handlePost(req, res){
   body = body || {};
   const action = body.action ? String(body.action) : 'voto';
   const rotas = {
-    registrar: apiRegistrar, login: apiLogin, palpite: apiPalpite, perfil: apiPerfil,
+    registrar: apiRegistrar, login: apiLogin, login2fa: apiLogin2fa, palpite: apiPalpite, perfil: apiPerfil,
     visita: apiVisita, carimbo: apiCarimbo, reputacao: apiReputacao, deletarConta: apiDeletarConta,
     meuPerfil: apiMeuPerfil, salvarPush: apiSalvarPush, removerPush: apiRemoverPush,
     pedirReset: apiPedirReset, redefinirSenha: apiRedefinirSenha,

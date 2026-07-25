@@ -711,6 +711,14 @@ a.showcase-card:hover{ border-color: var(--gold); }
 .sf-row input, .sf-row select{ flex: 1 1 180px; background: var(--surface-2); border: 1.5px solid var(--border); border-radius: 6px; padding: 8px 10px; color: var(--text); font-family:'Inter',sans-serif; font-size: 13px; outline:none; }
 .sf-row input:focus, .sf-row select:focus{ border-color: var(--gold); }
 .showcase-form-actions{ display:flex; align-items:center; justify-content:flex-end; gap: 12px; margin-top: 10px; }
+/* no celular/PWA os destaques ficavam enormes (1 por linha) — encolhe p/ caberem 2+ */
+@media (max-width:860px){
+  .showcase-grid{ grid-template-columns: repeat(auto-fit, minmax(130px,1fr)); gap: 8px; margin-bottom: 16px; }
+  .showcase-card{ padding: 9px 10px; gap: 8px; border-radius: 9px; }
+  .sc-ico{ font-size: 18px; }
+  .sc-val{ font-size: 12px; }
+  .sc-lbl{ font-size: 9px; }
+}
 
 /* ---- carimbos ---- */
 .ajuda-btn{ width: 18px; height: 18px; border-radius: 50%; border:1px solid var(--border); background: var(--surface-2); color: var(--text-muted); font-size: 11px; font-weight: 800; cursor:pointer; line-height: 1; vertical-align: middle; }
