@@ -177,4 +177,3 @@ self.addEventListener('pushsubscriptionchange', event => {
     } catch (e) { /* na próxima visita o site tenta religar */ }
   })());
 });
- 
