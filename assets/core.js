@@ -44,7 +44,7 @@ function htmlBannerInstalar(id, comFechar){
       <img class="hib-icon" src="./assets/icon.jpg" alt="" onerror="this.remove()">
       <div class="hib-txt">
         <b>Tenha o CetecFestival na palma da sua mão</b>
-        <span class="hib-sub">Adicione nosso site à tela inicial</span>
+        <span class="hib-sub">Instalar o CETECritic. </b> Adicione à tela inicial e use como um app.</span>
       </div>
       <div class="hib-actions">
         <button class="hib-add" type="button" id="${id}Add">Adicionar</button>
@@ -129,12 +129,6 @@ function wireBannerInstalar(id, comFechar){
     promptEvt = ev;
     if(jaDispensou() || estaInstalado() || !document.body) return;
     estiloBanner();
-    const b = document.createElement('div');
-    b.className = 'pwa-banner';
-    b.innerHTML = `<img src="/assets/favicon.png" alt="" onerror="this.remove()">
-      <div class="pwa-txt"><b>Instalar o CETECritic</b>Adicione à tela inicial e use como um app.</div>
-      <button class="pwa-inst" type="button">Instalar</button>
-      <button class="pwa-x" type="button" aria-label="Fechar">✕</button>`;
     document.body.appendChild(b);
     b.querySelector('.pwa-inst').addEventListener('click', async () => {
       b.remove();
@@ -461,6 +455,15 @@ async function fetchUsuarios(){
 async function apiSalvarPush(sub){ const s = usuarioLogado(); if(!s) return { ok:false }; return apiPost({ action:'salvarPush', user:s.user, token:s.token, sub }); }
 async function apiRemoverPush(endpoint){ const s = usuarioLogado(); if(!s) return { ok:false }; return apiPost({ action:'removerPush', user:s.user, token:s.token, endpoint }); }
 
+/* ---- central de notificações: toda notificação push enviada também fica
+   guardada aqui, pra quem não viu (ou desativou o push) ver depois no site ---- */
+async function apiListarNotificacoes(){ const s = usuarioLogado(); if(!s) return { ok:false, notificacoes:[] }; return apiPost({ action:'listarNotificacoes', user:s.user, token:s.token }); }
+async function apiContarNotifNaoLidas(){ const s = usuarioLogado(); if(!s) return { ok:false, total:0 }; return apiPost({ action:'contarNotifNaoLidas', user:s.user, token:s.token }); }
+async function apiMarcarNotifLidas(ids){ const s = usuarioLogado(); if(!s) return { ok:false }; return apiPost({ action:'marcarNotifLidas', user:s.user, token:s.token, ids }); }
+/* o próprio usuário cria uma notificação pra si (badges, noites, votação, edições,
+   resultado do bolão — detectados no navegador). O servidor não duplica pelo id. */
+async function apiCriarNotif(tipo, id, titulo, corpo, url){ const s = usuarioLogado(); if(!s) return { ok:false }; return apiPost({ action:'criarNotif', user:s.user, token:s.token, tipo, id, titulo, corpo, url }); }
+
 /* ---- Push (F2): inscrição no navegador via VAPID ----
    A chave PÚBLICA pode ficar aqui (não é segredo). A privada vive só no Vercel. */
 const VAPID_PUBLIC_KEY = 'BJA227voh320nCYmkIt-zKa2j0wdlZO5n031Au6rW6ckq-6vuYjNWNNJ36rcnanwqKGRpIUCaPtla9Xx1t_2oOI';
@@ -717,6 +720,7 @@ function htmlSidebar(){
     <button class="nav-toggle" id="navToggle" aria-label="Abrir menu">☰</button>
     <div class="sidebar-quick">
       <a href="${BASE}perfil.html"${PAGINA.tipo === 'perfil' ? ' class="active"' : ''} title="Perfil" aria-label="Perfil">👤</a>
+      <a href="${BASE}notificacoes.html" class="notif-link${PAGINA.tipo === 'notif' ? ' active' : ''}" title="Notificações" aria-label="Notificações">🔔<span class="notif-badge" id="notifBadgeQuick" style="display:none;"></span></a>
       <a href="${BASE}configuracoes.html"${PAGINA.tipo === 'config' ? ' class="active"' : ''} title="Configurações" aria-label="Configurações">⚙️</a>
     </div>
   </div>
@@ -729,7 +733,8 @@ function htmlSidebar(){
     h += `<div class="nav-account">
       <a class="nav-link nav-parent nav-perfil${PAGINA.tipo === 'perfil' ? ' active' : ''}" href="${BASE}perfil.html"><span>👤 ${esc(sess.user)}</span></a>
       <button class="nav-link nav-sair" id="btnSair" type="button" title="Sair da conta">Sair</button>
-    </div>`;
+    </div>
+    <a class="nav-link nav-parent${PAGINA.tipo === 'notif' ? ' active' : ''}" href="${BASE}notificacoes.html">🔔 Notificações<span class="notif-badge" id="notifBadgeNav" style="display:none;"></span></a>`;
   } else {
     h += `<button class="nav-link nav-parent nav-entrar" id="btnEntrar" type="button">Entrar / Criar conta</button>`;
   }
@@ -797,6 +802,7 @@ function htmlSidebar(){
   /* barra fixa no rodapé do menu (desktop): Perfil + Configurações */
   h += `<div class="sidebar-account-bar">
     <a href="${BASE}perfil.html"${PAGINA.tipo === 'perfil' ? ' class="active"' : ''}>👤 Perfil</a>
+    <a href="${BASE}notificacoes.html"${PAGINA.tipo === 'notif' ? ' class="active"' : ''}>🔔 Notif.<span class="notif-badge" id="notifBadgeBar" style="display:none;"></span></a>
     <a href="${BASE}configuracoes.html"${PAGINA.tipo === 'config' ? ' class="active"' : ''}>⚙️ Config</a>
   </div>`;
   return h;
@@ -820,6 +826,201 @@ function htmlModalMonte(){
       <div class="year-pick-options">${opcoes}</div>
     </div>
   </div>`;
+}
+
+/* atualiza a bolinha de "não lidas" no sino (topo, menu principal e barra fixa) —
+   chamada em toda página (montarShell) e de novo sempre que algo é marcado como lida */
+async function atualizarBadgeNotificacoes(){
+  const sess = usuarioLogado();
+  const badges = ['notifBadgeQuick', 'notifBadgeNav', 'notifBadgeBar']
+    .map(id => document.getElementById(id)).filter(Boolean);
+  if(!badges.length) return;
+  if(!sess){ badges.forEach(b => b.style.display = 'none'); return; }
+  const r = await apiContarNotifNaoLidas();
+  const total = (r && r.ok && typeof r.total === 'number') ? r.total : 0;
+  badges.forEach(b => {
+    if(total > 0){ b.textContent = total > 9 ? '9+' : String(total); b.style.display = ''; }
+    else { b.style.display = 'none'; }
+  });
+}
+
+/* =====================================================================
+   NOTIFICAÇÕES — banner animado + detecção de novidades
+   =====================================================================
+   - mostrarNotifBanner: um card desliza do TOPO (mesmo espírito do banner de
+     "adicionar à tela inicial"), fica 3s e some com fade.
+   - checarNotificacoesNovas: busca as não lidas e mostra banner das que ainda
+     não apareceram neste aparelho.
+   - checarEventosDaEdicao / checarEdicoesNovas: detectam no navegador quando
+     uma noite/votação abre, quando sai o resultado do bolão e quando entra uma
+     edição nova — e criam a notificação na conta (o servidor não duplica). */
+
+/* preferências de notificação em cache local (gravadas pela tela de Config).
+   Ausente = ligado; só desliga com valor === false. */
+function lerPrefsNotif(){
+  const s = usuarioLogado(); if(!s) return {};
+  try{ return JSON.parse(localStorage.getItem('cetec-notifprefs-' + s.user) || '{}') || {}; }
+  catch(e){ return {}; }
+}
+function salvarPrefsNotifCache(user, notif){
+  try{ localStorage.setItem('cetec-notifprefs-' + user, JSON.stringify(notif || {})); }catch(e){}
+}
+function notifTipoLigado(tipo){ return lerPrefsNotif()[tipo] !== false; }
+
+/* marca localmente um id como "já apareceu em banner" (não mexe no lido/servidor) */
+function marcarNotifVistaLocal(id){
+  const s = usuarioLogado(); if(!s) return;
+  const key = 'cetec-notif-vistas-' + s.user;
+  let v = []; try{ v = JSON.parse(localStorage.getItem(key) || '[]'); }catch(e){ v = []; }
+  if(v.indexOf(String(id)) < 0){ v.push(String(id)); try{ localStorage.setItem(key, JSON.stringify(v.slice(-300))); }catch(e){} }
+}
+
+function mostrarNotifBanner(n){
+  if(!n || (!n.titulo && !n.corpo)) return;
+  let host = document.getElementById('notifToastHost');
+  if(!host){ host = document.createElement('div'); host.id = 'notifToastHost'; host.className = 'notif-toast-host'; document.body.appendChild(host); }
+  const el = document.createElement('div');
+  el.className = 'notif-toast';
+  el.innerHTML = `<span class="notif-toast-ico">🔔</span>
+    <span class="notif-toast-txt"><b>${esc(n.titulo || 'Notificação')}</b>${n.corpo ? `<span>${esc(n.corpo)}</span>` : ''}</span>
+    <button class="notif-toast-x" type="button" aria-label="Fechar">✕</button>`;
+  if(n.url){ el.classList.add('clicavel'); }
+  host.appendChild(el);
+  requestAnimationFrame(() => el.classList.add('show'));
+  let saiu = false;
+  const sair = () => { if(saiu) return; saiu = true; el.classList.remove('show'); el.classList.add('hide'); setTimeout(() => el.remove(), 420); };
+  el.querySelector('.notif-toast-x').addEventListener('click', ev => { ev.stopPropagation(); sair(); });
+  if(n.url) el.addEventListener('click', () => { location.href = n.url; });
+  setTimeout(sair, 3000);   // 3s e some (fade out)
+}
+
+async function checarNotificacoesNovas(){
+  const s = usuarioLogado(); if(!s) return;
+  const r = await apiListarNotificacoes();
+  if(!r || !r.ok || !Array.isArray(r.notificacoes)) return;
+  const key = 'cetec-notif-vistas-' + s.user;
+  let vistas = []; try{ vistas = JSON.parse(localStorage.getItem(key) || '[]'); }catch(e){ vistas = []; }
+  const novas = r.notificacoes.filter(n => !n.lida && vistas.indexOf(String(n.id)) < 0);
+  if(!novas.length) return;
+  /* mostra no máx. 3 (das mais antigas p/ as mais novas, uma após a outra) */
+  novas.slice(0, 3).reverse().forEach((n, i) => setTimeout(() => mostrarNotifBanner(n), i * 700));
+  const todas = vistas.concat(novas.map(n => String(n.id)));
+  try{ localStorage.setItem(key, JSON.stringify(todas.slice(-300))); }catch(e){}
+}
+
+/* cria a notificação só uma vez por aparelho (guarda os ids já disparados);
+   o servidor também dedupe pelo id, então nunca duplica de verdade. */
+async function criarNotifSeNova(id, tipo, titulo, corpo, url){
+  const s = usuarioLogado(); if(!s) return;
+  if(!notifTipoLigado(tipo)) return;
+  const key = 'cetec-notif-fired-' + s.user;
+  let fired = []; try{ fired = JSON.parse(localStorage.getItem(key) || '[]'); }catch(e){ fired = []; }
+  if(fired.indexOf(id) >= 0) return;
+  fired.push(id);
+  try{ localStorage.setItem(key, JSON.stringify(fired.slice(-500))); }catch(e){}
+  await apiCriarNotif(tipo, id, titulo, corpo, url);
+}
+
+/* noites/votação/bolão: usa as datas do config/edição (relógio do aparelho — é
+   só aviso, não a trava de voto). Só roda em páginas que carregam a edição. */
+async function checarEventosDaEdicao(){
+  const s = usuarioLogado(); if(!s || !ANO) return;
+  const hoje = new Date();
+  const ini = INICIO || dataNoite(1);
+  if(ini && hoje >= ini){
+    await criarNotifSeNova('votacao:' + ANO, 'votacoes', '🗳️ Votação aberta',
+      'A votação do Cetec Festival ' + ANO + ' está aberta. Vote nas peças!', '/' + ANO + '/index.html');
+  }
+  for(let n = 1; n <= NUM_NOITES; n++){
+    const d = dataNoite(n);
+    if(d && hoje >= d){
+      await criarNotifSeNova('noite:' + ANO + ':' + n, 'noites', '🎭 Noite ' + n + ' liberada',
+        'A Noite ' + n + ' do Cetec Festival ' + ANO + ' já está no ar.', '/' + ANO + '/noite-' + n + '.html');
+    }
+  }
+  if(FIM_VOTACAO && hoje >= FIM_VOTACAO){
+    await criarNotifSeNova('bolao:' + ANO, 'bolao', '🔮 Resultado do bolão',
+      'A votação de ' + ANO + ' encerrou — veja como você foi no bolão!', '/' + ANO + '/index.html');
+  }
+}
+
+/* novas edições: compara EDICOES (config.js) com o que este usuário já conhecia.
+   Na primeira vez só memoriza (pra não notificar todas de uma vez). */
+async function checarEdicoesNovas(){
+  const s = usuarioLogado(); if(!s || typeof EDICOES === 'undefined') return;
+  const key = 'cetec-edicoes-conhecidas-' + s.user;
+  const atuais = EDICOES.map(e => e.ano);
+  let conhecidas = null;
+  try{ conhecidas = JSON.parse(localStorage.getItem(key) || 'null'); }catch(e){ conhecidas = null; }
+  if(!Array.isArray(conhecidas)){ try{ localStorage.setItem(key, JSON.stringify(atuais)); }catch(e){} return; }
+  const novas = atuais.filter(a => conhecidas.indexOf(a) < 0);
+  for(const ano of novas){
+    const ed = EDICOES.find(e => e.ano === ano);
+    const url = (ed && ed.emBreve) ? ('/em-breve.html?ano=' + ano) : ('/' + ano + '/index.html');
+    await criarNotifSeNova('edicao:' + ano, 'edicoes', '🎬 Nova edição',
+      'O Cetec Festival ' + ano + ' entrou no ar. Dá uma olhada!', url);
+  }
+  try{ localStorage.setItem(key, JSON.stringify(atuais)); }catch(e){}
+}
+
+/* badges recém-desbloqueadas: compara o catálogo atual com o que estava
+   guardado. Na 1ª vez só memoriza. Notifica E mostra o banner na hora. */
+function detectarBadgesNovas(cat){
+  const s = usuarioLogado(); if(!s || !Array.isArray(cat)) return;
+  const key = 'cetec-badges-' + s.user;
+  const desbloqueadas = cat.filter(b => b.unlocked).map(b => b.titulo);
+  let antes = null;
+  try{ antes = JSON.parse(localStorage.getItem(key) || 'null'); }catch(e){ antes = null; }
+  if(!Array.isArray(antes)){ try{ localStorage.setItem(key, JSON.stringify(desbloqueadas)); }catch(e){} return; }
+  const novas = desbloqueadas.filter(t => antes.indexOf(t) < 0);
+  novas.forEach(t => {
+    const b = cat.find(x => x.titulo === t);
+    const id = 'badge:' + t;
+    criarNotifSeNova(id, 'badges', '🏅 Nova badge!', 'Você desbloqueou a badge "' + t + '".', '/perfil.html');
+    if(notifTipoLigado('badges')){
+      mostrarNotifBanner({ titulo: '🏅 Nova badge: ' + t, corpo: (b && b.texto) || '', url: '/perfil.html' });
+      marcarNotifVistaLocal(id);   // já mostrada — não repetir no próximo carregamento
+    }
+  });
+  try{ localStorage.setItem(key, JSON.stringify(desbloqueadas)); }catch(e){}
+}
+
+/* posição no Hall da Fama (ranking de reputação): avisa quando o usuário ENTRA
+   no ranking ou MUDA de posição. Recebe o ranking completo do servidor.
+   Guarda a última posição conhecida por aparelho (0 = fora do ranking); a 1ª
+   vez só memoriza, pra não disparar no primeiro acesso de quem já está lá. */
+function detectarPosicaoHall(rk){
+  const s = usuarioLogado(); if(!s) return;
+  const ranked = (rk || []).filter(x => Number(x.rep) > 0);
+  const meu = s.user.trim().toLowerCase();
+  const idx = ranked.findIndex(x => String(x.user).trim().toLowerCase() === meu);
+  const pos = idx < 0 ? 0 : idx + 1;   // 0 = fora do ranking (ou anônimo/sem match)
+  const key = 'cetec-hallpos-' + s.user;
+  let antes = null;
+  try{ const raw = localStorage.getItem(key); antes = (raw === null) ? null : JSON.parse(raw); }catch(e){ antes = null; }
+  if(antes === null){ try{ localStorage.setItem(key, JSON.stringify(pos)); }catch(e){} return; }  // baseline
+  if(antes === pos) return;                         // nada mudou
+  try{ localStorage.setItem(key, JSON.stringify(pos)); }catch(e){}
+  if(pos === 0) return;                             // saiu do ranking — não avisa
+  if(!notifTipoLigado('hall')) return;
+  let titulo, corpo;
+  if(antes === 0){ titulo = '🏆 Você entrou no Hall da Fama!'; corpo = 'Você estreou no ranking de reputação, em ' + pos + 'º lugar.'; }
+  else if(pos < antes){ titulo = '🏆 Você subiu no Hall da Fama!'; corpo = 'De ' + antes + 'º para ' + pos + 'º no ranking de reputação.'; }
+  else { titulo = '📊 Você mudou de posição no Hall da Fama'; corpo = 'De ' + antes + 'º para ' + pos + 'º no ranking de reputação.'; }
+  const nid = 'hall:' + antes + '->' + pos;
+  apiCriarNotif('hall', nid, titulo, corpo, '/hall.html');
+  mostrarNotifBanner({ titulo, corpo, url: '/hall.html' });
+  marcarNotifVistaLocal(nid);
+}
+
+/* orquestra tudo em segundo plano (não trava a renderização da página) */
+function checarNotificacoes(){
+  if(!usuarioLogado()) return;
+  (async () => {
+    try{ await checarEventosDaEdicao(); }catch(e){}
+    try{ await checarEdicoesNovas(); }catch(e){}
+    try{ await checarNotificacoesNovas(); }catch(e){}
+  })();
 }
 
 function montarShell(conteudo){
@@ -894,6 +1095,9 @@ function montarShell(conteudo){
   });
   window.addEventListener('resize', aplicarEstadoMenu);
   aplicarEstadoMenu();
+
+  atualizarBadgeNotificacoes();
+  checarNotificacoes();   // banner de novidades + detecção de noites/edições/bolão
 
   /* ---- aviso de edição histórica (anos <= ANO_EDICAO_HISTORICA) ----
      aparece 1x por sessão para cada ano histórico visitado */
@@ -1289,6 +1493,62 @@ async function baixarImagem(areaId, nomeArquivo, btn){
   }
 }
 
+/* ---------------------- escolha de escopo antes de compartilhar (página "Monte o seu") ----------------------
+   Pergunta se a pessoa quer compartilhar a nota do festival inteiro, de uma
+   noite específica ou de um episódio específico. Resolve com
+   { tipo:'festival' } | { tipo:'noite', valor:N } | { tipo:'episodio', valor:N },
+   ou null se cancelou. */
+function abrirEscolhaEscopo(numNoites, maxEps){
+  return new Promise(resolve => {
+    let noiteOpts = '';
+    for(let s = 1; s <= numNoites; s++) noiteOpts += `<option value="${s}">Noite ${s}</option>`;
+    let epOpts = '';
+    for(let e = 1; e <= maxEps; e++) epOpts += `<option value="${e}">Episódio ${e}</option>`;
+
+    const overlay = document.createElement('div');
+    overlay.className = 'share-overlay';
+    overlay.innerHTML = `
+      <div class="share-modal" style="max-width: 340px;">
+        <div class="noite-card escopo-card" style="width:100%;">
+          <h2 style="margin:0 0 4px;">Compartilhar nota de…</h2>
+          <div class="cfg-group-sub" style="margin-bottom:14px;">Escolha o que essa nota representa.</div>
+          <div class="escopo-opcoes">
+            <label class="escopo-opt"><input type="radio" name="escopoShare" value="festival" checked> 🎪 O festival inteiro</label>
+            <label class="escopo-opt"><input type="radio" name="escopoShare" value="noite"> 🌙 Uma noite específica</label>
+            <select id="escopoNoiteSel" class="escopo-select" style="display:none;">${noiteOpts}</select>
+            <label class="escopo-opt"><input type="radio" name="escopoShare" value="episodio"> 🎬 Um episódio específico</label>
+            <select id="escopoEpSel" class="escopo-select" style="display:none;">${epOpts}</select>
+          </div>
+          <div class="share-actions" style="margin-top:16px; justify-content:flex-end;">
+            <button class="btn btn-ghost" id="escopoCancelar">Cancelar</button>
+            <button class="btn btn-solid" id="escopoConfirmar">Compartilhar</button>
+          </div>
+        </div>
+      </div>`;
+    document.body.appendChild(overlay);
+
+    const radios = overlay.querySelectorAll('input[name="escopoShare"]');
+    const selNoite = overlay.querySelector('#escopoNoiteSel');
+    const selEp = overlay.querySelector('#escopoEpSel');
+    function atualizarSelects(){
+      const v = overlay.querySelector('input[name="escopoShare"]:checked').value;
+      selNoite.style.display = (v === 'noite') ? '' : 'none';
+      selEp.style.display = (v === 'episodio') ? '' : 'none';
+    }
+    radios.forEach(r => r.addEventListener('change', atualizarSelects));
+
+    const fechar = resultado => { overlay.remove(); resolve(resultado); };
+    overlay.addEventListener('click', ev => { if(ev.target === overlay) fechar(null); });
+    overlay.querySelector('#escopoCancelar').addEventListener('click', () => fechar(null));
+    overlay.querySelector('#escopoConfirmar').addEventListener('click', () => {
+      const v = overlay.querySelector('input[name="escopoShare"]:checked').value;
+      if(v === 'noite') fechar({ tipo: 'noite', valor: Number(selNoite.value) });
+      else if(v === 'episodio') fechar({ tipo: 'episodio', valor: Number(selEp.value) });
+      else fechar({ tipo: 'festival' });
+    });
+  });
+}
+
 /* ---------------------- cartão compartilhável (story estilo Letterboxd) ----------------------
    Gera um card vertical (pôster + título + nota em estrelas + marca CETECritic)
    pronto pra postar no story do Insta. Usado nas peças e nas edições. */
@@ -1348,7 +1608,11 @@ function abrirCompartilhamento(opts){
   async function gerarBlob(){
     await garantirHtml2Canvas();
     await aguardarImagens(card);
-    const canvas = await html2canvas(card, { backgroundColor: '#0e0f12', scale: 3, useCORS: true, imageTimeout: 15000 });
+    /* backgroundColor: null deixa o canto de fora do card (fora do border-radius)
+       transparente na imagem exportada — com uma cor sólida aqui, o html2canvas
+       pinta o retângulo inteiro e as bordas arredondadas do card "somem" no PNG
+       baixado/compartilhado, mesmo aparecendo certinho na tela. */
+    const canvas = await html2canvas(card, { backgroundColor: null, scale: 3, useCORS: true, imageTimeout: 15000 });
     return await new Promise(res => canvas.toBlob(res, 'image/png'));
   }
   bBaixar.addEventListener('click', async () => {
@@ -2316,13 +2580,40 @@ function paginaMonte(){
   document.getElementById('downloadCustomBtn').addEventListener('click', ev =>
     baixarImagem('custom-capture-area', `Meu_Cetec_Festival_${ANO}.png`, ev.currentTarget));
 
-  /* compartilhar a MÉDIA personalizada que a pessoa montou (card estilo story) */
-  document.getElementById('shareCustomBtn').addEventListener('click', () => {
-    const vals = Object.values(customValues).map(Number).filter(v => !isNaN(v));
+  /* compartilhar a MÉDIA personalizada que a pessoa montou (card estilo story) —
+     antes, pergunta se é a nota do festival inteiro, de uma noite específica
+     ou de um episódio específico. */
+  document.getElementById('shareCustomBtn').addEventListener('click', async () => {
+    const escolha = await abrirEscolhaEscopo(NUM_NOITES, MAX_EPS);
+    if(!escolha) return;
+
+    let vals, sub;
+    if(escolha.tipo === 'noite'){
+      const s = escolha.valor;
+      vals = [];
+      for(let e = 1; e <= epsDaNoite(s); e++){
+        const v = customValues[`s${s}e${e}`];
+        if(v !== undefined) vals.push(v);
+      }
+      sub = `Noite ${s} · Cetec Festival ${ANO}`;
+    } else if(escolha.tipo === 'episodio'){
+      const e = escolha.valor;
+      vals = [];
+      for(let s = 1; s <= NUM_NOITES; s++){
+        if(e > epsDaNoite(s)) continue;
+        const v = customValues[`s${s}e${e}`];
+        if(v !== undefined) vals.push(v);
+      }
+      sub = `Episódio ${e} · Cetec Festival ${ANO}`;
+    } else {
+      vals = Object.values(customValues).map(Number).filter(v => !isNaN(v));
+      sub = `Cetec Festival ${ANO}`;
+    }
+
     abrirCompartilhamento({
       poster: posterImg.src || posterPadrao,
       titulo: `Meu ${ED.titulo}`,
-      sub: `Cetec Festival ${ANO}`,
+      sub,
       nota: media(vals),
       legenda: 'Minha média no CETECritic',
       arquivo: `Meu_Cetec_Festival_${ANO}.png`
@@ -2457,6 +2748,7 @@ async function paginaHall(){
       const box = document.getElementById('topReputacao');
       if(!box) return;
       const rk = await fetchRankingReputacao();
+      detectarPosicaoHall(rk);   // avisa se o usuário entrou/mudou de posição no Hall
       const lista = rk.filter(x => Number(x.rep) > 0).slice(0, NREP);
       if(!lista.length){ box.innerHTML = '<div class="empty-note">Ainda ninguém recebeu votos de reputação. Vote nos perfis pra começar o ranking!</div>'; return; }
       box.innerHTML = `<div class="record-list">${lista.map((x, i) => {
@@ -3880,6 +4172,7 @@ async function paginaPerfil(){
     };
     const cat = catalogoBadges(ctx);
     const nUnlocked = cat.filter(b => b.unlocked).length;
+    if(ehMeu) detectarBadgesNovas(cat);   // avisa badges recém-desbloqueadas (só no seu perfil)
     /* preview: sorteia entre as DESBLOQUEADAS; só completa com bloqueadas se faltar */
     if(previewTitulos === null){
       const unl = cat.filter(b => b.unlocked).sort(() => Math.random() - 0.5);
@@ -4367,6 +4660,98 @@ async function paginaBusca(){
 }
 
 /* =====================================================================
+   PÁGINA: NOTIFICAÇÕES (notificacoes.html)
+   =====================================================================
+   Central de notificações: toda vez que um push é enviado pro usuário, o
+   backend também guarda um registro aqui — assim quem não viu o push (ou
+   desativou nas Configurações) ainda consegue ver depois no site. */
+function formatarDataNotif(iso){
+  try{
+    const d = new Date(iso);
+    if(isNaN(d.getTime())) return '';
+    return d.toLocaleDateString('pt-BR', { day:'2-digit', month:'2-digit' }) + ' às ' +
+      d.toLocaleTimeString('pt-BR', { hour:'2-digit', minute:'2-digit' });
+  }catch(e){ return ''; }
+}
+
+async function paginaNotificacoes(){
+  document.title = 'Notificações — CETECritic';
+  const sess = usuarioLogado();
+
+  if(!sess){
+    montarShell(`
+      <div class="perfil-head"><h1>🔔 Notificações</h1></div>
+      <div class="noite-card" style="text-align:center;">
+        <div class="perfil-vazio">Entre na sua conta para ver suas notificações.</div>
+        <button class="btn btn-solid" id="notifEntrar">Entrar / Criar conta</button>
+      </div>`);
+    const b = document.getElementById('notifEntrar');
+    if(b) b.addEventListener('click', () => { const e = document.getElementById('btnEntrar'); if(e) e.click(); });
+    return;
+  }
+
+  montarShell(`
+    <div class="perfil-head">
+      <h1>🔔 Notificações</h1>
+      <div class="perfil-actions"><button class="btn btn-ghost" id="notifMarcarTodas" style="display:none;" title="Zera a bolinha do sino sem apagar o histórico">🧹 Limpar</button></div>
+    </div>
+    <div id="notifBox"><div class="empty-note">Carregando…</div></div>`);
+
+  const box = document.getElementById('notifBox');
+  const btnTodas = document.getElementById('notifMarcarTodas');
+  let notifs = [];
+
+  function render(){
+    const naoLidas = notifs.filter(n => !n.lida).length;
+    btnTodas.style.display = naoLidas > 0 ? '' : 'none';
+
+    if(!notifs.length){
+      box.innerHTML = '<div class="empty-note">Nenhuma notificação por enquanto. Quando algo importante rolar — uma noite abrir, resultados saírem etc — aparece aqui, além do push (se estiver ativado nas Configurações).</div>';
+      return;
+    }
+    const ordenadas = notifs.slice().sort((a, b) => new Date(b.criadoEm) - new Date(a.criadoEm));
+    box.innerHTML = ordenadas.map(n => `
+      <a class="notif-item${n.lida ? '' : ' notif-nao-lida'}" href="${n.url ? esc(n.url) : '#'}" data-id="${esc(String(n.id))}">
+        <span class="notif-dot"></span>
+        <span class="notif-item-body">
+          <span class="notif-item-title">${esc(n.titulo || '')}</span>
+          ${n.corpo ? `<span class="notif-item-corpo">${esc(n.corpo)}</span>` : ''}
+          <span class="notif-item-data">${formatarDataNotif(n.criadoEm)}</span>
+        </span>
+      </a>`).join('');
+  }
+
+  box.addEventListener('click', ev => {
+    const item = ev.target.closest('.notif-item');
+    if(!item) return;
+    const id = item.dataset.id;
+    const n = notifs.find(x => String(x.id) === id);
+    if(!n || !n.url) ev.preventDefault();
+    if(n && !n.lida){
+      n.lida = true;
+      item.classList.remove('notif-nao-lida');
+      btnTodas.style.display = notifs.some(x => !x.lida) ? '' : 'none';
+      apiMarcarNotifLidas([id]);
+      atualizarBadgeNotificacoes();
+    }
+  });
+
+  btnTodas.addEventListener('click', async () => {
+    const ids = notifs.filter(n => !n.lida).map(n => n.id);
+    if(!ids.length) return;
+    notifs.forEach(n => n.lida = true);
+    render();
+    atualizarBadgeNotificacoes();
+    await apiMarcarNotifLidas(ids);
+  });
+
+  const r = await apiListarNotificacoes();
+  notifs = (r && r.ok && Array.isArray(r.notificacoes)) ? r.notificacoes : [];
+  render();
+  atualizarBadgeNotificacoes();
+}
+
+/* =====================================================================
    PÁGINA: CONFIGURAÇÕES (configuracoes.html)
    =====================================================================
    Preferências ficam no JSON 'perfil' (mesma ação já existente) — então
@@ -4436,6 +4821,20 @@ async function paginaConfig(){
   const meu = await apiMeuPerfil();
   let cfg = (meu && meu.ok && meu.perfil && typeof meu.perfil === 'object') ? meu.perfil : {};
   const notif = (cfg.notif && typeof cfg.notif === 'object') ? cfg.notif : {};
+  salvarPrefsNotifCache(sess.user, notif);   // cache local p/ a detecção de eventos no navegador
+
+  /* tipos que a pessoa liga/desliga individualmente (tudo ligado por padrão) */
+  const TIPOS_NOTIF = [
+    ['badges',   '🏅 Badges novas',        'Quando você desbloqueia uma nova conquista.'],
+    ['amigos',   '🤝 Amigos',              'Quando alguém adiciona você como amigo.'],
+    ['visitas',  '👀 Visitas ao perfil',   'Quando alguém visita o seu perfil.'],
+    ['carimbos', '📮 Carimbos',            'Quando você recebe um carimbo de outra pessoa.'],
+    ['bolao',    '🔮 Resultado do bolão',  'Quando sai o resultado do bolão de uma edição.'],
+    ['hall',     '🏆 Hall da Fama',        'Quando você entra ou muda de posição no ranking de reputação.'],
+    ['noites',   '🎭 Noites novas',        'Quando uma noite do festival é liberada.'],
+    ['votacoes', '🗳️ Abertura de votações','Quando a votação de uma edição abre.'],
+    ['edicoes',  '🎬 Novas edições',       'Quando uma edição nova entra no ar.']
+  ];
 
   box.innerHTML = `
     <div class="cfg-group">
@@ -4466,17 +4865,18 @@ async function paginaConfig(){
 
     <div class="cfg-group">
       <h2>Notificações</h2>
-      <div class="cfg-group-sub">Escolha o que você quer receber. </div>
+      <div class="cfg-group-sub">Avisos no aparelho quando algo importante rolar. </div>
       <div class="cfg-row">
         <div class="cfg-info"><div class="cfg-label">Notificações push</div>
-          <div class="cfg-desc">Avisos no aparelho quando uma noite abre, resultados saem etc. No iPhone, só depois de instalar o app na tela inicial.</div></div>
-        <div class="cfg-ctrl">${switchHtml('cfgPush', !!notif.push)}</div>
+          <div class="cfg-desc">Avisos no aparelho quando uma noite abre, resultados saem etc. No iPhone, só depois de instalar o app na tela inicial. Todas ficam guardadas na sua <a href="${BASE}notificacoes.html" style="color:var(--gold);">central de notificações 🔔</a> também.</div></div>
+        <div class="cfg-ctrl">${switchHtml('cfgPush', notif.push !== false)}</div>
       </div>
+      <div class="cfg-group-sub" style="margin-top:14px;">Escolha o que você quer receber (vale para a central 🔔 e para o push):</div>
+      ${TIPOS_NOTIF.map(([t, lab, desc]) => `
       <div class="cfg-row">
-        <div class="cfg-info"><div class="cfg-label">E-mail de novidades</div>
-          <div class="cfg-desc">Resumo por e-mail quando um festival novo entra no ar. Precisa de um e-mail cadastrado acima.</div></div>
-        <div class="cfg-ctrl">${switchHtml('cfgEmailNews', !!notif.email)}</div>
-      </div>
+        <div class="cfg-info"><div class="cfg-label">${lab}</div><div class="cfg-desc">${desc}</div></div>
+        <div class="cfg-ctrl">${switchHtml('cfgNotif_' + t, notif[t] !== false)}</div>
+      </div>`).join('')}
       <div class="cfg-msg" id="cfgNotifMsg"></div>
     </div>
 
@@ -4517,8 +4917,11 @@ async function paginaConfig(){
 
   function salvarNotif(patch){
     const novoNotif = Object.assign({}, (cfg.notif || {}), patch);
+    salvarPrefsNotifCache(sess.user, novoNotif);   // mantém o cache local em dia
     return salvarMerge({ notif: novoNotif }, document.getElementById('cfgNotifMsg'));
   }
+  /* liga os interruptores de cada tipo de notificação */
+  TIPOS_NOTIF.forEach(([t]) => wireSwitch('cfgNotif_' + t, v => salvarNotif({ [t]: v })));
   wireSwitch('cfgPush', async v => {
     const msg = document.getElementById('cfgNotifMsg');
     const el = document.getElementById('cfgPush');
@@ -4531,7 +4934,40 @@ async function paginaConfig(){
     }
     await salvarNotif({ push: v });
   });
-  wireSwitch('cfgEmailNews', v => salvarNotif({ email: v }));
+  /* push: se a pessoa ainda não decidiu nada (nunca ligou nem desligou aqui),
+     o switch já nasce marcado, mas o valor real depende da permissão do
+     navegador — então a gente já dispara o pedido nativo e deixa o resultado
+     (aceitou/recusou) definir o estado final do switch e o que fica salvo. */
+  if(notif.push === undefined && typeof Notification !== 'undefined'){
+    const elPush = document.getElementById('cfgPush');
+    const msgPush = document.getElementById('cfgNotifMsg');
+    if(Notification.permission === 'denied'){
+      /* o navegador já bloqueou notificações antes — não tem prompt pra mostrar,
+         então refletimos isso no switch em vez de fingir que está ativado */
+      if(elPush) elPush.checked = false;
+      salvarNotif({ push: false });
+    } else if(Notification.permission === 'default'){
+      (async () => {
+        if(msgPush) msgPush.textContent = 'Pedindo permissão de notificações…';
+        const r = await ativarPush();
+        if(r.ok){
+          if(msgPush) msgPush.textContent = 'Notificações ativadas ✓';
+          await salvarNotif({ push: true });
+        } else {
+          if(elPush) elPush.checked = false;
+          if(msgPush) msgPush.textContent = '';
+          await salvarNotif({ push: false });
+        }
+      })();
+    } else {
+      /* já estava 'granted' de antes (ex: outra página pediu) — só garante a inscrição e salva */
+      (async () => {
+        const r = await ativarPush();
+        await salvarNotif({ push: !!r.ok });
+        if(!r.ok && elPush) elPush.checked = false;
+      })();
+    }
+  }
 
   document.getElementById('cfgExcluir').addEventListener('click', async () => {
     const msg = document.getElementById('cfgExcluirMsg');
@@ -4598,6 +5034,7 @@ switch(PAGINA.tipo){
   case 'home':     paginaHome(); break;
   case 'emBreve':  paginaEmBreve(); break;
   case 'perfil':   paginaPerfil(); break;
+  case 'notif':    paginaNotificacoes(); break;
   case 'busca':    paginaBusca(); break;
   case 'config':   paginaConfig(); break;
   case 'redefinir': paginaRedefinir(); break;
