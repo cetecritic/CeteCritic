@@ -152,6 +152,12 @@ async function handleGet(req, res) {
 
   // ----- JSON pro painel admin -----
   if (q.q === 'config') { res.status(200).json({ ok: true, dados: await lerConfig() }); return; }
+  if (q.q === 'indice') {   // índice de busca do admin: edições + todas as peças
+    const { data: eds } = await sb.from('edicoes').select('ano,titulo,em_breve').order('ano', { ascending: false });
+    const { data: pcs } = await sb.from('pecas').select('ano,noite,ordem,titulo').order('ano', { ascending: false });
+    res.status(200).json({ ok: true, edicoes: eds || [], pecas: pcs || [] });
+    return;
+  }
   if (q.q === 'edicoes') { res.status(200).json({ ok: true, edicoes: await lerEdicoesLista() }); return; }
   if (q.q === 'edicao') {
     const ano = Number(q.ano);
@@ -319,6 +325,23 @@ async function handlePost(req, res) {
     let pushEnviados = 0;
     if (body.push) pushEnviados = await enviarPushPara(alvos, { title: titulo || 'CETECritic', body: corpo, url });
     return res.status(200).json({ ok: true, alvos: alvos.length, pushEnviados });
+  }
+
+  // ----- upload de imagem (poster / banner) pro Supabase Storage -----
+  if (action === 'uploadImagem') {
+    const b64 = String(body.data || '');
+    const m = b64.match(/^data:(.+?);base64,(.*)$/);
+    const contentType = m ? m[1] : 'image/jpeg';
+    const raw = m ? m[2] : b64;
+    if (!raw) return res.status(400).json({ ok: false, error: 'sem imagem' });
+    const buffer = Buffer.from(raw, 'base64');
+    const nomeLimpo = String(body.nome || 'img.jpg').replace(/[^a-zA-Z0-9._-]/g, '_');
+    const pasta = String(body.pasta || 'geral').replace(/[^a-zA-Z0-9_-]/g, '');
+    const path = pasta + '/' + Date.now() + '_' + nomeLimpo;
+    const { error } = await sb.storage.from('conteudo').upload(path, buffer, { contentType, upsert: true });
+    if (error) return res.status(500).json({ ok: false, error: error.message });
+    const { data } = sb.storage.from('conteudo').getPublicUrl(path);
+    return res.status(200).json({ ok: true, url: data.publicUrl });
   }
 
   // ----- banners (broadcasts) -----

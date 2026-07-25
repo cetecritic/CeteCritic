@@ -50,6 +50,13 @@
   </div>
 
   <div id="painel" class="hidden">
+    <!-- BUSCA -->
+    <div class="card">
+      <h2>🔎 Buscar pra editar</h2>
+      <input id="buscaAdmin" type="text" placeholder="Digite uma edição (ex: 2026) ou o nome de uma peça…">
+      <div id="buscaRes" style="margin-top:8px;"></div>
+    </div>
+
     <!-- CONFIG GLOBAL -->
     <div class="card">
       <h2>⚙️ Configurações gerais</h2>
@@ -97,10 +104,12 @@
         <div><label>Fim votação (ISO)</label><input id="edFim" type="text"></div>
       </div>
       <label>Pôster (nome do arquivo ou URL)</label><input id="edPoster" type="text">
+      <input type="file" accept="image/*" id="edPosterFile" style="margin-top:6px;"><span class="msg" id="edPosterMsg" style="margin-left:8px;"></span>
       <label>Mensagem de fim</label><textarea id="edMensagemFim"></textarea>
       <div class="row2">
         <div><label>Sobre — título</label><input id="edSobreTitulo" type="text"></div>
-        <div><label>Sobre — banner (arquivo/URL)</label><input id="edSobreBanner" type="text"></div>
+        <div><label>Sobre — banner (arquivo/URL)</label><input id="edSobreBanner" type="text">
+          <input type="file" accept="image/*" id="edSobreFile" style="margin-top:6px;"><span class="msg" id="edSobreMsg"></span></div>
       </div>
       <label>Sobre — texto</label><textarea id="edSobreTexto"></textarea>
       <label>Abertura — texto</label><textarea id="edAberturaTexto"></textarea>
@@ -283,6 +292,42 @@ function preencherEditor(e, noites, pecas){
   $('edEditor').scrollIntoView({ behavior:'smooth' });
 }
 
+/* ---------- upload de imagens (poster / banner) ---------- */
+function reduzirImg(file, maxLarg, q){
+  return new Promise((res, rej) => {
+    const reader = new FileReader();
+    reader.onload = () => { const img = new Image(); img.onload = () => {
+      const escala = Math.min(1, maxLarg / img.width);
+      const w = Math.round(img.width * escala), h = Math.round(img.height * escala);
+      const cv = document.createElement('canvas'); cv.width = w; cv.height = h;
+      cv.getContext('2d').drawImage(img, 0, 0, w, h);
+      try{ res(cv.toDataURL('image/jpeg', q)); }catch(e){ res(reader.result); }
+    }; img.onerror = () => res(reader.result); img.src = reader.result; };
+    reader.onerror = () => rej(reader.error); reader.readAsDataURL(file);
+  });
+}
+async function uploadImg(file, nome, msgEl){
+  if(!file) return;
+  if(msgEl) msgEl.textContent = 'Enviando imagem…';
+  try{
+    const dataUrl = await reduzirImg(file, 1200, 0.85);
+    const r = await post('uploadImagem', { data: dataUrl, nome: nome + '.jpg', pasta: 'edicoes' });
+    if(r && r.ok){ if(msgEl) msgEl.textContent = 'Enviada ✓'; return r.url; }
+    if(msgEl) msgEl.textContent = 'Erro: ' + ((r&&r.error)||'');
+  }catch(e){ if(msgEl) msgEl.textContent = 'Falha ao processar a imagem.'; }
+  return null;
+}
+$('edPosterFile').addEventListener('change', async e => {
+  const ano = $('edAno').value || 'ed';
+  const url = await uploadImg(e.target.files[0], 'poster_' + ano, $('edPosterMsg'));
+  if(url) $('edPoster').value = url;
+});
+$('edSobreFile').addEventListener('change', async e => {
+  const ano = $('edAno').value || 'ed';
+  const url = await uploadImg(e.target.files[0], 'sobre_' + ano, $('edSobreMsg'));
+  if(url) $('edSobreBanner').value = url;
+});
+
 $('btnNovaEdicao').addEventListener('click', novaEdicao);
 $('btnCancelarEdicao').addEventListener('click', () => $('edEditor').classList.add('hidden'));
 $('btnAddNoite').addEventListener('click', () => {
@@ -405,7 +450,28 @@ $('btnEnviarNotif').addEventListener('click', async () => {
   else $('ntMsg').textContent = 'Erro: ' + ((r&&r.error)||'');
 });
 
-function iniciar(){ carregarConfig(); carregarEdicoes(); carregarBanners(); buscarUsuarios(); }
+/* ---------- BUSCA (edições + peças -> abre no editor) ---------- */
+let INDICE = { edicoes:[], pecas:[] };
+async function carregarIndice(){ const r = await getJson('q=indice'); if(r && r.ok){ INDICE = { edicoes:r.edicoes||[], pecas:r.pecas||[] }; } }
+function normTxt(s){ return String(s||'').toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g,''); }
+async function abrirEdicaoEnoite(ano, noite){
+  await abrirEdicao(ano);
+  if(noite){ const bl = document.querySelector('.noite-block[data-noite="'+noite+'"]'); if(bl){ bl.scrollIntoView({behavior:'smooth', block:'center'}); bl.style.outline='2px solid var(--gold)'; setTimeout(()=>bl.style.outline='',1500); } }
+}
+$('buscaAdmin').addEventListener('input', () => {
+  const q = normTxt($('buscaAdmin').value.trim());
+  const box = $('buscaRes');
+  if(!q){ box.innerHTML=''; return; }
+  const eds = INDICE.edicoes.filter(e => normTxt(e.ano).includes(q) || normTxt(e.titulo).includes(q)).slice(0,8);
+  const pcs = INDICE.pecas.filter(p => normTxt(p.titulo).includes(q)).slice(0,12);
+  box.innerHTML =
+    eds.map(e => `<div class="ed-item"><div>🎬 Cetec Festival <b>${e.ano}</b>${e.em_breve?' <span class="tag">em breve</span>':''}</div><button class="ghost small" data-ano="${e.ano}">Editar</button></div>`).join('') +
+    pcs.map(p => `<div class="ed-item"><div>🎭 <b>${(p.titulo||'').replace(/</g,'&lt;')}</b> <span style="color:var(--muted);font-size:12px;">· ${p.ano} · Noite ${p.noite}</span></div><button class="ghost small" data-ano="${p.ano}" data-noite="${p.noite}">Editar</button></div>`).join('') ||
+    (eds.length?'':'<div class="msg">Nada encontrado.</div>');
+  box.querySelectorAll('button[data-ano]').forEach(b => b.onclick = () => abrirEdicaoEnoite(Number(b.dataset.ano), b.dataset.noite?Number(b.dataset.noite):null));
+});
+
+function iniciar(){ carregarConfig(); carregarEdicoes(); carregarBanners(); buscarUsuarios(); carregarIndice(); }
 </script>
 </body>
 </html>
