@@ -258,7 +258,7 @@ async function apiLogin(body){
   }
   const token = novoToken();
   await sb.from('usuarios').update({ token, tentativas:0, lock_until:0 }).eq('usuario', u.usuario);
-  return { ok:true, user:u.usuario, token };
+  return { ok:true, user:u.usuario, token, admin: u.admin === true };
 }
 
 async function apiVoto(body){
@@ -401,7 +401,7 @@ async function apiMeuPerfil(body){
   const usuario = String(body.user||'');
   if(!(await verificarToken(usuario, body.token))) return { ok:false, error:'faça login' };
   const u = await acharUsuario(usuario);
-  return { ok:true, user: u?u.usuario:usuario, perfil: u?asObj(u.perfil):{} };
+  return { ok:true, user: u?u.usuario:usuario, perfil: u?asObj(u.perfil):{}, admin: !!(u && u.admin === true) };
 }
 
 async function apiSalvarPush(body){

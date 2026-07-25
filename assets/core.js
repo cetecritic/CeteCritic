@@ -378,7 +378,12 @@ function usuarioLogado(){
   try{ const s = JSON.parse(localStorage.getItem(SESSAO_KEY) || 'null'); return (s && s.user && s.token) ? s : null; }
   catch(e){ return null; }
 }
-function salvarSessao(user, token){ localStorage.setItem(SESSAO_KEY, JSON.stringify({ user, token })); }
+function salvarSessao(user, token, admin){ localStorage.setItem(SESSAO_KEY, JSON.stringify({ user, token, admin: !!admin })); }
+/* atualiza só o flag de admin da sessão (usado quando o meuPerfil confirma) */
+function marcarSessaoAdmin(admin){
+  const s = usuarioLogado(); if(!s) return;
+  s.admin = !!admin; try{ localStorage.setItem(SESSAO_KEY, JSON.stringify(s)); }catch(e){}
+}
 function sairSessao(){ localStorage.removeItem(SESSAO_KEY); }
 
 async function apiPost(payload){
@@ -704,7 +709,7 @@ function wireLogin(){
     try{
       const r = modo === 'login' ? await apiLogin(user, senha) : await apiRegistrar(user, senha, email);
       if(r && r.ok){
-        salvarSessao(r.user, r.token);
+        salvarSessao(r.user, r.token, r.admin);
         location.reload();
         return;
       }
@@ -740,6 +745,7 @@ function wireLogin(){
 
 /* ---------------------- shell (sidebar + rodapé + modais) ---------------------- */
 function htmlSidebar(){
+  const _sessAdmin = !!(usuarioLogado() && usuarioLogado().admin);
   let h = `<div class="sidebar-logo">
     <a class="sidebar-logo-link" href="${BASE}index.html" title="Ir para o início">
       <img src="${BASE}assets/logo.png" alt="" onerror="this.style.display='none'">
@@ -750,6 +756,7 @@ function htmlSidebar(){
       <a href="${BASE}perfil.html"${PAGINA.tipo === 'perfil' ? ' class="active"' : ''} title="Perfil" aria-label="Perfil">👤</a>
       <a href="${BASE}notificacoes.html" class="notif-link${PAGINA.tipo === 'notif' ? ' active' : ''}" title="Notificações" aria-label="Notificações">🔔<span class="notif-badge" id="notifBadgeQuick" style="display:none;"></span></a>
       <a href="${BASE}configuracoes.html"${PAGINA.tipo === 'config' ? ' class="active"' : ''} title="Configurações" aria-label="Configurações">⚙️</a>
+      ${_sessAdmin ? `<a href="${BASE}admin.html" title="Painel admin" aria-label="Painel admin">💻</a>` : ''}
     </div>
   </div>
   <div class="sidebar-nav" id="sidebarNav">
@@ -832,6 +839,7 @@ function htmlSidebar(){
     <a href="${BASE}perfil.html"${PAGINA.tipo === 'perfil' ? ' class="active"' : ''}>👤 Perfil</a>
     <a href="${BASE}notificacoes.html"${PAGINA.tipo === 'notif' ? ' class="active"' : ''}>🔔 Notif.<span class="notif-badge" id="notifBadgeBar" style="display:none;"></span></a>
     <a href="${BASE}configuracoes.html"${PAGINA.tipo === 'config' ? ' class="active"' : ''}>⚙️ Config</a>
+    ${_sessAdmin ? `<a href="${BASE}admin.html"${PAGINA.tipo === 'admin' ? ' class="active"' : ''}>💻 Admin</a>` : ''}
   </div>`;
   return h;
 }
@@ -1212,6 +1220,12 @@ function montarShell(conteudo){
   checarNotificacoes();   // banner de novidades + detecção de noites/edições/bolão
   checarBroadcasts();     // avisos "para todos" — aparecem pra qualquer visitante
   verificarInscricaoPush();   // religa/pede pra religar se a inscrição push sumiu
+  /* sessões antigas não têm o flag admin: confirma uma vez e recarrega p/ mostrar o 💻 */
+  (async () => {
+    const s = usuarioLogado();
+    if(!s || s.admin !== undefined) return;
+    try{ const r = await apiMeuPerfil(); if(r && r.ok){ marcarSessaoAdmin(!!r.admin); if(r.admin) location.reload(); } }catch(e){}
+  })();
 
   /* ---- aviso de edição histórica (anos <= ANO_EDICAO_HISTORICA) ----
      aparece 1x por sessão para cada ano histórico visitado */

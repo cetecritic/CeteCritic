@@ -10,7 +10,13 @@
   :root{ --bg:#0e0f12; --surface:#17181c; --surface2:#202226; --border:#2c2e33; --text:#fff; --muted:#9a9ea6; --gold:#f5c518; color-scheme:dark; }
   *{ box-sizing:border-box; }
   body{ margin:0; background:var(--bg); color:var(--text); font-family:'Inter',system-ui,sans-serif; padding:24px 16px 80px; }
-  .wrap{ max-width:900px; margin:0 auto; }
+  .wrap{ max-width:1300px; margin:0 auto; }
+  .grid2{ display:grid; grid-template-columns:1fr 1fr; gap:18px; align-items:start; }
+  @media (max-width:820px){ .grid2{ grid-template-columns:1fr; } }
+  .u-item{ display:flex; align-items:center; justify-content:space-between; gap:8px; padding:8px 0; border-bottom:1px solid var(--border); flex-wrap:wrap; }
+  .u-item:last-child{ border-bottom:0; }
+  .u-acts{ display:flex; gap:6px; flex-wrap:wrap; }
+  .u-tag{ font-size:10px; font-weight:800; color:#0b0c0f; background:var(--gold); border-radius:20px; padding:1px 7px; }
   h1{ font-size:22px; margin:0 0 2px; } h2{ font-size:16px; margin:0 0 12px; color:var(--gold); }
   .sub{ color:var(--muted); font-size:13px; margin:0 0 20px; }
   .card{ background:var(--surface); border:1px solid var(--border); border-radius:14px; padding:18px; margin-bottom:18px; }
@@ -112,6 +118,26 @@
       <div class="msg" id="edMsg"></div>
     </div>
 
+    <!-- ENVIAR NOTIFICAÇÃO -->
+    <div class="card">
+      <h2>🔔 Enviar notificação</h2>
+      <p class="sub" style="margin:0 0 12px;">Vai pra central 🔔 da pessoa. Marque "push" pra também tocar no aparelho de quem tem push ligado.</p>
+      <div class="row2">
+        <div><label>Para</label>
+          <select id="ntAlvoTipo">
+            <option value="todosUsuarios">Todos os usuários cadastrados</option>
+            <option value="usuario">Um usuário específico</option>
+          </select></div>
+        <div id="ntUsuarioWrap" class="hidden"><label>Usuário</label><input id="ntUsuario" type="text" placeholder="ex: maria"></div>
+      </div>
+      <label>Título</label><input id="ntTitulo" type="text">
+      <label>Mensagem</label><input id="ntCorpo" type="text">
+      <label>Link ao clicar</label><input id="ntUrl" type="text" placeholder="/index.html">
+      <label style="margin-top:10px;"><input type="checkbox" id="ntPush" style="width:auto;"> Também enviar push (aparelho)</label>
+      <div class="toolbar"><button id="btnEnviarNotif">Enviar</button></div>
+      <div class="msg" id="ntMsg"></div>
+    </div>
+
     <!-- BANNERS -->
     <div class="card">
       <h2>📢 Banners (avisos no site)</h2>
@@ -124,6 +150,17 @@
       <div class="toolbar"><button id="btnCriarBanner">Publicar banner</button></div>
       <div class="msg" id="bnMsg"></div>
       <div id="bnLista" style="margin-top:10px;"></div>
+    </div>
+
+    <!-- USUÁRIOS -->
+    <div class="card">
+      <h2>👥 Usuários</h2>
+      <div class="row2">
+        <div><label>Buscar (usuário ou e-mail)</label><input id="uBusca" type="text" placeholder="deixe vazio pra listar todos"></div>
+        <div style="display:flex; align-items:flex-end;"><button id="btnBuscarU">Buscar</button></div>
+      </div>
+      <div class="msg" id="uMsg"></div>
+      <div id="uLista" style="margin-top:8px;"></div>
     </div>
   </div>
 </div>
@@ -310,7 +347,65 @@ $('btnCriarBanner').addEventListener('click', async () => {
   else $('bnMsg').textContent = 'Erro: ' + ((r&&r.error)||'');
 });
 
-function iniciar(){ carregarConfig(); carregarEdicoes(); carregarBanners(); }
+/* ---------- USUÁRIOS ---------- */
+async function buscarUsuarios(){
+  $('uMsg').textContent = 'Buscando…';
+  const r = await post('listarUsuarios', { busca: $('uBusca').value.trim() });
+  const us = (r && r.usuarios) || [];
+  $('uMsg').textContent = us.length + ' usuário(s).';
+  $('uLista').innerHTML = us.map(u => {
+    const nome = u.usuario.replace(/</g,'&lt;');
+    return `<div class="u-item" data-u="${nome}">
+      <div><b>${nome}</b>${u.admin?' <span class="u-tag">admin</span>':''}
+        <span style="color:var(--muted);font-size:12px;">${u.email?('· '+u.email.replace(/</g,'&lt;')):''}${u.anonimo?' · anônimo':''}${u.privado?' · privado':''}</span></div>
+      <div class="u-acts">
+        <button class="ghost small" data-act="admin" data-v="${u.admin?0:1}">${u.admin?'Remover admin':'Tornar admin'}</button>
+        <button class="ghost small" data-act="carimbos">Limpar carimbos</button>
+        <button class="ghost small" data-act="visitas">Limpar visitas</button>
+        <button class="ghost small" data-act="reputacao">Zerar reputação</button>
+        <button class="ghost small" data-act="showcase">Limpar destaques</button>
+        <button class="danger small" data-act="excluir">Excluir conta</button>
+      </div>
+    </div>`;
+  }).join('') || '<div class="msg">Nenhum usuário.</div>';
+
+  $('uLista').querySelectorAll('.u-item').forEach(item => {
+    const alvo = item.dataset.u;
+    item.querySelectorAll('button').forEach(b => b.addEventListener('click', async () => {
+      const act = b.dataset.act;
+      if(act === 'admin'){ await post('tornarAdmin', { alvo, valor: b.dataset.v === '1' }); buscarUsuarios(); return; }
+      if(act === 'excluir'){
+        if(!confirm('Excluir a conta "'+alvo+'"? Apaga perfil, carimbos, visitas, reputação e palpites. Os votos viram anônimos. Isso é permanente.')) return;
+        await post('deletarUsuario', { alvo }); buscarUsuarios(); return;
+      }
+      const rotulo = { carimbos:'os carimbos', visitas:'as visitas', reputacao:'a reputação', showcase:'os destaques/favoritas' }[act];
+      if(!confirm('Remover '+rotulo+' de "'+alvo+'"?')) return;
+      await post('moderarPerfil', { alvo, opcoes: { [act]: true } });
+      alert('Feito.');
+    }));
+  });
+}
+$('btnBuscarU').addEventListener('click', buscarUsuarios);
+$('uBusca').addEventListener('keydown', ev => { if(ev.key==='Enter') buscarUsuarios(); });
+
+/* ---------- ENVIAR NOTIFICAÇÃO ---------- */
+$('ntAlvoTipo').addEventListener('change', () => {
+  $('ntUsuarioWrap').classList.toggle('hidden', $('ntAlvoTipo').value !== 'usuario');
+});
+$('btnEnviarNotif').addEventListener('click', async () => {
+  const alvoTipo = $('ntAlvoTipo').value;
+  const alvo = $('ntUsuario').value.trim();
+  if(alvoTipo === 'usuario' && !alvo){ $('ntMsg').textContent = 'Informe o usuário.'; return; }
+  const titulo = $('ntTitulo').value.trim(), corpo = $('ntCorpo').value.trim();
+  if(!titulo && !corpo){ $('ntMsg').textContent = 'Escreva um título ou mensagem.'; return; }
+  if(alvoTipo === 'todosUsuarios' && !confirm('Enviar essa notificação pra TODOS os usuários cadastrados?')) return;
+  $('ntMsg').textContent = 'Enviando…';
+  const r = await post('enviarNotif', { alvoTipo, alvo, titulo, corpo, url: $('ntUrl').value.trim() || '/index.html', push: $('ntPush').checked });
+  if(r && r.ok){ $('ntMsg').textContent = 'Enviado pra ' + r.alvos + ' usuário(s)' + ($('ntPush').checked ? (' · push: ' + r.pushEnviados) : '') + ' ✓'; $('ntTitulo').value=''; $('ntCorpo').value=''; $('ntUrl').value=''; }
+  else $('ntMsg').textContent = 'Erro: ' + ((r&&r.error)||'');
+});
+
+function iniciar(){ carregarConfig(); carregarEdicoes(); carregarBanners(); buscarUsuarios(); }
 </script>
 </body>
 </html>

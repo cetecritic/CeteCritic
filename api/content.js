@@ -19,9 +19,34 @@
    Variáveis de ambiente: SUPABASE_URL, SUPABASE_SECRET_KEY
    ===================================================================== */
 const { createClient } = require('@supabase/supabase-js');
+const webpush = require('web-push');
 const sb = createClient(process.env.SUPABASE_URL, process.env.SUPABASE_SECRET_KEY, { auth: { persistSession: false } });
 
 const norm = u => String(u || '').trim().toLowerCase();
+
+/* ---- push (para notificações direcionadas do admin) ---- */
+function limparSubject(s) {
+  s = String(s || '').trim();
+  const m = s.match(/([^\s<>]+@[^\s<>]+)/);
+  if (m) return 'mailto:' + m[1];
+  if (/^https?:\/\//.test(s)) return s;
+  return 'mailto:cetecritic@gmail.com';
+}
+async function enviarPushPara(usuarios, payloadObj) {
+  try { webpush.setVapidDetails(limparSubject(process.env.VAPID_SUBJECT), process.env.VAPID_PUBLIC_KEY, process.env.VAPID_PRIVATE_KEY); }
+  catch (e) { return 0; }
+  const nset = new Set(usuarios.map(norm));
+  const { data } = await sb.from('push').select('endpoint,p256dh,auth,usuario');
+  const subs = (data || []).filter(r => nset.has(norm(r.usuario)));
+  const payload = JSON.stringify(payloadObj);
+  let ok = 0; const mortos = [];
+  await Promise.all(subs.map(async s => {
+    try { await webpush.sendNotification({ endpoint: s.endpoint, keys: { p256dh: s.p256dh, auth: s.auth } }, payload); ok++; }
+    catch (e) { if (e && (e.statusCode === 410 || e.statusCode === 404)) mortos.push(s.endpoint); }
+  }));
+  if (mortos.length) await sb.from('push').delete().in('endpoint', mortos);
+  return ok;
+}
 
 async function ehAdmin(usuario, token) {
   if (!usuario || !token) return false;
@@ -150,6 +175,69 @@ async function handlePost(req, res) {
 
   if (action === 'ping') return res.status(200).json({ ok: true, admin: true });
 
+  // ----- gestão de usuários -----
+  if (action === 'listarUsuarios') {
+    const busca = norm(body.busca || '');
+    const { data } = await sb.from('usuarios').select('usuario,admin,criado_em,perfil');
+    let lista = (data || []).map(u => {
+      const p = (u.perfil && typeof u.perfil === 'object') ? u.perfil : {};
+      return { usuario: u.usuario, admin: u.admin === true, criadoEm: u.criado_em || 0, email: String(p.email || ''), anonimo: !!p.anonimo, privado: !!p.privado };
+    });
+    if (busca) lista = lista.filter(u => norm(u.usuario).includes(busca) || norm(u.email).includes(busca));
+    lista.sort((a, b) => (b.criadoEm || 0) - (a.criadoEm || 0));
+    return res.status(200).json({ ok: true, usuarios: lista.slice(0, 200) });
+  }
+  if (action === 'tornarAdmin') {
+    const alvo = String(body.alvo || '');
+    const { data } = await sb.from('usuarios').select('usuario').ilike('usuario', alvo);
+    const real = (data || []).find(r => norm(r.usuario) === norm(alvo));
+    if (!real) return res.status(404).json({ ok: false, error: 'usuário não encontrado' });
+    await sb.from('usuarios').update({ admin: !!body.valor }).eq('usuario', real.usuario);
+    return res.status(200).json({ ok: true });
+  }
+  if (action === 'moderarPerfil') {
+    const nu = norm(body.alvo || ''); const op = body.opcoes || {};
+    const limpar = async (table) => {
+      const { data } = await sb.from(table).select('id,profile_user');
+      const ids = (data || []).filter(r => norm(r.profile_user) === nu).map(r => r.id);
+      if (ids.length) await sb.from(table).delete().in('id', ids);
+    };
+    if (op.carimbos) await limpar('carimbos');
+    if (op.visitas) await limpar('visitas');
+    if (op.reputacao) await limpar('reputacao');
+    if (op.showcase) {
+      const { data } = await sb.from('usuarios').select('usuario,perfil').ilike('usuario', body.alvo);
+      const real = (data || []).find(r => norm(r.usuario) === nu);
+      if (real) { const p = (real.perfil && typeof real.perfil === 'object') ? Object.assign({}, real.perfil) : {}; delete p.destaques; delete p.favoritas; delete p.showcase; await sb.from('usuarios').update({ perfil: p }).eq('usuario', real.usuario); }
+    }
+    return res.status(200).json({ ok: true });
+  }
+  if (action === 'deletarUsuario') {
+    const alvo = String(body.alvo || ''); const nu = norm(alvo);
+    if (!nu) return res.status(400).json({ ok: false, error: 'usuário inválido' });
+    const { data: subs } = await sb.from('submissions').select('row_id,usuario');
+    const meus = (subs || []).filter(r => norm(r.usuario) === nu).map(r => r.row_id);
+    if (meus.length) await sb.from('submissions').update({ usuario: null }).in('row_id', meus);
+    const delWhere = async (table, cols) => {
+      const { data } = await sb.from(table).select('*');
+      const ids = (data || []).filter(r => cols.some(c => norm(r[c]) === nu)).map(r => r.id).filter(x => x != null);
+      if (ids.length) await sb.from(table).delete().in('id', ids);
+    };
+    await delWhere('carimbos', ['profile_user', 'from_user']);
+    await delWhere('visitas', ['profile_user', 'visitor_user']);
+    await delWhere('reputacao', ['profile_user', 'from_user']);
+    await delWhere('palpites', ['usuario']);
+    await delWhere('resets', ['usuario']);
+    await delWhere('notificacoes', ['usuario']);
+    const { data: pu } = await sb.from('push').select('endpoint,usuario');
+    const eps = (pu || []).filter(r => norm(r.usuario) === nu).map(r => r.endpoint);
+    if (eps.length) await sb.from('push').delete().in('endpoint', eps);
+    const { data: us } = await sb.from('usuarios').select('usuario').ilike('usuario', alvo);
+    const real = (us || []).find(r => norm(r.usuario) === nu);
+    if (real) await sb.from('usuarios').delete().eq('usuario', real.usuario);
+    return res.status(200).json({ ok: true });
+  }
+
   if (action === 'salvarConfig') {
     const dados = (body.dados && typeof body.dados === 'object') ? body.dados : {};
     await sb.from('config_site').upsert({ id: 1, dados }, { onConflict: 'id' });
@@ -208,6 +296,29 @@ async function handlePost(req, res) {
       }
     }
     return res.status(200).json({ ok: true });
+  }
+
+  // ----- envio de notificações direcionadas (central 🔔 + push opcional) -----
+  if (action === 'enviarNotif') {
+    const titulo = String(body.titulo || '').trim(), corpo = String(body.corpo || '').trim();
+    const url = String(body.url || '/index.html'), tipo = String(body.tipo || 'admin');
+    if (!titulo && !corpo) return res.status(400).json({ ok: false, error: 'notificação vazia' });
+    let alvos = [];
+    if (body.alvoTipo === 'usuario') {
+      const { data } = await sb.from('usuarios').select('usuario').ilike('usuario', body.alvo);
+      const real = (data || []).find(r => norm(r.usuario) === norm(body.alvo));
+      if (!real) return res.status(404).json({ ok: false, error: 'usuário não encontrado' });
+      alvos = [real.usuario];
+    } else { // todos os usuários cadastrados
+      const { data } = await sb.from('usuarios').select('usuario');
+      alvos = (data || []).map(r => r.usuario).filter(Boolean);
+    }
+    const id = 'admin:' + Date.now();
+    const rows = alvos.map(u => ({ usuario: u, notif_id: id, tipo, titulo, corpo, url, ts: Date.now(), lida: false }));
+    for (let i = 0; i < rows.length; i += 500) await sb.from('notificacoes').insert(rows.slice(i, i + 500));
+    let pushEnviados = 0;
+    if (body.push) pushEnviados = await enviarPushPara(alvos, { title: titulo || 'CETECritic', body: corpo, url });
+    return res.status(200).json({ ok: true, alvos: alvos.length, pushEnviados });
   }
 
   // ----- banners (broadcasts) -----

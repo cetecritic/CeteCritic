@@ -27,13 +27,19 @@ if (!SUPABASE_URL || !SUPABASE_SECRET_KEY) {
 const sb = createClient(SUPABASE_URL, SUPABASE_SECRET_KEY, { auth: { persistSession: false } });
 const raiz = __dirname;
 
-/* roda um arquivo .js num sandbox e devolve as variáveis globais que ele definiu */
+/* roda um arquivo .js num sandbox e devolve as variáveis que ele definiu.
+   ATENÇÃO: no `vm`, `const`/`let` do topo NÃO viram propriedade do contexto —
+   por isso capturamos os nomes conhecidos numa linha extra no fim do script. */
 function rodarJs(arquivo, contextoInicial) {
   const code = fs.readFileSync(arquivo, 'utf8');
-  const ctx = Object.assign({ NOITES: {} }, contextoInicial || {});
+  const ctx = Object.assign({ NOITES: {}, __CAP__: {} }, contextoInicial || {});
   vm.createContext(ctx);
-  vm.runInContext(code, ctx, { filename: arquivo });
-  return ctx;
+  const nomes = ['EDICOES','EDICAO_EM_DESTAQUE','SLOGAN_HOME','RODAPE','EMAIL_CONTATO',
+    'ANO_EDICAO_HISTORICA','ANO_VOTOS_ANTIGOS','COOLDOWN_MINUTOS','NOTA_MAXIMA','VAPID_PUBLIC_KEY','EDICAO'];
+  const captura = '\n;try{__CAP__={' +
+    nomes.map(n => `${n}:(typeof ${n}!=='undefined'?${n}:undefined)`).join(',') + '};}catch(e){}';
+  vm.runInContext(code + captura, ctx, { filename: arquivo });
+  return Object.assign({}, ctx.__CAP__, { NOITES: ctx.NOITES });
 }
 
 async function migrarConfig() {
