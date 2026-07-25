@@ -26,9 +26,9 @@ body{
 
 /* ---- barra lateral ---- */
 .sidebar{
-  position: fixed; top:0; left:0; width: 230px; height: 100vh; overflow-y:auto;
+  position: fixed; top:0; left:0; width: 230px; height: 100vh; overflow:hidden;
   background: var(--surface); border-right: 1px solid var(--border);
-  padding: 24px 14px; display:flex; flex-direction:column; gap: 4px; z-index: 60;
+  padding: 24px 14px 0; display:flex; flex-direction:column; gap: 4px; z-index: 60;
 }
 .sidebar-logo{ display:flex; align-items:center; gap: 8px; padding: 0 8px 20px 8px; }
 .sidebar-logo-link{ display:flex; align-items:center; gap: 8px; text-decoration:none; }
@@ -664,6 +664,12 @@ a.record-item:hover{ border-color: var(--gold); }
 .anon-check input{ width: 15px; height: 15px; accent-color: var(--gold); }
 .anon-check .anon-sub{ color: var(--text-muted); font-weight: 400; }
 
+/* aceite dos Termos de Serviço (conta nova + avaliação como visitante) */
+.tos-check{ display:flex; align-items:flex-start; gap: 8px; font-size: 12px; line-height: 1.5; color: var(--text-muted); font-weight: 400; margin-top: 10px; cursor:pointer; }
+.tos-check input{ width: 15px; height: 15px; margin-top: 2px; flex: 0 0 auto; accent-color: var(--gold); cursor:pointer; }
+.tos-check a{ color: var(--gold); text-decoration: underline; }
+.tos-check.tos-erro{ color: #e0685f; }
+
 /* ---- perfil: cabeçalho + nível ---- */
 .perfil-head-info{ flex: 1 1 auto; min-width: 0; }
 .perfil-actions{ flex-shrink:0; display:flex; gap: 8px; align-items:flex-start; }
@@ -910,3 +916,141 @@ a.showcase-card:hover{ border-color: var(--gold); }
 
 /* agrupa a nota + botão compartilhar à direita do card de peça */
 .noite-card-right{ display:flex; align-items:center; gap: 8px; flex-shrink:0; }
+
+/* =====================================================================
+   TEMA CLARO + BARRA DE CONTA (perfil/config) — adicionados na atualização
+   ===================================================================== */
+:root{ color-scheme: dark; }
+:root[data-theme="light"]{
+  color-scheme: light;
+  --bg:#f4f5f7;
+  --surface:#ffffff;
+  --surface-2:#eceef1;
+  --border:#d7dade;
+  --text:#16181d;
+  --text-muted:#5b616b;
+  --gold:#c99700;
+  --gray-cell:#e3e6ea;
+}
+/* o card de compartilhar (story) e o banner de instalar seguem escuros de
+   propósito — são "imagem"/destaque, não dependem do tema do app */
+
+/* sidebar vira coluna; o nav tem seu próprio scroll e sobra espaço embaixo
+   pra barra de conta (que agora é fixed, não sticky) não tampar links */
+.sidebar{ display:flex; flex-direction:column; }
+.sidebar-nav{ flex:1 1 auto; min-height:0; overflow-y:auto; padding-bottom: 64px; }
+
+/* barra fixa no rodapé do menu (desktop): Perfil + Configurações.
+   position:fixed (em vez de sticky) garante que ela sempre encosta
+   no fundo real da viewport, sem fresta, não importa a altura do nav. */
+.sidebar-account-bar{
+  position:fixed; left:0; bottom:0; width: 230px; z-index:65;
+  background:var(--surface); border-top:1px solid var(--border);
+  display:flex; gap:6px; padding:10px 8px;
+}
+.sidebar-account-bar a, .sidebar-account-bar button{
+  flex:1; display:flex; align-items:center; justify-content:center; gap:6px;
+  background:var(--surface-2); border:1px solid var(--border); color:var(--text);
+  border-radius:9px; padding:9px 6px; font-size:12px; font-weight:700;
+  cursor:pointer; text-decoration:none; font-family:inherit; white-space:nowrap;
+}
+.sidebar-account-bar a.active{ border-color:var(--gold); color:var(--gold); }
+.sidebar-account-bar a:hover, .sidebar-account-bar button:hover{ filter:brightness(1.08); }
+
+/* ícones rápidos (Perfil/Config) ao lado do ☰ — só no celular */
+.sidebar-quick{ display:none; }
+@media (max-width:860px){
+  .sidebar-account-bar{ display:none; }   /* no celular vira os ícones abaixo */
+  .sidebar-quick{ display:flex; gap:6px; }
+  .sidebar-quick a{
+    display:inline-flex; align-items:center; justify-content:center;
+    width:36px; height:36px; border-radius:8px; text-decoration:none; font-size:16px;
+    background:var(--surface-2); border:1px solid var(--border); color:var(--text);
+  }
+  .sidebar-quick a.active{ border-color:var(--gold); }
+}
+
+/* =====================================================================
+   BANNER "ADICIONAR À TELA INICIAL" (só na home)
+   ===================================================================== */
+.home-install-banner{
+  width:100%; max-width:900px; margin:0 auto 18px auto;
+  display:flex; align-items:center; gap:12px;
+  background: rgba(245,197,24,.10); border:1px solid rgba(245,197,24,.4);
+  border-radius:12px; padding:12px 14px;
+}
+.home-install-banner .hib-icon{
+  width:44px; height:44px; border-radius:10px; object-fit:cover; flex-shrink:0;
+  border:1px solid rgba(245,197,24,.4);
+}
+.home-install-banner .hib-txt{ flex:1; display:flex; flex-direction:column; gap:2px; line-height:1.3; }
+.home-install-banner .hib-txt b{ font-size:13.5px; font-weight:800; color:var(--text); }
+.home-install-banner .hib-sub{ font-size:11.5px; font-weight:600; color:var(--text-muted); }
+.home-install-banner .hib-actions{ display:flex; align-items:center; gap:6px; flex-shrink:0; }
+.home-install-banner .hib-add{
+  background:var(--gold); color:#0b0c0f; border:0; border-radius:9px;
+  padding:9px 14px; font-weight:800; font-size:13px; cursor:pointer;
+  white-space:nowrap; font-family:inherit; transition:filter .15s ease;
+}
+.home-install-banner .hib-add:hover{ filter:brightness(1.08); }
+.home-install-banner .hib-x{
+  background:transparent; border:0; color:var(--text-muted); font-size:18px;
+  line-height:1; padding:6px; cursor:pointer; border-radius:6px; transition:color .15s ease, background .15s ease;
+}
+.home-install-banner .hib-x:hover{ color:var(--text); background:rgba(245,197,24,.12); }
+@media (max-width:520px){
+  .home-install-banner{ flex-wrap:wrap; }
+  .home-install-banner .hib-txt{ order:1; flex:1 1 100%; }
+  .home-install-banner .hib-actions{ order:2; margin-left:auto; }
+}
+
+/* =====================================================================
+   PÁGINA DE CONFIGURAÇÕES
+   ===================================================================== */
+.cfg-group{
+  background:var(--surface); border:1px solid var(--border); border-radius:12px;
+  padding:18px 18px 6px; margin-bottom:16px; width:100%; max-width:720px;
+}
+.cfg-group > h2{ font-size:15px; margin-bottom:2px; }
+.cfg-group > .cfg-group-sub{ font-size:12px; color:var(--text-muted); margin-bottom:14px; }
+.cfg-row{
+  display:flex; align-items:center; gap:14px; padding:14px 0;
+  border-top:1px solid var(--border);
+}
+.cfg-row:first-of-type{ border-top:none; }
+.cfg-row .cfg-info{ flex:1; }
+.cfg-row .cfg-info .cfg-label{ font-size:13.5px; font-weight:700; }
+.cfg-row .cfg-info .cfg-desc{ font-size:12px; color:var(--text-muted); line-height:1.5; margin-top:3px; }
+.cfg-row .cfg-ctrl{ flex:0 0 auto; }
+
+/* segmento (Automático / Claro / Escuro) */
+.cfg-seg{ display:inline-flex; background:var(--surface-2); border:1px solid var(--border); border-radius:9px; overflow:hidden; }
+.cfg-seg button{
+  background:transparent; border:0; color:var(--text-muted); font-family:inherit;
+  font-size:12px; font-weight:700; padding:8px 12px; cursor:pointer;
+}
+.cfg-seg button.sel{ background:var(--gold); color:#0b0c0f; }
+
+/* toggle (interruptor) */
+.cfg-switch{ display:inline-block; position:relative; width:46px; height:26px; flex:0 0 auto; cursor:pointer; }
+.cfg-switch input{ display:none; }
+.cfg-switch .track{ position:absolute; inset:0; background:var(--surface-2); border:1px solid var(--border); border-radius:20px; transition:background .2s; }
+.cfg-switch .thumb{ position:absolute; top:3px; left:3px; width:18px; height:18px; background:var(--text-muted); border-radius:50%; transition:transform .2s, background .2s; }
+.cfg-switch input:checked + .track{ background:var(--gold); border-color:var(--gold); }
+.cfg-switch input:checked + .track + .thumb{ transform:translateX(20px); background:#0b0c0f; }
+
+.cfg-email-row{ display:flex; gap:8px; flex-wrap:wrap; align-items:center; margin-top:4px; }
+.cfg-email-row input[type=email]{
+  flex:1; min-width:200px; background:var(--surface-2); border:1px solid var(--border);
+  color:var(--text); border-radius:9px; padding:10px 12px; font-family:inherit; font-size:13px;
+}
+.cfg-disclaimer{
+  font-size:11.5px; color:var(--text-muted); line-height:1.5; margin-top:8px;
+  background:var(--surface-2); border:1px solid var(--border); border-radius:8px; padding:8px 10px;
+}
+.cfg-danger{ border-color:#7a2b2b; }
+.cfg-danger h2{ color:#e06666; }
+.btn-danger{ background:#d93c3c; color:#fff; border:0; border-radius:9px; padding:10px 16px; font-weight:800; cursor:pointer; font-family:inherit; font-size:13px; }
+.btn-danger:hover{ filter:brightness(1.08); }
+.cfg-msg{ font-size:12px; color:var(--text-muted); min-height:16px; margin:4px 0 12px; }
+.cfg-em-breve{ font-size:11px; font-weight:700; color:var(--gold); border:1px solid var(--gold); border-radius:20px; padding:2px 8px; margin-left:8px; }

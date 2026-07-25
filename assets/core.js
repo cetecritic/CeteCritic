@@ -10,6 +10,65 @@
    Tipos: 'edicao' | 'sobre' | 'abertura' | 'noite' | 'monte'
    ===================================================================== */
 
+/* ---------------------- TEMA (claro / escuro / automático) ----------------------
+   Preferência guardada por dispositivo (localStorage). Aplicada o quanto antes
+   para reduzir o "flash". 'auto' segue o tema do sistema. */
+const TEMA_KEY = 'cetec-tema';
+function temaPref(){ return localStorage.getItem(TEMA_KEY) || 'escuro'; }   // padrão: escuro (visual atual)
+function aplicarTema(t){
+  let efetivo = t;
+  if(t === 'auto') efetivo = window.matchMedia('(prefers-color-scheme: light)').matches ? 'claro' : 'escuro';
+  document.documentElement.dataset.theme = (efetivo === 'claro') ? 'light' : 'dark';
+}
+aplicarTema(temaPref());
+/* se estiver em 'auto', acompanha mudanças do sistema em tempo real */
+try{
+  window.matchMedia('(prefers-color-scheme: light)').addEventListener('change', () => {
+    if(temaPref() === 'auto') aplicarTema('auto');
+  });
+}catch(e){}
+
+/* ---------------------- Banner "adicionar à tela inicial" (só na home) ----------------------
+   Preferência local (por aparelho), ligada por padrão. Pode ser desligada em
+   Configurações > Aparência. Diferente do banner genérico de PWA logo abaixo:
+   este é fixo da home e reaparece a cada visita (só o toggle desliga de vez). */
+const BANNER_HOME_KEY = 'cetec-banner-home';
+function bannerHomeAtivo(){ return localStorage.getItem(BANNER_HOME_KEY) !== '0'; } // padrão: ligado
+function setBannerHomeAtivo(v){ try{ localStorage.setItem(BANNER_HOME_KEY, v ? '1' : '0'); }catch(e){} }
+
+/* HTML do banner "adicionar à tela inicial". Reaproveitado na home (some com
+   o toggle e com o X) e nas configurações (fica permanente, sem X). */
+function htmlBannerInstalar(id, comFechar){
+  return `
+    <div class="home-install-banner" id="${id}">
+      <img class="hib-icon" src="./assets/icon.jpg" alt="" onerror="this.remove()">
+      <div class="hib-txt">
+        <b>Tenha o CetecFestival na palma da sua mão</b>
+        <span class="hib-sub">Adicione nosso site à tela inicial</span>
+      </div>
+      <div class="hib-actions">
+        <button class="hib-add" type="button" id="${id}Add">Adicionar</button>
+        ${comFechar ? `<button class="hib-x" type="button" id="${id}X" aria-label="Fechar">✕</button>` : ''}
+      </div>
+    </div>`;
+}
+function wireBannerInstalar(id, comFechar){
+  const el = document.getElementById(id);
+  const add = document.getElementById(id + 'Add');
+  const x = comFechar ? document.getElementById(id + 'X') : null;
+  if(add) add.addEventListener('click', async () => {
+    const usouPrompt = (typeof window.instalarPWA === 'function') && await window.instalarPWA();
+    if(!usouPrompt){
+      if(typeof window.pwaEhIOS === 'function' && window.pwaEhIOS()){
+        alert('No iPhone: toque em Compartilhar 📤 e depois em "Adicionar à Tela de Início".');
+      } else {
+        alert('Abra o menu do seu navegador e escolha "Instalar app" ou "Adicionar à tela inicial".');
+      }
+    }
+  });
+  if(x) x.addEventListener('click', () => { if(el) el.remove(); });
+}
+
 /* ---------------------- Vercel Analytics ----------------------
    Site estático não precisa do pacote npm: o script oficial é servido
    pelo próprio Vercel em /_vercel/insights/script.js. Como o core.js
@@ -20,6 +79,105 @@
   s.defer = true;
   s.src = '/_vercel/insights/script.js';
   document.head.appendChild(s);
+})();
+
+/* ---------------------- PWA: instalar + service worker ----------------------
+   Registra o service worker (cache offline / abertura instantânea) e mostra
+   um banner próprio de "Adicionar à tela inicial", fechável no X. No iOS não
+   existe API de instalação: mostramos só uma dica curta. O "fechei" fica
+   guardado no localStorage para não repetir. Tudo com caminhos absolutos
+   (/...), então funciona igual nas páginas da raiz e nas de cada ano. */
+(function(){
+  if(!document.querySelector('link[rel="manifest"]')){
+    const l = document.createElement('link'); l.rel = 'manifest'; l.href = '/manifest.webmanifest'; document.head.appendChild(l);
+  }
+  if(!document.querySelector('meta[name="theme-color"]')){
+    const m = document.createElement('meta'); m.name = 'theme-color'; m.content = '#0e0f12'; document.head.appendChild(m);
+  }
+  if('serviceWorker' in navigator){
+    window.addEventListener('load', () => {
+      navigator.serviceWorker.register('/service-worker.js', { scope: '/' }).catch(() => {});
+    });
+  }
+
+  const DISMISS_KEY = 'cetec-pwa-dispensado';
+  const jaDispensou = () => localStorage.getItem(DISMISS_KEY) === '1';
+  const marcarDispensa = () => { try{ localStorage.setItem(DISMISS_KEY, '1'); }catch(e){} };
+  const estaInstalado = () => window.matchMedia('(display-mode: standalone)').matches || navigator.standalone === true;
+
+  function estiloBanner(){
+    if(document.getElementById('pwaBannerCss')) return;
+    const s = document.createElement('style'); s.id = 'pwaBannerCss';
+    s.textContent = `
+      .pwa-banner{position:fixed;left:12px;right:12px;bottom:12px;z-index:99999;max-width:520px;margin:0 auto;
+        background:#17181c;border:1px solid #2a2c33;border-radius:14px;padding:12px 14px;
+        display:flex;align-items:center;gap:12px;box-shadow:0 10px 30px rgba(0,0,0,.45);
+        font-family:'Inter',system-ui,sans-serif;color:#eceef2;animation:pwaUp .25s ease}
+      @keyframes pwaUp{from{transform:translateY(20px);opacity:0}to{transform:translateY(0);opacity:1}}
+      .pwa-banner img{width:38px;height:38px;border-radius:9px;flex:0 0 auto;object-fit:cover}
+      .pwa-banner .pwa-txt{flex:1;font-size:13px;line-height:1.35}
+      .pwa-banner .pwa-txt b{display:block;font-size:14px;margin-bottom:2px}
+      .pwa-banner .pwa-inst{background:#31b96e;color:#0b0c0f;border:0;border-radius:9px;padding:8px 14px;font-weight:800;cursor:pointer;font-size:13px}
+      .pwa-banner .pwa-x{background:transparent;border:0;color:#9aa0aa;font-size:20px;cursor:pointer;line-height:1;padding:2px 6px}`;
+    document.head.appendChild(s);
+  }
+
+  /* Android/Chrome: banner com botão "Instalar" de verdade */
+  let promptEvt = null;
+  window.addEventListener('beforeinstallprompt', ev => {
+    ev.preventDefault();
+    promptEvt = ev;
+    if(jaDispensou() || estaInstalado() || !document.body) return;
+    estiloBanner();
+    const b = document.createElement('div');
+    b.className = 'pwa-banner';
+    b.innerHTML = `<img src="/assets/favicon.png" alt="" onerror="this.remove()">
+      <div class="pwa-txt"><b>Instalar o CETECritic</b>Adicione à tela inicial e use como um app.</div>
+      <button class="pwa-inst" type="button">Instalar</button>
+      <button class="pwa-x" type="button" aria-label="Fechar">✕</button>`;
+    document.body.appendChild(b);
+    b.querySelector('.pwa-inst').addEventListener('click', async () => {
+      b.remove();
+      if(promptEvt){ promptEvt.prompt(); try{ await promptEvt.userChoice; }catch(e){} promptEvt = null; }
+    });
+    b.querySelector('.pwa-x').addEventListener('click', () => { marcarDispensa(); b.remove(); });
+  });
+  window.addEventListener('appinstalled', marcarDispensa);
+
+  /* Exposto pra outros banners da própria página (ex.: o banner de "adicionar
+     à tela inicial" da home) poderem reaproveitar esse fluxo sem duplicar lógica. */
+  window.instalarPWA = async function(){
+    if(promptEvt){
+      const evt = promptEvt; promptEvt = null;
+      evt.prompt();
+      try{ await evt.userChoice; }catch(e){}
+      return true;
+    }
+    return false;
+  };
+  window.pwaEstaInstalado = estaInstalado;
+  window.pwaEhIOS = function(){
+    const ua = navigator.userAgent || '';
+    return /iPhone|iPad|iPod/.test(ua) && !window.MSStream;
+  };
+
+  /* iOS (Safari): sem API de instalação — só uma dica curta, uma vez */
+  const ua = navigator.userAgent || '';
+  const ehIOS = /iPhone|iPad|iPod/.test(ua) && !window.MSStream;
+  const ehSafari = /Safari/.test(ua) && !/CriOS|FxiOS|EdgiOS/.test(ua);
+  if(ehIOS && ehSafari && !estaInstalado() && !jaDispensou()){
+    window.addEventListener('load', () => setTimeout(() => {
+      if(jaDispensou() || estaInstalado() || !document.body) return;
+      estiloBanner();
+      const b = document.createElement('div');
+      b.className = 'pwa-banner';
+      b.innerHTML = `<img src="/assets/favicon.png" alt="" onerror="this.remove()">
+        <div class="pwa-txt"><b>Adicionar à Tela de Início</b>Abra o menu <b style="display:inline">Compartilhar</b> do Safari e escolha "Adicionar à Tela de Início".</div>
+        <button class="pwa-x" type="button" aria-label="Fechar">✕</button>`;
+      document.body.appendChild(b);
+      b.querySelector('.pwa-x').addEventListener('click', () => { marcarDispensa(); b.remove(); });
+    }, 2500));
+  }
 })();
 
 /* ---------------------- utilidades ---------------------- */
@@ -119,6 +277,7 @@ async function fetchVotos(){
       if(typeof data.serverNow === 'number') serverTimeOffset = data.serverNow - Date.now();
       serverSaysClosed = !!data.votingClosed;
     }
+    salvarCacheVotos(ANO, submissions);   // regrava o cache SWR com o que veio da rede
   }catch(e){ console.error('Falha ao carregar avaliações', e); }
 }
 
@@ -149,6 +308,69 @@ function valoresDaChave(key){
 const ANO_LEGADO = (typeof ANO_VOTOS_ANTIGOS !== 'undefined') ? ANO_VOTOS_ANTIGOS : 2026;
 function filtrarVotosDoAno(lista, ano){
   return (lista || []).filter(s => (s.year ? Number(s.year) : ANO_LEGADO) === Number(ano));
+}
+
+/* ---- cache local dos votos (Stale-While-Revalidate) ----
+   Guarda a última resposta boa da planilha, por ano, no localStorage. Assim a
+   página pinta as notas na hora (mesmo offline) e a rede só atualiza por cima.
+   IMPORTANTE: não afeta a trava de horário — votar continua bloqueado até o
+   servidor confirmar o relógio (podeVotar() checa horarioSincronizado()). */
+function cacheVotosKey(ano){ return 'cetec-votos-' + ano; }
+function lerCacheVotos(ano){
+  if(!ano) return null;
+  try{ const v = JSON.parse(localStorage.getItem(cacheVotosKey(ano)) || 'null'); return Array.isArray(v) ? v : null; }
+  catch(e){ return null; }
+}
+function salvarCacheVotos(ano, lista){
+  if(!ano || !Array.isArray(lista)) return;
+  try{ localStorage.setItem(cacheVotosKey(ano), JSON.stringify(lista)); }catch(e){}
+}
+/* pinta a última versão conhecida antes mesmo de a rede responder */
+if(typeof ANO !== 'undefined' && ANO){ const _cacheVotos = lerCacheVotos(ANO); if(_cacheVotos) submissions = _cacheVotos; }
+
+/* ---- pôster do "Monte o Seu" no IndexedDB ----
+   Capas enviadas pela pessoa NÃO vão mais como base64 gigante no localStorage
+   (estourava a cota). Ficam aqui, que tem cota bem maior, já reduzidas. */
+function idbAbrir(){
+  return new Promise((res, rej) => {
+    const req = indexedDB.open('cetecritic', 1);
+    req.onupgradeneeded = () => { const db = req.result; if(!db.objectStoreNames.contains('posters')) db.createObjectStore('posters'); };
+    req.onsuccess = () => res(req.result);
+    req.onerror = () => rej(req.error);
+  });
+}
+async function idbSalvarPoster(chave, dataUrl){
+  try{ const db = await idbAbrir(); return await new Promise((res, rej) => { const tx = db.transaction('posters', 'readwrite'); tx.objectStore('posters').put(dataUrl, chave); tx.oncomplete = () => res(true); tx.onerror = () => rej(tx.error); }); }
+  catch(e){ return false; }
+}
+async function idbLerPoster(chave){
+  try{ const db = await idbAbrir(); return await new Promise((res) => { const tx = db.transaction('posters', 'readonly'); const rq = tx.objectStore('posters').get(chave); rq.onsuccess = () => res(rq.result || null); rq.onerror = () => res(null); }); }
+  catch(e){ return null; }
+}
+async function idbApagarPoster(chave){
+  try{ const db = await idbAbrir(); return await new Promise((res) => { const tx = db.transaction('posters', 'readwrite'); tx.objectStore('posters').delete(chave); tx.oncomplete = () => res(true); tx.onerror = () => res(false); }); }
+  catch(e){ return false; }
+}
+/* reduz a imagem enviada para no máx. `maxLargura`px em JPEG — de vários MB
+   para poucas centenas de KB, sem estourar cota nem travar o navegador */
+function reduzirImagem(file, maxLargura, qualidade){
+  return new Promise((res, rej) => {
+    const reader = new FileReader();
+    reader.onload = () => {
+      const img = new Image();
+      img.onload = () => {
+        const escala = Math.min(1, maxLargura / img.width);
+        const w = Math.round(img.width * escala), h = Math.round(img.height * escala);
+        const cv = document.createElement('canvas'); cv.width = w; cv.height = h;
+        cv.getContext('2d').drawImage(img, 0, 0, w, h);
+        try{ res(cv.toDataURL('image/jpeg', qualidade)); }catch(e){ res(reader.result); }
+      };
+      img.onerror = () => res(reader.result);
+      img.src = reader.result;
+    };
+    reader.onerror = () => rej(reader.error);
+    reader.readAsDataURL(file);
+  });
 }
 
 /* =====================================================================
@@ -220,6 +442,56 @@ async function fetchRankingReputacao(){
     const j = await r.json();
     return (j && Array.isArray(j.ranking)) ? j.ranking : [];
   }catch(e){ return []; }
+}
+
+/* ---- APIs novas: perfil próprio, excluir conta, usuários, reset, push ---- */
+async function apiMeuPerfil(){ const s = usuarioLogado(); if(!s) return { ok:false }; return apiPost({ action:'meuPerfil', user:s.user, token:s.token }); }
+async function apiDeletarConta(){ const s = usuarioLogado(); if(!s) return { ok:false }; return apiPost({ action:'deletarConta', user:s.user, token:s.token }); }
+async function apiPedirReset(conta){ return apiPost({ action:'pedirReset', conta }); }
+async function apiRedefinirSenha(user, token, novaSenha){ return apiPost({ action:'redefinirSenha', user, token, novaSenha }); }
+/* lista de TODOS os usuários (já com anônimo/privado aplicados no servidor).
+   Volta [] se o endpoint ainda não existir (antes do redeploy da Fase 2). */
+async function fetchUsuarios(){
+  try{
+    const r = await fetch(API_URL + '?usuarios=1&_=' + Date.now(), { cache:'no-store' });
+    const j = await r.json();
+    return (j && Array.isArray(j.usuarios)) ? j.usuarios : [];
+  }catch(e){ return []; }
+}
+async function apiSalvarPush(sub){ const s = usuarioLogado(); if(!s) return { ok:false }; return apiPost({ action:'salvarPush', user:s.user, token:s.token, sub }); }
+async function apiRemoverPush(endpoint){ const s = usuarioLogado(); if(!s) return { ok:false }; return apiPost({ action:'removerPush', user:s.user, token:s.token, endpoint }); }
+
+/* ---- Push (F2): inscrição no navegador via VAPID ----
+   A chave PÚBLICA pode ficar aqui (não é segredo). A privada vive só no Vercel. */
+const VAPID_PUBLIC_KEY = 'BJA227voh320nCYmkIt-zKa2j0wdlZO5n031Au6rW6ckq-6vuYjNWNNJ36rcnanwqKGRpIUCaPtla9Xx1t_2oOI';
+function urlBase64ParaUint8(base64){
+  const pad = '='.repeat((4 - base64.length % 4) % 4);
+  const b64 = (base64 + pad).replace(/-/g, '+').replace(/_/g, '/');
+  const raw = atob(b64); const arr = new Uint8Array(raw.length);
+  for(let i = 0; i < raw.length; i++) arr[i] = raw.charCodeAt(i);
+  return arr;
+}
+async function ativarPush(){
+  if(!('serviceWorker' in navigator) || !('PushManager' in window) || !('Notification' in window))
+    return { ok:false, error:'Seu navegador não suporta notificações push.' };
+  let perm;
+  try{ perm = await Notification.requestPermission(); }catch(e){ perm = Notification.permission; }
+  if(perm !== 'granted') return { ok:false, error:'Permissão de notificação negada.' };
+  try{
+    const reg = await navigator.serviceWorker.ready;
+    let sub = await reg.pushManager.getSubscription();
+    if(!sub) sub = await reg.pushManager.subscribe({ userVisibleOnly:true, applicationServerKey: urlBase64ParaUint8(VAPID_PUBLIC_KEY) });
+    const r = await apiSalvarPush(sub.toJSON());
+    return (r && r.ok) ? { ok:true } : { ok:false, error:(r && r.error) || 'não foi possível registrar' };
+  }catch(e){ return { ok:false, error:'não foi possível ativar (' + (e && e.message ? e.message : 'erro') + ')' }; }
+}
+async function desativarPush(){
+  try{
+    const reg = await navigator.serviceWorker.ready;
+    const sub = await reg.pushManager.getSubscription();
+    if(sub){ const ep = sub.endpoint; await sub.unsubscribe(); await apiRemoverPush(ep); }
+  }catch(e){}
+  return { ok:true };
 }
 
 /* ---- configuração do perfil (perfil.js, carregado só na perfil.html) ----
@@ -301,12 +573,25 @@ function htmlModalLogin(){
         <input type="text" id="loginUser" maxlength="20" autocomplete="off" placeholder="ex: maria">
         <label for="loginSenha">Senha</label>
         <input type="password" id="loginSenha" maxlength="60" placeholder="mínimo 4 caracteres">
-        <div class="login-seguranca">🔒 Sua senha é criptografada — nem nós conseguimos vê-la. Ainda assim, <b>nunca use uma senha que você usa em outro lugar ou algum dado sensível</b>: é um login simples, feito só pra brincadeira do site.</div>
+        <div id="loginSenha2Wrap" style="display:none;">
+          <label for="loginSenha2">Repita a senha</label>
+          <input type="password" id="loginSenha2" maxlength="60" placeholder="digite a senha de novo">
+        </div>
+        <div class="login-seguranca">🔒 Sua senha é criptografada — nem nós conseguimos vê-la. Ainda assim, <b>nunca use uma senha que você usa em outro lugar ou algum dado sensível. </div>
+        <div id="loginTosWrap" style="display:none;">
+          <label class="tos-check" id="loginTosLabel">
+            <input type="checkbox" id="loginTos">
+            <span>Declaro que concordo com os <a href="${BASE}termos.pdf" target="_blank" rel="noopener">Termos de Serviço</a> e sou maior de 13 anos.</span>
+          </label>
+        </div>
         <div class="login-erro" id="loginErro"></div>
         <button class="submit-btn" id="loginSubmit">Entrar</button>
         <div class="login-toggle">
           <span id="loginToggleTxt">Ainda não tem conta?</span>
           <button type="button" id="loginToggleBtn">Criar conta</button>
+        </div>
+        <div class="login-toggle" id="loginEsqueci">
+          <button type="button" id="loginEsqueciBtn">Esqueci a senha</button>
         </div>
       </div>
     </div>
@@ -326,6 +611,8 @@ function wireLogin(){
   const erro = document.getElementById('loginErro');
   const inpUser = document.getElementById('loginUser');
   const inpSenha = document.getElementById('loginSenha');
+  const inpSenha2 = document.getElementById('loginSenha2');
+  const senha2Wrap = document.getElementById('loginSenha2Wrap');
 
   function aplicarModo(){
     const ent = modo === 'login';
@@ -333,6 +620,17 @@ function wireLogin(){
     submit.textContent = ent ? 'Entrar' : 'Criar conta';
     toggleTxt.textContent = ent ? 'Ainda não tem conta?' : 'Já tem conta?';
     toggleBtn.textContent = ent ? 'Criar conta' : 'Entrar';
+    if(senha2Wrap) senha2Wrap.style.display = ent ? 'none' : 'block';   // "repita a senha" só ao criar conta
+    if(inpSenha2) inpSenha2.value = '';
+    const esq = document.getElementById('loginEsqueci');
+    if(esq) esq.style.display = ent ? 'flex' : 'none';   // "esqueci a senha" só no login
+    const tosWrap = document.getElementById('loginTosWrap');
+    const tosChk = document.getElementById('loginTos');
+    if(tosWrap) tosWrap.style.display = ent ? 'none' : 'block';   // aceite do ToS só ao criar conta
+    if(tosChk) tosChk.checked = false;
+    const tosLabel = document.getElementById('loginTosLabel');
+    if(tosLabel) tosLabel.classList.remove('tos-erro');
+    erro.style.color = '';
     erro.textContent = '';
   }
   function abrir(){
@@ -357,6 +655,17 @@ function wireLogin(){
     const senha = inpSenha.value;
     if(user.length < 2){ erro.textContent = 'Escolha um usuário (mínimo 2 caracteres).'; return; }
     if(senha.length < 4){ erro.textContent = 'A senha precisa de pelo menos 4 caracteres.'; return; }
+    if(modo === 'registrar' && senha !== (inpSenha2 ? inpSenha2.value : senha)){
+      erro.textContent = 'As senhas não conferem. Digite a mesma nos dois campos.'; return;
+    }
+    const tosChk = document.getElementById('loginTos');
+    const tosLabel = document.getElementById('loginTosLabel');
+    if(modo === 'registrar' && tosChk && !tosChk.checked){
+      erro.textContent = 'Marque a caixa dos Termos de Serviço para criar sua conta.';
+      if(tosLabel) tosLabel.classList.add('tos-erro');
+      return;
+    }
+    if(tosLabel) tosLabel.classList.remove('tos-erro');
     submit.disabled = true;
     const original = submit.textContent;
     submit.innerHTML = '<span class="spinner"></span>Aguarde...';
@@ -376,7 +685,26 @@ function wireLogin(){
     submit.textContent = original;
   }
   submit.addEventListener('click', enviar);
+  const loginTosChk = document.getElementById('loginTos');
+  if(loginTosChk) loginTosChk.addEventListener('change', () => {
+    if(loginTosChk.checked){
+      const tl = document.getElementById('loginTosLabel');
+      if(tl) tl.classList.remove('tos-erro');
+    }
+  });
   inpSenha.addEventListener('keydown', ev => { if(ev.key === 'Enter') enviar(); });
+  if(inpSenha2) inpSenha2.addEventListener('keydown', ev => { if(ev.key === 'Enter') enviar(); });
+  const esqueciBtn = document.getElementById('loginEsqueciBtn');
+  if(esqueciBtn) esqueciBtn.addEventListener('click', async () => {
+    const conta = (inpUser.value.trim()) || (prompt('Digite seu usuário ou o e-mail cadastrado:') || '').trim();
+    if(!conta){ return; }
+    erro.style.color = 'var(--text-muted)';
+    erro.textContent = 'Enviando…';
+    try{
+      const r = await apiPedirReset(conta);
+      erro.textContent = (r && r.msg) ? r.msg : 'Se houver um e-mail cadastrado, enviamos o link.';
+    }catch(e){ erro.style.color = ''; erro.textContent = 'Falha de conexão. Tente de novo.'; }
+  });
 }
 
 /* ---------------------- shell (sidebar + rodapé + modais) ---------------------- */
@@ -387,6 +715,10 @@ function htmlSidebar(){
       <span>CETEC<br>Critic</span>
     </a>
     <button class="nav-toggle" id="navToggle" aria-label="Abrir menu">☰</button>
+    <div class="sidebar-quick">
+      <a href="${BASE}perfil.html"${PAGINA.tipo === 'perfil' ? ' class="active"' : ''} title="Perfil" aria-label="Perfil">👤</a>
+      <a href="${BASE}configuracoes.html"${PAGINA.tipo === 'config' ? ' class="active"' : ''} title="Configurações" aria-label="Configurações">⚙️</a>
+    </div>
   </div>
   <div class="sidebar-nav" id="sidebarNav">
   `;
@@ -461,7 +793,13 @@ function htmlSidebar(){
       <div class="nav-decade-children">${edicoesHtml}</div>
     </div>`;
   });
-  return h + '</div>'; /* fecha .sidebar-nav */
+  h += '</div>'; /* fecha .sidebar-nav */
+  /* barra fixa no rodapé do menu (desktop): Perfil + Configurações */
+  h += `<div class="sidebar-account-bar">
+    <a href="${BASE}perfil.html"${PAGINA.tipo === 'perfil' ? ' class="active"' : ''}>👤 Perfil</a>
+    <a href="${BASE}configuracoes.html"${PAGINA.tipo === 'config' ? ' class="active"' : ''}>⚙️ Config</a>
+  </div>`;
+  return h;
 }
 
 function htmlModalMonte(){
@@ -493,6 +831,7 @@ function montarShell(conteudo){
         <img class="footer-logo" src="${BASE}assets/logo-rodape.png" alt="" onerror="this.style.display='none'">
         <div>${esc(RODAPE)}</div>
         <div>Contato e contribuições: <a href="mailto:${(typeof EMAIL_CONTATO !== 'undefined') ? EMAIL_CONTATO : 'cetecritic@gmail.com'}">${(typeof EMAIL_CONTATO !== 'undefined') ? EMAIL_CONTATO : 'cetecritic@gmail.com'}</a></div>
+        <div><a href="${BASE}termos.pdf" target="_blank" rel="noopener">Termos de Serviço e Política de Privacidade</a></div>
       </footer>
     </div>`);
 
@@ -883,6 +1222,13 @@ function updateFillHint(){
     submitBtn.disabled = true;
     return;
   }
+  const tosChk = document.getElementById('reviewTos');
+  if(tosChk && !tosChk.checked){
+    hintEl.textContent = `${filled} de ${disponiveis} episódios preenchidos — marque a caixa dos Termos de Serviço para enviar`;
+    submitBtn.disabled = true;
+    return;
+  }
+
   hintEl.textContent = `${filled} de ${disponiveis} episódios preenchidos`;
   submitBtn.disabled = filled < 1;
 }
@@ -1310,11 +1656,32 @@ function paginaEdicao(){
     const nf = reviewerNameEl.closest('.name-field');
     if(nf) nf.innerHTML = `<label>Avaliando como <b style="color:var(--gold)">👤 ${esc(sessNome.user)}</b></label>
       <label class="anon-check"><input type="checkbox" id="reviewAnon"> Enviar como anônimo <span class="anon-sub">(não vincula ao seu perfil)</span></label>`;
+  } else {
+    /* sem conta: precisa declarar o aceite do ToS a cada avaliação
+       (quem tem conta já declarou isso ao se cadastrar) */
+    const nf = reviewerNameEl.closest('.name-field');
+    if(nf) nf.insertAdjacentHTML('beforeend', `
+      <label class="tos-check" id="reviewTosLabel">
+        <input type="checkbox" id="reviewTos">
+        <span>Declaro que concordo com os <a href="${BASE}termos.pdf" target="_blank" rel="noopener">Termos de Serviço</a> e sou maior de 13 anos.</span>
+      </label>`);
+    const reviewTosChk = document.getElementById('reviewTos');
+    if(reviewTosChk) reviewTosChk.addEventListener('change', () => {
+      const rl = document.getElementById('reviewTosLabel');
+      if(rl) rl.classList.toggle('tos-erro', false);
+      updateFillHint();
+    });
   }
   document.getElementById('submitReview').addEventListener('click', async () => {
     if(!podeVotar()) return;
     if(Object.keys(formValues).length < 1) return;
     if(cooldownRestanteMs() > 0) return;
+    const reviewTosChk = document.getElementById('reviewTos');
+    if(reviewTosChk && !reviewTosChk.checked){
+      const rl = document.getElementById('reviewTosLabel');
+      if(rl) rl.classList.add('tos-erro');
+      return;
+    }
 
     const btn = document.getElementById('submitReview');
     const originalLabel = btn.textContent;
@@ -1601,7 +1968,7 @@ function paginaNoite(n){
     return;
   }
 
-  montarShell(intro + `<div id="noite-cards" style="width:100%; max-width:900px;"></div>`);
+  montarShell(intro + `<div class="noite-share-bar" style="width:100%; max-width:900px; margin:0 0 14px;"><button class="btn btn-ghost" id="shareNoiteBtn">📤 Compartilhar média da noite</button></div><div id="noite-cards" style="width:100%; max-width:900px;"></div>`);
 
   /* Os cards (com os vídeos) são montados UMA vez só.
      A atualização periódica mexe apenas na caixinha da nota — assim o
@@ -1652,6 +2019,23 @@ function paginaNoite(n){
   }
 
   renderCards();
+
+  /* compartilhar a MÉDIA DA NOITE inteira (média de todas as peças da noite) */
+  {
+    const bn = document.getElementById('shareNoiteBtn');
+    if(bn) bn.addEventListener('click', () => {
+      const vals = [];
+      pecas.forEach((info, idx) => valoresDaChave(`s${n}e${idx + 1}`).forEach(v => vals.push(v)));
+      abrirCompartilhamento({
+        poster: (typeof ED !== 'undefined' && ED && ED.poster) || 'poster.jpg',
+        titulo: `Noite ${n} — Cetec Festival ${ANO}`,
+        sub: nd.subtitulo || `${pecas.length} peça${pecas.length === 1 ? '' : 's'}`,
+        nota: media(vals),
+        legenda: 'Média da noite no CETECritic',
+        arquivo: `CETECritic_${ANO}_Noite_${n}.png`
+      });
+    });
+  }
 
   /* compartilhar (story) de uma peça específica: usa a média ao vivo da peça */
   {
@@ -1758,6 +2142,7 @@ function paginaMonte(){
       <p>Monte a sua própria versão da tabela, do jeitinho que você quiser. Isso fica só com você — não entra na página oficial nem nas Avaliações Gerais.</p>
       <div class="topbar-actions">
         <button class="btn btn-ghost" id="clearCustomBtn">Limpar</button>
+        <button class="btn btn-ghost" id="shareCustomBtn">📤 Compartilhar média</button>
         <button class="btn btn-solid" id="downloadCustomBtn">Baixar imagem</button>
       </div>
     </div>
@@ -1784,21 +2169,32 @@ function paginaMonte(){
 
   /* poster padrão do ano, se existir na pasta */
   const posterPadrao = ED.poster || 'poster.jpg';
-  const salvo = lerLegado('poster');
+  const posterIdbKey = 'monte-' + ANO;
   posterImg.addEventListener('load', () => posterBox.classList.add('has-image'));
-  posterImg.src = salvo || posterPadrao;
 
-  /* o clique no label já abre o seletor de arquivo nativamente (sem JS) */
-  posterInput.addEventListener('change', () => {
+  /* pôster salvo: agora no IndexedDB (não estoura cota). Migra o base64 antigo
+     do localStorage, se existir, e apaga esse peso morto de lá. */
+  (async () => {
+    let salvo = await idbLerPoster(posterIdbKey);
+    if(!salvo){
+      const legado = lerLegado('poster');   // versões antigas guardavam base64 no localStorage
+      if(legado){ salvo = legado; idbSalvarPoster(posterIdbKey, legado); }
+    }
+    posterImg.src = salvo || posterPadrao;
+    localStorage.removeItem(K('poster'));
+    if(ANO === 2026) localStorage.removeItem('custom-poster');
+  })();
+
+  /* o clique no label já abre o seletor de arquivo nativamente (sem JS).
+     A imagem é reduzida antes de guardar (poucas centenas de KB no IndexedDB). */
+  posterInput.addEventListener('change', async () => {
     const file = posterInput.files[0];
     if(!file) return;
-    const reader = new FileReader();
-    reader.onload = () => {
-      posterImg.src = reader.result;
-      try{ localStorage.setItem(K('poster'), reader.result); }
-      catch(e){ console.warn('Imagem grande demais para salvar localmente', e); }
-    };
-    reader.readAsDataURL(file);
+    try{
+      const dataUrl = await reduzirImagem(file, 700, 0.82);
+      posterImg.src = dataUrl;
+      idbSalvarPoster(posterIdbKey, dataUrl);
+    }catch(e){ console.warn('Não foi possível processar a imagem', e); }
   });
 
   const ct = lerLegado('title');
@@ -1912,12 +2308,26 @@ function paginaMonte(){
     posterImg.src = posterPadrao;
     /* apaga tudo que estava salvo no navegador */
     ['grid', 'title', 'description', 'poster'].forEach(s => localStorage.removeItem(K(s)));
+    idbApagarPoster(posterIdbKey);
     if(ANO === 2026){
       ['custom-grid', 'custom-title', 'custom-description', 'custom-poster'].forEach(k => localStorage.removeItem(k));
     }
   });
   document.getElementById('downloadCustomBtn').addEventListener('click', ev =>
     baixarImagem('custom-capture-area', `Meu_Cetec_Festival_${ANO}.png`, ev.currentTarget));
+
+  /* compartilhar a MÉDIA personalizada que a pessoa montou (card estilo story) */
+  document.getElementById('shareCustomBtn').addEventListener('click', () => {
+    const vals = Object.values(customValues).map(Number).filter(v => !isNaN(v));
+    abrirCompartilhamento({
+      poster: posterImg.src || posterPadrao,
+      titulo: `Meu ${ED.titulo}`,
+      sub: `Cetec Festival ${ANO}`,
+      nota: media(vals),
+      legenda: 'Minha média no CETECritic',
+      arquivo: `Meu_Cetec_Festival_${ANO}.png`
+    });
+  });
 
   buildCustomGrid();
 }
@@ -2772,7 +3182,14 @@ async function paginaHome(){
     </div>`;
   });
 
+  /* banner "adicionar à tela inicial" — só na home, toda vez que ela carrega,
+     a não ser que tenha sido desligado em Configurações > Aparência ou o site
+     já esteja instalado como app */
+  const mostrarBannerHome = bannerHomeAtivo() && !(typeof window.pwaEstaInstalado === 'function' && window.pwaEstaInstalado());
+  const htmlBannerHome = mostrarBannerHome ? htmlBannerInstalar('homeInstallBanner', true) : '';
+
   montarShell(`
+    ${htmlBannerHome}
     <div class="home-hero">
       <div class="poster-box has-image home-poster">
         <img src="${pastaDest}${esc((ED && ED.poster) || 'poster.jpg')}" alt="Poster da edição" onerror="this.closest('.poster-box').classList.remove('has-image')">
@@ -2822,6 +3239,12 @@ async function paginaHome(){
       <div class="sub">A história do CETEC Festival, ano a ano.</div>
       <div class="timeline">${htmlTl}</div>
     </div>`);
+
+  /* banner de instalação da home: "Adicionar" reaproveita o fluxo de PWA
+     quando o navegador oferece (Android/Chrome); senão, dá a dica certa
+     pra iOS ou um aviso genérico. O X só fecha aquela visita — ele volta
+     a aparecer da próxima vez que a home carregar. */
+  if(mostrarBannerHome) wireBannerInstalar('homeInstallBanner', true);
 
   /* botão "Monte o Seu" do hero: abre o mesmo seletor de ano do menu */
   const homeMonteBtn = document.getElementById('homeMonteBtn');
@@ -3096,6 +3519,7 @@ function reviewCardHtml(s){
         <div class="submission-when">${tempoAtras(Number(s.ts))} · ${vals.length} episódio${vals.length === 1 ? '' : 's'} avaliado${vals.length === 1 ? '' : 's'}</div>
       </div>
       <div class="submission-mini">${chips}</div>
+      <button class="rev-share" data-ano="${s.ano}" data-avg="${avg === null ? '' : avg.toFixed(1)}" title="Compartilhar esta avaliação (story)" style="background:transparent;border:0;color:#9aa0aa;cursor:pointer;font-size:16px;padding:2px 6px;line-height:1">📤</button>
       <div class="chevron">▾</div>
     </div>
     <div class="submission-detail"><div class="submission-detail-inner">
@@ -3106,7 +3530,8 @@ function reviewCardHtml(s){
 function ligarExpansao(container){
   container.querySelectorAll('.submission-item').forEach(item => {
     const head = item.querySelector('.submission-head');
-    if(head) head.addEventListener('click', () => {
+    if(head) head.addEventListener('click', (ev) => {
+      if(ev.target.closest('.rev-share')) return;   // clique no compartilhar não expande
       const aberto = item.classList.contains('expanded');
       container.querySelectorAll('.submission-item.expanded').forEach(el => { if(el !== item) el.classList.remove('expanded'); });
       item.classList.toggle('expanded', !aberto);
@@ -3246,8 +3671,8 @@ async function paginaPerfil(){
     });
     btnAdd.addEventListener('click', async () => {
       btnAdd.disabled = true; btnAdd.textContent = 'Adicionando...';
-      const meuPub = await fetchPerfilPublico(meuSess.user) || {};
-      const meuCfg = (meuPub.perfil && typeof meuPub.perfil === 'object') ? meuPub.perfil : {};
+      const meuFull = await apiMeuPerfil();
+      const meuCfg = (meuFull && meuFull.ok && meuFull.perfil && typeof meuFull.perfil === 'object') ? meuFull.perfil : {};
       const amigos = Array.isArray(meuCfg.amigos) ? meuCfg.amigos.slice() : [];
       if(amigos.some(x => String(x).toLowerCase() === alvoUser.toLowerCase())){
         btnAdd.textContent = '✓ Amigo'; return;
@@ -3281,6 +3706,11 @@ async function paginaPerfil(){
       }catch(err){ return { ano: e.ano, subs: [] }; }
     }));
 
+    /* perfil público primeiro: precisamos do nome de exibição (pseudônimo, se a
+       pessoa for anônima) para casar as avaliações dela no feed já anonimizado */
+    const pub = await fetchPerfilPublico(alvoUser, meuSess ? meuSess.user : null) || {};
+    const alvoMatch = (pub.anonimo && pub.nomeExib) ? String(pub.nomeExib).trim().toLowerCase() : alvo;
+
     /* dataset global + avaliações do dono do perfil + do visitante (p/ compare) */
     const todosSubs = [];
     const alvoSubs = [];
@@ -3290,7 +3720,7 @@ async function paginaPerfil(){
       const u = String(s.user || '').trim().toLowerCase();
       const reg = { grid: s.grid, year: o.ano, user: s.user, ts: s.ts };
       todosSubs.push(reg);
-      if(u === alvo) alvoSubs.push({ ...reg, ano: o.ano });
+      if(u === alvoMatch) alvoSubs.push({ ...reg, ano: o.ano });
       if(meuLower && u === meuLower) minhasSubs.push({ ...reg, ano: o.ano });
     }));
 
@@ -3319,12 +3749,16 @@ async function paginaPerfil(){
     const stEl = document.getElementById('perfilStats');
     if(stEl) stEl.innerHTML = cards.map(c => `<div class="hall-card"><div class="big">${c.big}</div><div class="lbl">${c.lbl}</div></div>`).join('');
 
-    /* lista de usuários conhecidos (dos votos) — usada no "adicionar amigo" */
-    carregar._usuarios = [...new Set(todosSubs.map(s => String(s.user || '').trim()).filter(Boolean))];
+    /* lista de usuários p/ "adicionar amigo": todos os cadastrados (endpoint novo),
+       com fallback para os nomes vindos dos votos antes do redeploy */
+    const _us = await fetchUsuarios();
+    carregar._usuarios = _us.length ? _us : [...new Set(todosSubs.map(s => String(s.user || '').trim()).filter(Boolean))];
 
-    /* ---- perfil público: showcase, favoritas, amigos, reputação, visitas, carimbos ---- */
-    const pub = await fetchPerfilPublico(alvoUser, meuSess ? meuSess.user : null) || {};
-    const perfilCfg = (pub.perfil && typeof pub.perfil === 'object') ? pub.perfil : {};
+    /* ---- perfil público (já buscado acima): showcase, favoritas, amigos, reputação, visitas, carimbos ---- */
+    let perfilCfg = (pub.perfil && typeof pub.perfil === 'object') ? pub.perfil : {};
+    /* no MEU perfil, o público vem sem e-mail/notif (privados). Carrego o completo
+       para que salvar destaques/favoritas/amigos NÃO apague esses campos. */
+    if(ehMeu){ const meuFull = await apiMeuPerfil(); if(meuFull && meuFull.ok && meuFull.perfil) perfilCfg = meuFull.perfil; }
     carregar._perfilCfg = perfilCfg;
     carregar._showcase = perfilCfg.showcase || {};
     renderShowcase(carregar._showcase);
@@ -3488,6 +3922,25 @@ async function paginaPerfil(){
         ligarExpansao(revRec);
       }
     }
+
+    /* compartilhar cada avaliação (delegação única — sobrevive ao refresh de 30s) */
+    [revFest, revRec].forEach(cont => {
+      if(!cont || cont._shareWired) return;
+      cont._shareWired = true;
+      cont.addEventListener('click', ev => {
+        const b = ev.target.closest('.rev-share'); if(!b) return;
+        ev.stopPropagation();
+        const ano = Number(b.dataset.ano);
+        abrirCompartilhamento({
+          poster: `${BASE}${ano}/poster.jpg`,
+          titulo: `Cetec Festival ${ano}`,
+          sub: alvoUser,
+          nota: b.dataset.avg === '' ? null : Number(b.dataset.avg),
+          legenda: 'minha avaliação no CETECritic',
+          arquivo: `CETECritic_${alvoUser}_${ano}.png`
+        });
+      });
+    });
 
     /* guarda para o compare / showcase */
     carregar._alvoSubs = alvoSubs;
@@ -3854,7 +4307,13 @@ async function paginaBusca(){
   });
   pecas.forEach(p => { const a = avgKey[p.ano + '|' + p.key]; p.avg = a ? a.avg : null; p.nAval = a ? a.n : 0; });
   festivais.forEach(f => { f.avg = (avgFest[f.ano] !== undefined) ? avgFest[f.ano] : null; });
-  const usuarios = Object.values(usersMap);
+  /* lista de usuários: agora vem do endpoint que traz TODOS os cadastrados
+     (mesmo quem nunca votou), já com anônimo/privado aplicados. Se o endpoint
+     ainda não existir (antes do redeploy), cai no comportamento antigo. */
+  const nomesOficiais = await fetchUsuarios();
+  const usuarios = nomesOficiais.length
+    ? nomesOficiais.map(nome => ({ nome, eps: (usersMap[nome.toLowerCase()] ? usersMap[nome.toLowerCase()].eps : 0) }))
+    : Object.values(usersMap);
   const turmas = [...new Set(pecas.map(p => p.turma).filter(Boolean))].sort();
   const maxNoites = Math.max(...reais.map(e => e.noites), 1);
 
@@ -3907,6 +4366,227 @@ async function paginaBusca(){
   render();
 }
 
+/* =====================================================================
+   PÁGINA: CONFIGURAÇÕES (configuracoes.html)
+   =====================================================================
+   Preferências ficam no JSON 'perfil' (mesma ação já existente) — então
+   SALVAR já funciona hoje. O EFEITO no servidor (anonimizar nomes nos feeds,
+   sumir da busca, enviar e-mail/push) chega com a Fase 2 / F1 / F2. O tema é
+   local (por aparelho). */
+function switchHtml(id, on){
+  return `<label class="cfg-switch"><input type="checkbox" id="${id}"${on ? ' checked' : ''}><span class="track"></span><span class="thumb"></span></label>`;
+}
+function wireSwitch(id, cb){
+  const el = document.getElementById(id);
+  if(el) el.addEventListener('change', () => cb(el.checked));
+}
+
+async function paginaConfig(){
+  document.title = 'Configurações — CETECritic';
+  const sess = usuarioLogado();
+  const podeInstalar = !(typeof window.pwaEstaInstalado === 'function' && window.pwaEstaInstalado());
+
+  montarShell(`
+    <div class="perfil-head"><h1>⚙️ Configurações</h1></div>
+    <div class="cfg-group">
+      <h2>Aparência</h2>
+      <div class="cfg-group-sub">Vale só neste aparelho.</div>
+      ${podeInstalar ? htmlBannerInstalar('cfgInstallBanner', false) : ''}
+      <div class="cfg-row">
+        <div class="cfg-info"><div class="cfg-label">Tema</div><div class="cfg-desc">Automático segue o tema do seu sistema.</div></div>
+        <div class="cfg-ctrl"><div class="cfg-seg" id="segTema">
+          <button data-t="auto">Automático</button>
+          <button data-t="claro">Claro</button>
+          <button data-t="escuro">Escuro</button>
+        </div></div>
+      </div>
+      <div class="cfg-row">
+        <div class="cfg-info"><div class="cfg-label">Banner para adicionar à tela inicial</div>
+          <div class="cfg-desc">Mostra um aviso na página inicial sugerindo instalar o CetecFestival na tela inicial do aparelho.</div></div>
+        <div class="cfg-ctrl">${switchHtml('cfgBannerHome', bannerHomeAtivo())}</div>
+      </div>
+    </div>
+    <div id="cfgLogado"></div>`);
+
+  if(podeInstalar) wireBannerInstalar('cfgInstallBanner', false);
+
+  /* segmento de tema (funciona logado ou não) */
+  const seg = document.getElementById('segTema');
+  function marcarTema(){ seg.querySelectorAll('button').forEach(b => b.classList.toggle('sel', b.dataset.t === temaPref())); }
+  marcarTema();
+  seg.querySelectorAll('button').forEach(b => b.addEventListener('click', () => {
+    localStorage.setItem(TEMA_KEY, b.dataset.t); aplicarTema(b.dataset.t); marcarTema();
+  }));
+
+  /* toggle do banner de instalação da home — preferência local, efeito imediato */
+  const swBannerHome = document.getElementById('cfgBannerHome');
+  if(swBannerHome) swBannerHome.addEventListener('change', () => setBannerHomeAtivo(swBannerHome.checked));
+
+  const box = document.getElementById('cfgLogado');
+  if(!sess){
+    box.innerHTML = `<div class="noite-card" style="text-align:center;">
+      <div class="perfil-vazio">Entre na sua conta para configurar e-mail de recuperação, privacidade e notificações.</div>
+      <button class="btn btn-solid" id="cfgEntrar">Entrar / Criar conta</button></div>`;
+    const b = document.getElementById('cfgEntrar');
+    if(b) b.addEventListener('click', () => { const e = document.getElementById('btnEntrar'); if(e) e.click(); });
+    return;
+  }
+
+  box.innerHTML = '<div class="empty-note">Carregando suas configurações…</div>';
+  const meu = await apiMeuPerfil();
+  let cfg = (meu && meu.ok && meu.perfil && typeof meu.perfil === 'object') ? meu.perfil : {};
+  const notif = (cfg.notif && typeof cfg.notif === 'object') ? cfg.notif : {};
+
+  box.innerHTML = `
+    <div class="cfg-group">
+      <h2>Conta</h2>
+      <div class="cfg-group-sub">Logado como <b>${esc(sess.user)}</b>.</div>
+      <div class="cfg-row" style="display:block;">
+        <div class="cfg-info"><div class="cfg-label">E-mail de recuperação (opcional)</div>
+          <div class="cfg-desc">Use o e-mail que você quiser. Serve só para redefinir a senha.</div></div>
+        <div class="cfg-email-row">
+          <input type="email" id="cfgEmail" placeholder="seu@email.com" maxlength="120" value="${esc(cfg.email || '')}">
+          <button class="btn btn-solid" id="cfgEmailSalvar">Salvar e-mail</button>
+        </div>
+        <div class="cfg-disclaimer">⚠️ Sem e-mail cadastrado, <b>não há como recuperar a senha se você esquecê-la</b> — a conta fica inacessível. Cadastrar é opcional, mas recomendado.</div>
+        <div class="cfg-msg" id="cfgEmailMsg"></div>
+      </div>
+      <div class="cfg-row">
+        <div class="cfg-info"><div class="cfg-label">Modo anônimo</div>
+          <div class="cfg-desc">Esconde seu nome nas listas públicas (ranking, busca, carimbos…). Seus votos continuam contando.</div></div>
+        <div class="cfg-ctrl">${switchHtml('cfgAnonimo', !!cfg.anonimo)}</div>
+      </div>
+      <div class="cfg-row">
+        <div class="cfg-info"><div class="cfg-label">Perfil privado</div>
+          <div class="cfg-desc">Tira você da busca e do "adicionar amigo". Seu perfil ainda abre por link direto. <</div></div>
+        <div class="cfg-ctrl">${switchHtml('cfgPrivado', !!cfg.privado)}</div>
+      </div>
+      <div class="cfg-msg" id="cfgContaMsg"></div>
+    </div>
+
+    <div class="cfg-group">
+      <h2>Notificações</h2>
+      <div class="cfg-group-sub">Escolha o que você quer receber. </div>
+      <div class="cfg-row">
+        <div class="cfg-info"><div class="cfg-label">Notificações push</div>
+          <div class="cfg-desc">Avisos no aparelho quando uma noite abre, resultados saem etc. No iPhone, só depois de instalar o app na tela inicial.</div></div>
+        <div class="cfg-ctrl">${switchHtml('cfgPush', !!notif.push)}</div>
+      </div>
+      <div class="cfg-row">
+        <div class="cfg-info"><div class="cfg-label">E-mail de novidades</div>
+          <div class="cfg-desc">Resumo por e-mail quando um festival novo entra no ar. Precisa de um e-mail cadastrado acima.</div></div>
+        <div class="cfg-ctrl">${switchHtml('cfgEmailNews', !!notif.email)}</div>
+      </div>
+      <div class="cfg-msg" id="cfgNotifMsg"></div>
+    </div>
+
+    <div class="cfg-group cfg-danger">
+      <h2>Zona de perigo</h2>
+      <div class="cfg-group-sub">Ação permanente.</div>
+      <div class="cfg-row">
+        <div class="cfg-info"><div class="cfg-label">Excluir minha conta</div>
+          <div class="cfg-desc">Apaga seu perfil, carimbos, visitas, reputação e palpites. Suas notas <b>viram anônimas</b> (as médias das peças continuam). </div></div>
+        <div class="cfg-ctrl"><button class="btn-danger" id="cfgExcluir">Excluir conta</button></div>
+      </div>
+      <div class="cfg-msg" id="cfgExcluirMsg"></div>
+    </div>`;
+
+  async function salvarMerge(patch, msgEl){
+    const novo = Object.assign({}, cfg, patch);
+    if(msgEl) msgEl.textContent = 'Salvando…';
+    const r = await apiSalvarPerfil(novo);
+    if(r && r.ok){ cfg = novo; if(msgEl) msgEl.textContent = 'Salvo ✓'; }
+    else if(msgEl) msgEl.textContent = (r && r.error) ? r.error : 'Não foi possível salvar.';
+    return r;
+  }
+
+  document.getElementById('cfgEmailSalvar').addEventListener('click', async () => {
+    const email = document.getElementById('cfgEmail').value.trim();
+    const msg = document.getElementById('cfgEmailMsg');
+    if(email && !/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(email)){ msg.textContent = 'E-mail inválido.'; return; }
+    await salvarMerge({ email }, msg);
+  });
+
+  wireSwitch('cfgAnonimo', v => {
+    const patch = { anonimo: v };
+    /* pseudônimo fixo, gerado uma vez e guardado (fica "Anônimo ####") */
+    if(v && !cfg.pseudo) patch.pseudo = 'Anônimo ' + (1000 + Math.floor(Math.random() * 9000));
+    return salvarMerge(patch, document.getElementById('cfgContaMsg'));
+  });
+  wireSwitch('cfgPrivado', v => salvarMerge({ privado: v }, document.getElementById('cfgContaMsg')));
+
+  function salvarNotif(patch){
+    const novoNotif = Object.assign({}, (cfg.notif || {}), patch);
+    return salvarMerge({ notif: novoNotif }, document.getElementById('cfgNotifMsg'));
+  }
+  wireSwitch('cfgPush', async v => {
+    const msg = document.getElementById('cfgNotifMsg');
+    const el = document.getElementById('cfgPush');
+    if(v){
+      msg.textContent = 'Ativando…';
+      const r = await ativarPush();
+      if(!r.ok){ if(el) el.checked = false; msg.textContent = r.error || 'não foi possível ativar'; return; }
+    } else {
+      await desativarPush();
+    }
+    await salvarNotif({ push: v });
+  });
+  wireSwitch('cfgEmailNews', v => salvarNotif({ email: v }));
+
+  document.getElementById('cfgExcluir').addEventListener('click', async () => {
+    const msg = document.getElementById('cfgExcluirMsg');
+    if(!confirm('Tem certeza que quer EXCLUIR sua conta? Isso é permanente.')) return;
+    const nome = prompt('Para confirmar, digite seu usuário (' + sess.user + '):');
+    if(!nome || nome.trim().toLowerCase() !== sess.user.toLowerCase()){ msg.textContent = 'Nome não confere — cancelado.'; return; }
+    msg.textContent = 'Excluindo…';
+    const r = await apiPost({ action:'deletarConta', user:sess.user, token:sess.token });
+    if(r && r.ok){ sairSessao(); alert('Conta excluída.'); location.href = BASE + 'index.html'; }
+    else msg.textContent = (r && r.error) ? r.error : 'Ainda não disponível';
+  });
+}
+
+/* =====================================================================
+   PÁGINA: REDEFINIR SENHA (redefinir-senha.html) — chegada pelo link do e-mail
+   ===================================================================== */
+function paginaRedefinir(){
+  document.title = 'Redefinir senha — CETECritic';
+  const params = new URLSearchParams(location.search);
+  const user = params.get('user') || '';
+  const token = params.get('token') || '';
+  montarShell(`
+    <div class="perfil-head"><h1>🔑 Redefinir senha</h1></div>
+    <div class="cfg-group" style="max-width:460px;">
+      ${(!user || !token) ? '<div class="empty-note">Link inválido ou incompleto. Peça um novo pela tela de login (“Esqueci a senha”).</div>' : `
+      <div class="cfg-group-sub">Conta: <b>${esc(user)}</b></div>
+      <div class="login-form">
+        <label for="rsSenha">Nova senha</label>
+        <input type="password" id="rsSenha" maxlength="60" placeholder="mínimo 4 caracteres">
+        <label for="rsSenha2">Repita a nova senha</label>
+        <input type="password" id="rsSenha2" maxlength="60" placeholder="digite de novo">
+        <div class="login-erro" id="rsErro"></div>
+        <button class="submit-btn" id="rsSubmit">Salvar nova senha</button>
+      </div>`}
+    </div>`);
+  if(!user || !token) return;
+  const bt = document.getElementById('rsSubmit');
+  async function enviar(){
+    const s1 = document.getElementById('rsSenha').value, s2 = document.getElementById('rsSenha2').value;
+    const erro = document.getElementById('rsErro');
+    if(s1.length < 4){ erro.textContent = 'A senha precisa de pelo menos 4 caracteres.'; return; }
+    if(s1 !== s2){ erro.textContent = 'As senhas não conferem.'; return; }
+    bt.disabled = true; bt.innerHTML = '<span class="spinner"></span>Salvando...';
+    erro.textContent = '';
+    try{
+      const r = await apiRedefinirSenha(user, token, s1);
+      if(r && r.ok){ salvarSessao(r.user, r.token); alert('Senha alterada! Você já está logado.'); location.href = BASE + 'perfil.html'; return; }
+      erro.textContent = (r && r.error) ? r.error : 'Não foi possível redefinir.';
+    }catch(e){ erro.textContent = 'Falha de conexão. Tente de novo.'; }
+    bt.disabled = false; bt.textContent = 'Salvar nova senha';
+  }
+  bt.addEventListener('click', enviar);
+  document.getElementById('rsSenha2').addEventListener('keydown', ev => { if(ev.key === 'Enter') enviar(); });
+}
+
 /* ---------------------- dispatcher ---------------------- */
 switch(PAGINA.tipo){
   case 'edicao':   paginaEdicao(); break;
@@ -3919,5 +4599,7 @@ switch(PAGINA.tipo){
   case 'emBreve':  paginaEmBreve(); break;
   case 'perfil':   paginaPerfil(); break;
   case 'busca':    paginaBusca(); break;
+  case 'config':   paginaConfig(); break;
+  case 'redefinir': paginaRedefinir(); break;
   default: console.error('PAGINA.tipo desconhecido:', PAGINA.tipo);
 }

@@ -1,0 +1,18 @@
+{
+  "name": "CETECritic",
+  "short_name": "CETECritic",
+  "description": "O Cetec Festival na palma da sua mão: vote nas peças, acompanhe as médias ao vivo, compare edições e explore a história do maior festival estudantil do sul do país.",
+  "start_url": "/index.html",
+  "scope": "/",
+  "display": "standalone",
+  "orientation": "portrait",
+  "background_color": "#0e0f12",
+  "theme_color": "#0e0f12",
+  "lang": "pt-BR",
+  "icons": [
+    { "src": "/assets/favicon.png", "sizes": "192x192", "type": "image/png", "purpose": "any" },
+    { "src": "/assets/logo.png", "sizes": "512x512", "type": "image/png", "purpose": "any" },
+    { "src": "/assets/logo.png", "sizes": "512x512", "type": "image/png", "purpose": "maskable" },
+    { "src": "/assets/icon.png", "sizes": "512x512", "type": "image/png", "purpose": "icon" }
+  ]
+}

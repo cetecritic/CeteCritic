@@ -1,0 +1,68 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Enviar push — CETECritic (admin)</title>
+<meta name="robots" content="noindex">
+<style>
+  :root{ color-scheme: dark; }
+  body{ background:#0e0f12; color:#eceef2; font-family:'Inter',system-ui,sans-serif; margin:0; padding:32px 18px; display:flex; justify-content:center; }
+  .box{ width:100%; max-width:460px; }
+  h1{ font-size:20px; margin:0 0 4px; }
+  p.sub{ color:#9aa0aa; font-size:13px; margin:0 0 20px; }
+  label{ display:block; font-size:12px; font-weight:700; margin:14px 0 6px; }
+  input, textarea{ width:100%; background:#17181c; border:1px solid #2a2c33; color:#eceef2; border-radius:9px; padding:10px 12px; font-family:inherit; font-size:14px; }
+  textarea{ min-height:80px; resize:vertical; }
+  button{ margin-top:18px; width:100%; background:#31b96e; color:#0b0c0f; border:0; border-radius:10px; padding:12px; font-weight:800; font-size:14px; cursor:pointer; }
+  button:disabled{ opacity:.6; cursor:default; }
+  .msg{ margin-top:14px; font-size:13px; color:#9aa0aa; min-height:18px; }
+</style>
+</head>
+<body>
+<div class="box">
+  <h1>Enviar notificação push</h1>
+  <p class="sub">Página de administração. O segredo é o mesmo do <code>PUSH_SEND_SECRET</code> do Vercel — ele não fica salvo, você digita a cada envio.</p>
+
+  <label for="secret">Segredo de envio</label>
+  <input type="password" id="secret" autocomplete="off" placeholder="PUSH_SEND_SECRET">
+
+  <label for="title">Título</label>
+  <input type="text" id="title" maxlength="80" placeholder="Ex.: A Noite 3 já abriu!">
+
+  <label for="body">Mensagem</label>
+  <textarea id="body" maxlength="300" placeholder="Ex.: Corre votar nas peças de hoje 🎭"></textarea>
+
+  <label for="url">Link ao clicar (opcional)</label>
+  <input type="text" id="url" placeholder="/index.html">
+
+  <button id="enviar">Enviar para todos</button>
+  <div class="msg" id="msg"></div>
+</div>
+
+<script>
+const $ = id => document.getElementById(id);
+$('enviar').addEventListener('click', async () => {
+  const secret = $('secret').value.trim();
+  const title = $('title').value.trim();
+  const body = $('body').value.trim();
+  const url = $('url').value.trim() || '/index.html';
+  const msg = $('msg');
+  if(!secret){ msg.textContent = 'Informe o segredo.'; return; }
+  if(!title && !body){ msg.textContent = 'Escreva ao menos um título ou mensagem.'; return; }
+  $('enviar').disabled = true; msg.textContent = 'Enviando…';
+  try{
+    const r = await fetch('/api/enviar-push', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ secret, title, body, url })
+    });
+    const j = await r.json();
+    if(j && j.ok) msg.textContent = 'Enviado: ' + j.enviados + ' de ' + j.total + ' (falhas: ' + j.falhas + ').';
+    else msg.textContent = 'Erro: ' + ((j && j.error) || r.status);
+  }catch(e){ msg.textContent = 'Falha de conexão.'; }
+  $('enviar').disabled = false;
+});
+</script>
+</body>
+</html>
