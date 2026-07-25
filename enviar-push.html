@@ -58,7 +58,13 @@ $('enviar').addEventListener('click', async () => {
       body: JSON.stringify({ secret, title, body, url })
     });
     const j = await r.json();
-    if(j && j.ok) msg.textContent = 'Enviado: ' + j.enviados + ' de ' + j.total + ' (falhas: ' + j.falhas + ').';
+    if(j && j.ok){
+      let t = 'Enviado: ' + j.enviados + ' de ' + j.total + ' (falhas: ' + j.falhas + ').';
+      if(j.erros && Object.keys(j.erros).length){
+        t += ' Motivos: ' + Object.entries(j.erros).map(([c, n]) => n + '× ' + c).join(', ') + '.';
+      }
+      msg.textContent = t;
+    }
     else msg.textContent = 'Erro: ' + ((j && j.error) || r.status);
   }catch(e){ msg.textContent = 'Falha de conexão.'; }
   $('enviar').disabled = false;

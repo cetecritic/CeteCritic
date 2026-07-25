@@ -389,7 +389,7 @@ async function apiPost(payload){
   });
   return await res.json();
 }
-async function apiRegistrar(user, senha){ return apiPost({ action:'registrar', user, senha }); }
+async function apiRegistrar(user, senha, email){ return apiPost({ action:'registrar', user, senha, email }); }
 async function apiLogin(user, senha){ return apiPost({ action:'login', user, senha }); }
 async function apiEnviarPalpite(year, palpites){
   const s = usuarioLogado();
@@ -465,8 +465,11 @@ async function apiMarcarNotifLidas(ids){ const s = usuarioLogado(); if(!s) retur
 async function apiCriarNotif(tipo, id, titulo, corpo, url){ const s = usuarioLogado(); if(!s) return { ok:false }; return apiPost({ action:'criarNotif', user:s.user, token:s.token, tipo, id, titulo, corpo, url }); }
 
 /* ---- Push (F2): inscrição no navegador via VAPID ----
-   A chave PÚBLICA pode ficar aqui (não é segredo). A privada vive só no Vercel. */
-const VAPID_PUBLIC_KEY = 'BJA227voh320nCYmkIt-zKa2j0wdlZO5n031Au6rW6ckq-6vuYjNWNNJ36rcnanwqKGRpIUCaPtla9Xx1t_2oOI';
+   A chave PÚBLICA fica no config.js (VAPID_PUBLIC_KEY). A privada vive só no Vercel.
+   Fallback abaixo só pra não quebrar caso um config.js antigo (em cache) não a tenha. */
+if(typeof VAPID_PUBLIC_KEY === 'undefined'){
+  window.VAPID_PUBLIC_KEY = 'BHHyvYlbob5Jvt8h_7g8H96uT8eqFH1QlPo-jUNfY_R9fCVOnKh0VKQvvwarizc5EgpyfPbUOPff46DAchJkZBQ';
+}
 function urlBase64ParaUint8(base64){
   const pad = '='.repeat((4 - base64.length % 4) % 4);
   const b64 = (base64 + pad).replace(/-/g, '+').replace(/_/g, '/');
@@ -580,6 +583,11 @@ function htmlModalLogin(){
           <label for="loginSenha2">Repita a senha</label>
           <input type="password" id="loginSenha2" maxlength="60" placeholder="digite a senha de novo">
         </div>
+        <div id="loginEmailWrap" style="display:none;">
+          <label for="loginEmail">E-mail (opcional)</label>
+          <input type="email" id="loginEmail" maxlength="120" autocomplete="off" placeholder="para recuperar a senha depois">
+          <div class="login-seguranca" style="margin-top:4px;">Sem e-mail, não dá pra recuperar a senha se esquecer. Você pode adicionar ou trocar depois em Configurações.</div>
+        </div>
         <div class="login-seguranca">🔒 Sua senha é criptografada — nem nós conseguimos vê-la. Ainda assim, <b>nunca use uma senha que você usa em outro lugar ou algum dado sensível. </div>
         <div id="loginTosWrap" style="display:none;">
           <label class="tos-check" id="loginTosLabel">
@@ -616,6 +624,8 @@ function wireLogin(){
   const inpSenha = document.getElementById('loginSenha');
   const inpSenha2 = document.getElementById('loginSenha2');
   const senha2Wrap = document.getElementById('loginSenha2Wrap');
+  const inpEmail = document.getElementById('loginEmail');
+  const emailWrap = document.getElementById('loginEmailWrap');
 
   function aplicarModo(){
     const ent = modo === 'login';
@@ -625,6 +635,8 @@ function wireLogin(){
     toggleBtn.textContent = ent ? 'Criar conta' : 'Entrar';
     if(senha2Wrap) senha2Wrap.style.display = ent ? 'none' : 'block';   // "repita a senha" só ao criar conta
     if(inpSenha2) inpSenha2.value = '';
+    if(emailWrap) emailWrap.style.display = ent ? 'none' : 'block';      // e-mail opcional só ao criar conta
+    if(inpEmail && ent) inpEmail.value = '';
     const esq = document.getElementById('loginEsqueci');
     if(esq) esq.style.display = ent ? 'flex' : 'none';   // "esqueci a senha" só no login
     const tosWrap = document.getElementById('loginTosWrap');
@@ -669,12 +681,14 @@ function wireLogin(){
       return;
     }
     if(tosLabel) tosLabel.classList.remove('tos-erro');
+    const email = (modo === 'registrar' && inpEmail) ? inpEmail.value.trim() : '';
+    if(email && !/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(email)){ erro.textContent = 'E-mail inválido (ou deixe em branco).'; return; }
     submit.disabled = true;
     const original = submit.textContent;
     submit.innerHTML = '<span class="spinner"></span>Aguarde...';
     erro.textContent = '';
     try{
-      const r = modo === 'login' ? await apiLogin(user, senha) : await apiRegistrar(user, senha);
+      const r = modo === 'login' ? await apiLogin(user, senha) : await apiRegistrar(user, senha, email);
       if(r && r.ok){
         salvarSessao(r.user, r.token);
         location.reload();

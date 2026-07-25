@@ -14,7 +14,7 @@
 const webpush = require('web-push');
 
 /* mesma URL do API_URL do config.js (não é segredo) */
-const APPS_SCRIPT_URL = 'https://script.google.com/macros/s/AKfycbx_HwHNycDjcKfSsYfVm6j1JyLL0OXR0F8lNlG-sa-f4VYCJRWdSO2Y-CDngSUQEgfGfA/exec';
+const APPS_SCRIPT_URL = 'https://script.google.com/macros/s/AKfycbwuwKpZ8XUWKHKlw3ZiPS-1HiWvt6hqwHAFtsLS10Rf_ToI3h_eIaDdXIY-ZlQcUuJLQg/exec';
 
 /* aceita "mailto: <x@y>" (com espaço/colchetes) e devolve "mailto:x@y" */
 function limparSubject(s) {
@@ -39,11 +39,18 @@ async function enviarParaTodos({ title, body, url }) {
 
   const payload = JSON.stringify({ title: title || 'CETECritic', body: body || '', url: url || '/index.html' });
   let ok = 0, fail = 0;
+  const erros = [];   // guarda o motivo de cada falha (status HTTP do serviço de push)
   await Promise.all(subs.map(async (sub) => {
     try { await webpush.sendNotification(sub, payload); ok++; }
-    catch (e) { fail++; /* inscrição morta (410/404): dá pra limpar depois */ }
+    catch (e) {
+      fail++;
+      const code = (e && e.statusCode) ? e.statusCode : (e && e.message) ? e.message : String(e);
+      erros.push(code);
+    }
   }));
-  return { enviados: ok, falhas: fail, total: subs.length };
+  /* resume os motivos: ex. { "410": 2 } = 2 inscrições expiradas */
+  const resumoErros = erros.reduce((acc, c) => { const k = String(c); acc[k] = (acc[k] || 0) + 1; return acc; }, {});
+  return { enviados: ok, falhas: fail, total: subs.length, erros: resumoErros };
 }
 
 module.exports = async (req, res) => {

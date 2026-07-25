@@ -72,6 +72,12 @@ const EDICOES = [
 /* Planilha (Google Apps Script) que guarda os votos — vale para todos os anos */
 const API_URL = 'https://script.google.com/macros/s/AKfycbwuwKpZ8XUWKHKlw3ZiPS-1HiWvt6hqwHAFtsLS10Rf_ToI3h_eIaDdXIY-ZlQcUuJLQg/exec';
 
+/* Chave PÚBLICA VAPID das notificações push (NÃO é segredo — pode ficar aqui).
+   Precisa ser a MESMA da variável VAPID_PUBLIC_KEY na Vercel; a chave privada
+   correspondente vive só no Vercel (VAPID_PRIVATE_KEY). Se trocar o par de
+   chaves, todos os aparelhos precisam se reinscrever no push. */
+const VAPID_PUBLIC_KEY = 'BHHyvYlbob5Jvt8h_7g8H96uT8eqFH1QlPo-jUNfY_R9fCVOnKh0VKQvvwarizc5EgpyfPbUOPff46DAchJkZBQ';
+
 /* Nota máxima aceita nos formulários (mantenha igual ao MAX_RATING do Apps Script) */
 const NOTA_MAXIMA = 10;
 
