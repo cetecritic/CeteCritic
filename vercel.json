@@ -1,5 +1,10 @@
 {
   "crons": [
     { "path": "/api/cron-push", "schedule": "0 12 * * *" }
+  ],
+  "rewrites": [
+    { "source": "/config.js", "destination": "/api/content?file=config" },
+    { "source": "/:ano(\\d{4})/edicao.js", "destination": "/api/content?file=edicao&ano=:ano" },
+    { "source": "/:ano(\\d{4})/noites/noite-:n(\\d+).js", "destination": "/api/content?file=noites&ano=:ano&noite=:n" }
   ]
 }

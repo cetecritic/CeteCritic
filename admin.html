@@ -1,0 +1,316 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Admin — CETECritic</title>
+<meta name="robots" content="noindex">
+<link rel="icon" href="assets/favicon.png">
+<style>
+  :root{ --bg:#0e0f12; --surface:#17181c; --surface2:#202226; --border:#2c2e33; --text:#fff; --muted:#9a9ea6; --gold:#f5c518; color-scheme:dark; }
+  *{ box-sizing:border-box; }
+  body{ margin:0; background:var(--bg); color:var(--text); font-family:'Inter',system-ui,sans-serif; padding:24px 16px 80px; }
+  .wrap{ max-width:900px; margin:0 auto; }
+  h1{ font-size:22px; margin:0 0 2px; } h2{ font-size:16px; margin:0 0 12px; color:var(--gold); }
+  .sub{ color:var(--muted); font-size:13px; margin:0 0 20px; }
+  .card{ background:var(--surface); border:1px solid var(--border); border-radius:14px; padding:18px; margin-bottom:18px; }
+  label{ display:block; font-size:12px; font-weight:700; margin:10px 0 4px; color:var(--muted); }
+  input, textarea, select{ width:100%; background:var(--surface2); border:1px solid var(--border); color:var(--text); border-radius:9px; padding:9px 11px; font-family:inherit; font-size:13px; }
+  textarea{ min-height:70px; resize:vertical; }
+  .row2{ display:grid; grid-template-columns:1fr 1fr; gap:10px; }
+  .row3{ display:grid; grid-template-columns:1fr 1fr 1fr; gap:10px; }
+  button{ background:var(--gold); color:#0b0c0f; border:0; border-radius:9px; padding:9px 15px; font-weight:800; cursor:pointer; font-size:13px; font-family:inherit; }
+  button.ghost{ background:transparent; color:var(--text); border:1px solid var(--border); }
+  button.danger{ background:#d93c3c; color:#fff; }
+  button.small{ padding:6px 10px; font-size:12px; }
+  .msg{ font-size:12px; color:var(--muted); min-height:16px; margin-top:8px; }
+  .ed-item{ display:flex; align-items:center; justify-content:space-between; gap:10px; padding:8px 0; border-bottom:1px solid var(--border); }
+  .ed-item:last-child{ border-bottom:0; }
+  .tag{ font-size:11px; font-weight:700; color:var(--gold); border:1px solid var(--gold); border-radius:20px; padding:1px 8px; margin-left:6px; }
+  .noite-block{ border:1px dashed var(--border); border-radius:10px; padding:12px; margin:10px 0; }
+  .peca-block{ background:var(--surface2); border-radius:8px; padding:10px; margin:8px 0; }
+  .hidden{ display:none; }
+  .toolbar{ display:flex; gap:8px; flex-wrap:wrap; margin-top:12px; }
+  a{ color:var(--gold); }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <h1>Painel do Administrador</h1>
+  <p class="sub">Edite o conteúdo do site sem precisar de deploy. As mudanças valem na hora (o site lê do banco).</p>
+
+  <div id="gate" class="card">
+    <div id="gateMsg" class="msg">Verificando acesso…</div>
+  </div>
+
+  <div id="painel" class="hidden">
+    <!-- CONFIG GLOBAL -->
+    <div class="card">
+      <h2>⚙️ Configurações gerais</h2>
+      <div class="row2">
+        <div><label>Edição em destaque (ano)</label><input id="cfgDestaque" type="number"></div>
+        <div><label>Cooldown de voto (min)</label><input id="cfgCooldown" type="number"></div>
+      </div>
+      <div class="row3">
+        <div><label>Nota máxima</label><input id="cfgNotaMax" type="number"></div>
+        <div><label>Ano histórico (≤)</label><input id="cfgHistorica" type="number"></div>
+        <div><label>Ano dos votos antigos</label><input id="cfgVotosAntigos" type="number"></div>
+      </div>
+      <label>E-mail de contato</label><input id="cfgEmail" type="text">
+      <label>Slogan da home</label><textarea id="cfgSlogan"></textarea>
+      <label>Texto do rodapé</label><textarea id="cfgRodape"></textarea>
+      <div class="toolbar"><button id="btnSalvarConfig">Salvar configurações</button></div>
+      <div class="msg" id="cfgMsg"></div>
+    </div>
+
+    <!-- EDIÇÕES -->
+    <div class="card">
+      <h2>🎬 Edições</h2>
+      <div id="edLista"><div class="msg">Carregando…</div></div>
+      <div class="toolbar"><button id="btnNovaEdicao" class="ghost">+ Nova edição</button></div>
+    </div>
+
+    <!-- EDITOR DE EDIÇÃO -->
+    <div class="card hidden" id="edEditor">
+      <h2 id="edEditorTitulo">Editar edição</h2>
+      <div class="row3">
+        <div><label>Ano</label><input id="edAno" type="number"></div>
+        <div><label>Nº de noites</label><input id="edNoites" type="number"></div>
+        <div><label>Ordem no menu</label><input id="edOrdem" type="number"></div>
+      </div>
+      <label><input type="checkbox" id="edEmBreve" style="width:auto;"> Marcar como "Em breve" (sem conteúdo)</label>
+      <div class="row2">
+        <div><label>Abre em (ISO -03:00)</label><input id="edAbreEm" type="text" placeholder="2027-07-12T19:00:00-03:00"></div>
+        <div><label>"Monte o Seu" abre em</label><input id="edMonteAbreEm" type="text"></div>
+      </div>
+      <label>Título</label><input id="edTitulo" type="text">
+      <label>Descrição</label><textarea id="edDescricao"></textarea>
+      <div class="row3">
+        <div><label>Episódios por noite</label><input id="edEps" type="number"></div>
+        <div><label>Início (ISO)</label><input id="edInicio" type="text"></div>
+        <div><label>Fim votação (ISO)</label><input id="edFim" type="text"></div>
+      </div>
+      <label>Pôster (nome do arquivo ou URL)</label><input id="edPoster" type="text">
+      <label>Mensagem de fim</label><textarea id="edMensagemFim"></textarea>
+      <div class="row2">
+        <div><label>Sobre — título</label><input id="edSobreTitulo" type="text"></div>
+        <div><label>Sobre — banner (arquivo/URL)</label><input id="edSobreBanner" type="text"></div>
+      </div>
+      <label>Sobre — texto</label><textarea id="edSobreTexto"></textarea>
+      <label>Abertura — texto</label><textarea id="edAberturaTexto"></textarea>
+      <label>Abertura — Spotify (embed src)</label><input id="edAberturaSpotify" type="text">
+
+      <h2 style="margin-top:18px;">🌙 Noites e peças</h2>
+      <div id="noitesBox"></div>
+      <div class="toolbar"><button id="btnAddNoite" class="ghost small">+ Adicionar noite</button></div>
+
+      <div class="toolbar" style="margin-top:16px;">
+        <button id="btnSalvarEdicao">Salvar edição</button>
+        <button id="btnCancelarEdicao" class="ghost">Cancelar</button>
+        <button id="btnExcluirEdicao" class="danger">Excluir edição</button>
+      </div>
+      <div class="msg" id="edMsg"></div>
+    </div>
+
+    <!-- BANNERS -->
+    <div class="card">
+      <h2>📢 Banners (avisos no site)</h2>
+      <div class="row2">
+        <div><label>Título</label><input id="bnTitulo" type="text"></div>
+        <div><label>Tempo na tela (s, 0=padrão)</label><input id="bnDur" type="number"></div>
+      </div>
+      <label>Mensagem</label><input id="bnCorpo" type="text">
+      <label>Link ao clicar</label><input id="bnUrl" type="text" placeholder="/index.html">
+      <div class="toolbar"><button id="btnCriarBanner">Publicar banner</button></div>
+      <div class="msg" id="bnMsg"></div>
+      <div id="bnLista" style="margin-top:10px;"></div>
+    </div>
+  </div>
+</div>
+
+<script>
+const API = '/api/content';
+let SESS = null;
+try { SESS = JSON.parse(localStorage.getItem('cetec-sessao') || 'null'); } catch(e){}
+
+async function post(action, extra){
+  const body = Object.assign({ action, user: SESS && SESS.user, token: SESS && SESS.token }, extra || {});
+  const r = await fetch(API, { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify(body) });
+  return r.json();
+}
+async function getJson(params){ const r = await fetch(API + '?' + params); return r.json(); }
+const $ = id => document.getElementById(id);
+
+/* ---------- gate de acesso ---------- */
+(async () => {
+  const gm = $('gateMsg');
+  if(!SESS || !SESS.user){ gm.innerHTML = 'Você precisa <a href="/perfil.html">entrar na sua conta</a> primeiro (com um usuário admin) e voltar aqui.'; return; }
+  const r = await post('ping');
+  if(r && r.ok && r.admin){ $('gate').classList.add('hidden'); $('painel').classList.remove('hidden'); iniciar(); }
+  else { gm.textContent = 'Sua conta (' + SESS.user + ') não é administradora. Peça pra marcar como admin.'; }
+})();
+
+/* ---------- CONFIG ---------- */
+let CFG = {};
+async function carregarConfig(){
+  const r = await getJson('q=config'); CFG = (r && r.dados) || {};
+  $('cfgDestaque').value = CFG.EDICAO_EM_DESTAQUE || '';
+  $('cfgCooldown').value = CFG.COOLDOWN_MINUTOS ?? '';
+  $('cfgNotaMax').value = CFG.NOTA_MAXIMA ?? '';
+  $('cfgHistorica').value = CFG.ANO_EDICAO_HISTORICA ?? '';
+  $('cfgVotosAntigos').value = CFG.ANO_VOTOS_ANTIGOS ?? '';
+  $('cfgEmail').value = CFG.EMAIL_CONTATO || '';
+  $('cfgSlogan').value = CFG.SLOGAN_HOME || '';
+  $('cfgRodape').value = CFG.RODAPE || '';
+}
+$('btnSalvarConfig').addEventListener('click', async () => {
+  const dados = Object.assign({}, CFG, {
+    EDICAO_EM_DESTAQUE: Number($('cfgDestaque').value) || null,
+    COOLDOWN_MINUTOS: Number($('cfgCooldown').value) || 0,
+    NOTA_MAXIMA: Number($('cfgNotaMax').value) || 10,
+    ANO_EDICAO_HISTORICA: Number($('cfgHistorica').value) || 0,
+    ANO_VOTOS_ANTIGOS: Number($('cfgVotosAntigos').value) || 0,
+    EMAIL_CONTATO: $('cfgEmail').value.trim(),
+    SLOGAN_HOME: $('cfgSlogan').value,
+    RODAPE: $('cfgRodape').value
+  });
+  $('cfgMsg').textContent = 'Salvando…';
+  const r = await post('salvarConfig', { dados });
+  $('cfgMsg').textContent = (r && r.ok) ? 'Salvo ✓' : ('Erro: ' + ((r&&r.error)||'')); CFG = dados;
+});
+
+/* ---------- EDIÇÕES ---------- */
+async function carregarEdicoes(){
+  const r = await getJson('q=edicoes'); const eds = (r && r.edicoes) || [];
+  $('edLista').innerHTML = eds.length ? eds.map(e =>
+    `<div class="ed-item"><div>Cetec Festival <b>${e.ano}</b>${e.em_breve?'<span class="tag">em breve</span>':''} <span style="color:var(--muted);font-size:12px;">· ${e.noites} noites</span></div>
+     <button class="ghost small" data-ed="${e.ano}">Editar</button></div>`).join('') : '<div class="msg">Nenhuma edição ainda.</div>';
+  $('edLista').querySelectorAll('[data-ed]').forEach(b => b.addEventListener('click', () => abrirEdicao(Number(b.dataset.ed))));
+}
+
+function noiteBlockHtml(n, nd){
+  const pecas = (nd && nd.pecas) || [];
+  return `<div class="noite-block" data-noite="${n}">
+    <div class="row2"><div><label>Noite ${n} — data (ISO)</label><input class="nd-data" type="text" value="${(nd&&nd.data)||''}"></div>
+    <div><label>Subtítulo</label><input class="nd-sub" type="text" value="${(nd&&nd.subtitulo)||''}"></div></div>
+    <div class="pecas">${pecas.map(pecaBlockHtml).join('')}</div>
+    <div class="toolbar"><button class="ghost small btn-add-peca" type="button">+ Peça</button>
+    <button class="danger small btn-rm-noite" type="button">Remover noite</button></div>
+  </div>`;
+}
+function pecaBlockHtml(p){
+  p = p || {};
+  return `<div class="peca-block">
+    <div class="row2"><div><label>Título</label><input class="pc-titulo" value="${(p.titulo||'').replace(/"/g,'&quot;')}"></div>
+    <div><label>Turma</label><input class="pc-turma" value="${(p.turma||'').replace(/"/g,'&quot;')}"></div></div>
+    <label>Sinopse</label><textarea class="pc-sinopse">${p.sinopse||''}</textarea>
+    <div class="row2"><div><label>YouTube (id)</label><input class="pc-yt" value="${(p.youtube||'').replace(/"/g,'&quot;')}"></div>
+    <div><label>Início no vídeo (s)</label><input class="pc-yti" type="number" value="${p.youtubeInicio||p.youtube_inicio||0}"></div></div>
+    <div class="toolbar"><button class="danger small btn-rm-peca" type="button">Remover peça</button></div>
+  </div>`;
+}
+function wireNoites(){
+  $('noitesBox').querySelectorAll('.btn-add-peca').forEach(b => b.onclick = () => { b.closest('.noite-block').querySelector('.pecas').insertAdjacentHTML('beforeend', pecaBlockHtml({})); wireNoites(); });
+  $('noitesBox').querySelectorAll('.btn-rm-peca').forEach(b => b.onclick = () => b.closest('.peca-block').remove());
+  $('noitesBox').querySelectorAll('.btn-rm-noite').forEach(b => b.onclick = () => b.closest('.noite-block').remove());
+}
+
+async function abrirEdicao(ano){
+  const r = await getJson('q=edicao&ano=' + ano);
+  const e = (r && r.edicao) || { ano, noites:5 };
+  const noites = (r && r.noites) || [];
+  const pecas = (r && r.pecas) || [];
+  preencherEditor(e, noites, pecas);
+}
+function novaEdicao(){ preencherEditor({ ano:'', noites:5, episodios_por_noite:3, em_breve:false, sobre:{}, abertura:{} }, [], []); }
+
+function preencherEditor(e, noites, pecas){
+  $('edEditor').classList.remove('hidden');
+  $('edEditorTitulo').textContent = e.ano ? ('Editar Cetec Festival ' + e.ano) : 'Nova edição';
+  $('edAno').value = e.ano || ''; $('edNoites').value = e.noites || 5; $('edOrdem').value = e.ordem ?? e.ano ?? '';
+  $('edEmBreve').checked = !!e.em_breve;
+  $('edAbreEm').value = e.abre_em || ''; $('edMonteAbreEm').value = e.monte_abre_em || '';
+  $('edTitulo').value = e.titulo || ''; $('edDescricao').value = e.descricao || '';
+  $('edEps').value = e.episodios_por_noite || 3; $('edInicio').value = e.inicio || ''; $('edFim').value = e.fim_votacao || '';
+  $('edPoster').value = e.poster || ''; $('edMensagemFim').value = e.mensagem_fim || '';
+  const sobre = e.sobre || {}, abertura = e.abertura || {};
+  $('edSobreTitulo').value = sobre.titulo || ''; $('edSobreBanner').value = sobre.banner || ''; $('edSobreTexto').value = sobre.texto || '';
+  $('edAberturaTexto').value = abertura.texto || ''; $('edAberturaSpotify').value = abertura.spotify || '';
+  // noites
+  const nmap = {}; noites.forEach(nd => nmap[nd.noite] = { data:nd.data, subtitulo:nd.subtitulo, pecas:[] });
+  pecas.forEach(p => { if(nmap[p.noite]) nmap[p.noite].pecas.push({ titulo:p.titulo, turma:p.turma, sinopse:p.sinopse, youtube:p.youtube, youtubeInicio:p.youtube_inicio }); });
+  const ns = Object.keys(nmap).map(Number).sort((a,b)=>a-b);
+  $('noitesBox').innerHTML = ns.map(n => noiteBlockHtml(n, nmap[n])).join('');
+  wireNoites();
+  $('edMsg').textContent = '';
+  $('edEditor').scrollIntoView({ behavior:'smooth' });
+}
+
+$('btnNovaEdicao').addEventListener('click', novaEdicao);
+$('btnCancelarEdicao').addEventListener('click', () => $('edEditor').classList.add('hidden'));
+$('btnAddNoite').addEventListener('click', () => {
+  const prox = $('noitesBox').querySelectorAll('.noite-block').length + 1;
+  $('noitesBox').insertAdjacentHTML('beforeend', noiteBlockHtml(prox, { pecas:[] })); wireNoites();
+});
+
+function coletarNoites(){
+  return [...$('noitesBox').querySelectorAll('.noite-block')].map((bl, i) => ({
+    noite: i + 1,
+    data: bl.querySelector('.nd-data').value.trim() || null,
+    subtitulo: bl.querySelector('.nd-sub').value.trim() || null,
+    pecas: [...bl.querySelectorAll('.peca-block')].map(pb => ({
+      titulo: pb.querySelector('.pc-titulo').value.trim(),
+      turma: pb.querySelector('.pc-turma').value.trim(),
+      sinopse: pb.querySelector('.pc-sinopse').value.trim(),
+      youtube: pb.querySelector('.pc-yt').value.trim(),
+      youtubeInicio: Number(pb.querySelector('.pc-yti').value) || 0
+    }))
+  }));
+}
+
+$('btnSalvarEdicao').addEventListener('click', async () => {
+  const ano = Number($('edAno').value);
+  if(!ano){ $('edMsg').textContent = 'Informe o ano.'; return; }
+  const edicao = {
+    ano, noites: Number($('edNoites').value) || 5, ordem: Number($('edOrdem').value) || ano,
+    em_breve: $('edEmBreve').checked, abre_em: $('edAbreEm').value.trim() || null, monte_abre_em: $('edMonteAbreEm').value.trim() || null,
+    titulo: $('edTitulo').value.trim(), descricao: $('edDescricao').value.trim(),
+    episodios_por_noite: Number($('edEps').value) || 3, inicio: $('edInicio').value.trim() || null, fim_votacao: $('edFim').value.trim() || null,
+    poster: $('edPoster').value.trim() || null, mensagem_fim: $('edMensagemFim').value.trim() || null,
+    sobre: { titulo: $('edSobreTitulo').value.trim(), banner: $('edSobreBanner').value.trim(), texto: $('edSobreTexto').value.trim() },
+    abertura: { texto: $('edAberturaTexto').value.trim(), spotify: $('edAberturaSpotify').value.trim() }
+  };
+  $('edMsg').textContent = 'Salvando…';
+  const r = await post('salvarEdicaoCompleta', { edicao, noites: coletarNoites() });
+  if(r && r.ok){ $('edMsg').textContent = 'Salvo ✓'; carregarEdicoes(); }
+  else $('edMsg').textContent = 'Erro: ' + ((r&&r.error)||'');
+});
+$('btnExcluirEdicao').addEventListener('click', async () => {
+  const ano = Number($('edAno').value);
+  if(!ano) return;
+  if(!confirm('Excluir a edição ' + ano + ' e todas as suas noites/peças? Isso não apaga os votos.')) return;
+  const r = await post('deletarEdicao', { ano });
+  if(r && r.ok){ $('edEditor').classList.add('hidden'); carregarEdicoes(); }
+  else alert('Erro: ' + ((r&&r.error)||''));
+});
+
+/* ---------- BANNERS ---------- */
+async function carregarBanners(){
+  const r = await post('listarBanners');
+  const bs = (r && r.banners) || [];
+  $('bnLista').innerHTML = bs.map(b =>
+    `<div class="ed-item"><div><b>${(b.titulo||'').replace(/</g,'&lt;')}</b> <span style="color:var(--muted);font-size:12px;">${(b.corpo||'').replace(/</g,'&lt;')}</span></div>
+     <button class="danger small" data-bn="${b.bc_id}">Apagar</button></div>`).join('') || '<div class="msg">Nenhum banner.</div>';
+  $('bnLista').querySelectorAll('[data-bn]').forEach(b => b.onclick = async () => { await post('deletarBanner', { bc_id: b.dataset.bn }); carregarBanners(); });
+}
+$('btnCriarBanner').addEventListener('click', async () => {
+  $('bnMsg').textContent = 'Publicando…';
+  const r = await post('criarBanner', { titulo: $('bnTitulo').value.trim(), corpo: $('bnCorpo').value.trim(), url: $('bnUrl').value.trim() || '/index.html', dur: Number($('bnDur').value) || 0 });
+  if(r && r.ok){ $('bnMsg').textContent = 'Publicado ✓'; $('bnTitulo').value=''; $('bnCorpo').value=''; $('bnUrl').value=''; $('bnDur').value=''; carregarBanners(); }
+  else $('bnMsg').textContent = 'Erro: ' + ((r&&r.error)||'');
+});
+
+function iniciar(){ carregarConfig(); carregarEdicoes(); carregarBanners(); }
+</script>
+</body>
+</html>

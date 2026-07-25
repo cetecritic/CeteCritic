@@ -37,8 +37,28 @@ const FESTIVAL_END_BY_YEAR = {
   2026: new Date('2026-07-18T23:59:00-03:00'),
   2025: null, 2024: null, 2023: null, 2022: null, 2021: null, 2020: null,
 };
-function votingClosed(year){
+// datas de fim de votação vindas da tabela `edicoes` (editáveis pelo admin),
+// com cache curto; cai no mapa fixo acima se o ano não estiver no banco.
+let _fimCache = null, _fimCacheAt = 0;
+async function fimVotacaoMap(){
+  if(_fimCache && (Date.now() - _fimCacheAt) < 30000) return _fimCache;
+  try{
+    const { data } = await sb.from('edicoes').select('ano,fim_votacao');
+    const m = {};
+    (data||[]).forEach(r => { m[Number(r.ano)] = r.fim_votacao || null; });
+    _fimCache = m; _fimCacheAt = Date.now();
+  }catch(e){ _fimCache = _fimCache || {}; }
+  return _fimCache;
+}
+async function votingClosed(year){
   const y = Number(year);
+  const m = await fimVotacaoMap();
+  if(y in m){
+    const end = m[y];
+    if(!end) return false;                 // sem data no banco = sempre aberta
+    return new Date() >= new Date(end);
+  }
+  // fallback: mapa fixo (compat)
   if(!(y in FESTIVAL_END_BY_YEAR)) return true;
   const end = FESTIVAL_END_BY_YEAR[y];
   return end === null ? false : (new Date() >= end);
@@ -187,7 +207,7 @@ async function handleGet(req, res){
   // bolão (só depois de fechar)
   if(q.palpites){
     const y = Number(q.palpites);
-    if(!votingClosed(y)) return res.json({ open:true, palpites:[] });
+    if(!(await votingClosed(y))) return res.json({ open:true, palpites:[] });
     const { data } = await sb.from('palpites').select('*').eq('year', y);
     const palpites = (data||[]).filter(r => r.usuario).map(r => ({ user:String(r.usuario), year:Number(r.year), palpites: asObj(r.palpites), ts:Number(r.ts) }));
     return res.json({ closed:true, palpites });
@@ -201,7 +221,7 @@ async function handleGet(req, res){
     id:String(r.sub_id), ts:Number(r.ts), name:String(r.name||''), grid: asObj(r.grid),
     year: r.year?Number(r.year):CURRENT_EDITION_YEAR, user: displayFeed(String(r.usuario||''), pmap)
   })).filter(s => !hasInvalidRating(s.grid)).filter(s => s.year === year);
-  return res.json({ serverNow: Date.now(), votingClosed: votingClosed(year), submissions });
+  return res.json({ serverNow: Date.now(), votingClosed: await votingClosed(year), submissions });
 }
 
 /* ==================================================================
@@ -244,7 +264,7 @@ async function apiLogin(body){
 async function apiVoto(body){
   if(!body || !body.id || !body.grid) return { ok:false, error:'dados inválidos' };
   const year = body.year ? Number(body.year) : CURRENT_EDITION_YEAR;
-  if(votingClosed(year)) return { ok:false, error:'votação encerrada' };
+  if(await votingClosed(year)) return { ok:false, error:'votação encerrada' };
   if(hasInvalidRating(body.grid)) return { ok:true };
   let usuario = null;
   if(body.user && await verificarToken(body.user, body.token)) usuario = String(body.user);
@@ -256,7 +276,7 @@ async function apiPalpite(body){
   const usuario = String(body.user||'');
   if(!(await verificarToken(usuario, body.token))) return { ok:false, error:'faça login para palpitar' };
   const year = body.year ? Number(body.year) : CURRENT_EDITION_YEAR;
-  if(votingClosed(year)) return { ok:false, error:'o bolão desse ano já fechou' };
+  if(await votingClosed(year)) return { ok:false, error:'o bolão desse ano já fechou' };
   const entrada = (body.palpites && typeof body.palpites==='object') ? body.palpites : null;
   if(!entrada) return { ok:false, error:'nenhum palpite enviado' };
   const limpos = {};
