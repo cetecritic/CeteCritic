@@ -96,6 +96,28 @@
       </details>
     </div>
 
+    <!-- EDITORES AMIGÁVEIS (curiosidades, badges, linha do tempo) -->
+    <div class="card">
+      <h2>📝 Curiosidades, badges & linha do tempo</h2>
+      <p class="sub" style="margin:0 0 8px;">Adicione ou remova itens direto aqui — cada mudança já salva. <span id="edavMsg" style="color:var(--gold);"></span></p>
+
+      <h3 style="color:var(--gold);font-size:14px;margin:16px 0 6px;">🎭 Curiosidades do Hall da Fama</h3>
+      <div id="edHallCurio"></div>
+
+      <h3 style="color:var(--gold);font-size:14px;margin:18px 0 6px;">🏅 Badges manuais (peças específicas)</h3>
+      <div class="sub" style="margin:0 0 6px;">chave = <code>s&lt;noite&gt;e&lt;episódio&gt;</code>, ex.: <code>s2e1</code> = Noite 2, 1ª peça.</div>
+      <div id="edHallBadges"></div>
+
+      <h3 style="color:var(--gold);font-size:14px;margin:18px 0 6px;">🏠 Curiosidades da Home</h3>
+      <div id="edHomeCurio"></div>
+
+      <h3 style="color:var(--gold);font-size:14px;margin:18px 0 6px;">🗓️ Linha do tempo (Home)</h3>
+      <div id="edHomeLinha"></div>
+
+      <h3 style="color:var(--gold);font-size:14px;margin:18px 0 6px;">📅 Neste dia na história (Home)</h3>
+      <div id="edHomeNesteDia"></div>
+    </div>
+
     <!-- EDIÇÕES -->
     <div class="card">
       <h2>🎬 Edições</h2>
@@ -239,6 +261,87 @@ function carregarAvancado(){
   $('jsonHall').value = JSON.stringify(H, null, 2);
   $('jsonPerfil').value = JSON.stringify(P, null, 2);
   $('jsonHome').value = JSON.stringify(HD, null, 2);
+  montarEditoresAvancados();
+}
+
+/* ---- editores amigáveis de lista (curiosidades, badges, neste dia) ---- */
+function escH(s){ return String(s == null ? '' : s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/"/g,'&quot;'); }
+async function salvarSilencioso(dados){
+  const el = $('edavMsg'); if(el) el.textContent = 'Salvando…';
+  const r = await post('salvarConfig', { dados });
+  if(r && r.ok){ CFG = dados; if(el){ el.textContent = 'Salvo ✓'; setTimeout(() => el.textContent = '', 1500); } }
+  else if(el) el.textContent = 'Erro: ' + ((r&&r.error)||'');
+}
+/* editor genérico de uma lista de objetos */
+function montarEditor(mountId, campos, valores, salvar){
+  const mount = $(mountId); if(!mount) return;
+  function render(){
+    const lista = valores.length ? valores.map((it, i) =>
+      `<div style="display:flex;gap:10px;align-items:center;justify-content:space-between;padding:7px 0;border-bottom:1px solid var(--border);">
+        <div style="flex:1;min-width:0;font-size:13px;">${campos.map(c => it[c.k] ? `<b>${escH(it[c.k])}</b>` : '').filter(Boolean).join(' · ')}</div>
+        <button class="danger small" data-rm="${i}">Remover</button></div>`).join('') : '<div class="msg">Nenhum item.</div>';
+    const form = `<div style="display:flex;gap:6px;flex-wrap:wrap;margin-top:8px;">
+      ${campos.map(c => `<input data-add="${c.k}" placeholder="${c.label}" ${c.type === 'number' ? 'type="number"' : ''} style="flex:1 1 110px;min-width:80px;">`).join('')}
+      <button class="ghost small" data-addbtn>+ Adicionar</button></div>`;
+    mount.innerHTML = lista + form;
+    mount.querySelectorAll('[data-rm]').forEach(b => b.onclick = () => { valores.splice(Number(b.dataset.rm), 1); salvar(valores); render(); });
+    mount.querySelector('[data-addbtn]').onclick = () => {
+      const novo = {}; let algum = false;
+      campos.forEach(c => { const el = mount.querySelector('[data-add="' + c.k + '"]'); const v = (el.value || '').trim(); if(v){ novo[c.k] = c.type === 'number' ? Number(v) : v; algum = true; } });
+      if(!algum) return;
+      valores.push(novo); salvar(valores); render();
+    };
+  }
+  render();
+}
+/* editor especial pra linha do tempo (mapa ano -> texto) */
+function montarEditorLinha(mountId, mapa, salvar){
+  const mount = $(mountId); if(!mount) return;
+  let pares = Object.keys(mapa || {}).sort().map(k => ({ ano: k, texto: mapa[k] }));
+  function persist(){ const m = {}; pares.forEach(p => { if(p.ano) m[p.ano] = p.texto; }); salvar(m); }
+  function render(){
+    const lista = pares.length ? pares.map((p, i) =>
+      `<div style="display:flex;gap:10px;align-items:center;justify-content:space-between;padding:7px 0;border-bottom:1px solid var(--border);">
+        <div style="flex:1;font-size:13px;"><b>${escH(p.ano)}</b> — ${escH(p.texto)}</div>
+        <button class="danger small" data-rm="${i}">Remover</button></div>`).join('') : '<div class="msg">Nenhum ano.</div>';
+    mount.innerHTML = lista + `<div style="display:flex;gap:6px;flex-wrap:wrap;margin-top:8px;">
+      <input data-ano placeholder="Ano" type="number" style="flex:0 0 90px;">
+      <input data-texto placeholder="Texto do ano" style="flex:1 1 160px;">
+      <button class="ghost small" data-addbtn>+ Adicionar</button></div>`;
+    mount.querySelectorAll('[data-rm]').forEach(b => b.onclick = () => { pares.splice(Number(b.dataset.rm), 1); persist(); render(); });
+    mount.querySelector('[data-addbtn]').onclick = () => {
+      const ano = (mount.querySelector('[data-ano]').value || '').trim();
+      const texto = (mount.querySelector('[data-texto]').value || '').trim();
+      if(!ano || !texto) return;
+      pares = pares.filter(p => p.ano !== ano); pares.push({ ano, texto }); pares.sort((a, b) => a.ano - b.ano);
+      persist(); render();
+    };
+  }
+  render();
+}
+function montarEditoresAvancados(){
+  if(!CFG.HALL) CFG.HALL = {};
+  if(!CFG.HOME_DADOS) CFG.HOME_DADOS = {};
+  const H = CFG.HALL, HD = CFG.HOME_DADOS;
+  if(!Array.isArray(H.curiosidades)) H.curiosidades = [];
+  if(!Array.isArray(H.badgesExtras)) H.badgesExtras = [];
+  if(!Array.isArray(HD.curiosidades)) HD.curiosidades = [];
+  if(!HD.linhaDoTempo || typeof HD.linhaDoTempo !== 'object') HD.linhaDoTempo = {};
+  if(!Array.isArray(HD.nesteDia)) HD.nesteDia = [];
+
+  montarEditor('edHallCurio',
+    [{k:'emoji',label:'Emoji'},{k:'titulo',label:'Título'},{k:'texto',label:'Texto'},{k:'url',label:'Link (opcional)'}],
+    H.curiosidades, arr => { H.curiosidades = arr; salvarSilencioso(Object.assign({}, CFG, { HALL: H })); });
+  montarEditor('edHallBadges',
+    [{k:'ano',label:'Ano',type:'number'},{k:'chave',label:'Chave (s1e1)'},{k:'emoji',label:'Emoji'},{k:'nome',label:'Nome'},{k:'desc',label:'Descrição'}],
+    H.badgesExtras, arr => { H.badgesExtras = arr; salvarSilencioso(Object.assign({}, CFG, { HALL: H })); });
+  montarEditor('edHomeCurio',
+    [{k:'emoji',label:'Emoji'},{k:'titulo',label:'Título'},{k:'texto',label:'Texto'},{k:'url',label:'Link (opcional)'}],
+    HD.curiosidades, arr => { HD.curiosidades = arr; salvarSilencioso(Object.assign({}, CFG, { HOME_DADOS: HD })); });
+  montarEditorLinha('edHomeLinha', HD.linhaDoTempo, m => { HD.linhaDoTempo = m; salvarSilencioso(Object.assign({}, CFG, { HOME_DADOS: HD })); });
+  montarEditor('edHomeNesteDia',
+    [{k:'dia',label:'Dia',type:'number'},{k:'mes',label:'Mês',type:'number'},{k:'emoji',label:'Emoji'},{k:'texto',label:'Texto'},{k:'url',label:'Link (opcional)'}],
+    HD.nesteDia, arr => { HD.nesteDia = arr; salvarSilencioso(Object.assign({}, CFG, { HOME_DADOS: HD })); });
 }
 async function salvarDados(dados, msgEl){
   if(msgEl) msgEl.textContent = 'Salvando…';
