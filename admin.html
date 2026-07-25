@@ -204,7 +204,7 @@ async function post(action, extra){
   const r = await fetch(API, { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify(body) });
   return r.json();
 }
-async function getJson(params){ const r = await fetch(API + '?' + params); return r.json(); }
+async function getJson(params){ const r = await fetch(API + '?' + params + '&_=' + Date.now(), { cache:'no-store' }); return r.json(); }
 const $ = id => document.getElementById(id);
 
 /* ---------- gate de acesso ---------- */
