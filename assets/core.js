@@ -394,9 +394,30 @@ async function apiPost(payload){
   });
   return await res.json();
 }
-async function apiRegistrar(user, senha, email){ return apiPost({ action:'registrar', user, senha, email }); }
-async function apiLogin(user, senha){ return apiPost({ action:'login', user, senha }); }
-async function apiLogin2fa(user, code){ return apiPost({ action:'login2fa', user, code }); }
+/* rótulo do aparelho atual, pra você reconhecer as sessões (ex.: "Chrome · Windows") */
+function descreverDispositivo(){
+  const ua = navigator.userAgent || '';
+  let so = 'Dispositivo';
+  if(/Android/i.test(ua)) so = 'Android';
+  else if(/iPhone|iPad|iPod/i.test(ua)) so = 'iPhone/iPad';
+  else if(/Windows/i.test(ua)) so = 'Windows';
+  else if(/Macintosh|Mac OS/i.test(ua)) so = 'Mac';
+  else if(/Linux/i.test(ua)) so = 'Linux';
+  let nav = 'Navegador';
+  if(/Edg/i.test(ua)) nav = 'Edge';
+  else if(/OPR|Opera/i.test(ua)) nav = 'Opera';
+  else if(/Chrome|CriOS/i.test(ua)) nav = 'Chrome';
+  else if(/Firefox|FxiOS/i.test(ua)) nav = 'Firefox';
+  else if(/Safari/i.test(ua)) nav = 'Safari';
+  const app = (window.matchMedia && window.matchMedia('(display-mode: standalone)').matches) ? ' (app)' : '';
+  return nav + ' · ' + so + app;
+}
+async function apiRegistrar(user, senha, email){ return apiPost({ action:'registrar', user, senha, email, dispositivo: descreverDispositivo() }); }
+async function apiLogin(user, senha){ return apiPost({ action:'login', user, senha, dispositivo: descreverDispositivo() }); }
+async function apiLogin2fa(user, code){ return apiPost({ action:'login2fa', user, code, dispositivo: descreverDispositivo() }); }
+async function apiListarSessoes(){ const s = usuarioLogado(); if(!s) return { ok:false, sessoes:[] }; return apiPost({ action:'listarSessoes', user:s.user, token:s.token }); }
+async function apiRevogarSessao(id){ const s = usuarioLogado(); if(!s) return { ok:false }; return apiPost({ action:'revogarSessao', user:s.user, token:s.token, id }); }
+async function apiLogout(){ const s = usuarioLogado(); if(!s) return { ok:true }; return apiPost({ action:'logout', user:s.user, token:s.token }); }
 async function apiEnviarPalpite(year, palpites){
   const s = usuarioLogado();
   if(!s) return { ok:false, error:'faça login' };
@@ -448,7 +469,7 @@ async function fetchRankingReputacao(){
 async function apiMeuPerfil(){ const s = usuarioLogado(); if(!s) return { ok:false }; return apiPost({ action:'meuPerfil', user:s.user, token:s.token }); }
 async function apiDeletarConta(){ const s = usuarioLogado(); if(!s) return { ok:false }; return apiPost({ action:'deletarConta', user:s.user, token:s.token }); }
 async function apiPedirReset(conta){ return apiPost({ action:'pedirReset', conta }); }
-async function apiRedefinirSenha(user, token, novaSenha){ return apiPost({ action:'redefinirSenha', user, token, novaSenha }); }
+async function apiRedefinirSenha(user, token, novaSenha){ return apiPost({ action:'redefinirSenha', user, token, novaSenha, dispositivo: descreverDispositivo() }); }
 /* lista de TODOS os usuários (já com anônimo/privado aplicados no servidor).
    Volta [] se o endpoint ainda não existir (antes do redeploy da Fase 2). */
 async function fetchUsuarios(){
@@ -697,7 +718,7 @@ function wireLogin(){
   const btnEntrar = document.getElementById('btnEntrar');
   if(btnEntrar) btnEntrar.addEventListener('click', abrir);
   const btnSair = document.getElementById('btnSair');
-  if(btnSair) btnSair.addEventListener('click', () => { sairSessao(); location.reload(); });
+  if(btnSair) btnSair.addEventListener('click', async () => { try{ await apiLogout(); }catch(e){} sairSessao(); location.reload(); });
 
   document.getElementById('loginModalClose').addEventListener('click', fechar);
   overlay.addEventListener('click', ev => { if(ev.target === overlay) fechar(); });
@@ -1256,11 +1277,18 @@ function montarShell(conteudo){
   checarNotificacoes();   // banner de novidades + detecção de noites/edições/bolão
   checarBroadcasts();     // avisos "para todos" — aparecem pra qualquer visitante
   verificarInscricaoPush();   // religa/pede pra religar se a inscrição push sumiu
-  /* sessões antigas não têm o flag admin: confirma uma vez e recarrega p/ mostrar o 💻 */
+  /* confirma no servidor se a conta é admin e mostra o 💻 (uma vez por sessão
+     enquanto ainda não for admin — quem já é admin não precisa re-checar) */
   (async () => {
     const s = usuarioLogado();
-    if(!s || s.admin !== undefined) return;
-    try{ const r = await apiMeuPerfil(); if(r && r.ok){ marcarSessaoAdmin(!!r.admin); if(r.admin) location.reload(); } }catch(e){}
+    if(!s || s.admin === true) return;
+    if(sessionStorage.getItem('cetec-admin-checado')) return;
+    try{
+      const r = await apiMeuPerfil();
+      sessionStorage.setItem('cetec-admin-checado', '1');
+      if(r && r.ok && r.admin){ marcarSessaoAdmin(true); location.reload(); }
+      else marcarSessaoAdmin(false);
+    }catch(e){}
   })();
 
   /* ---- aviso de edição histórica (anos <= ANO_EDICAO_HISTORICA) ----
@@ -4892,7 +4920,7 @@ async function paginaNotificacoes(){
       </a>`).join('');
   }
 
-  box.addEventListener('click', ev => {
+  box.addEventListener('click', async ev => {
     const item = ev.target.closest('.notif-item');
     if(!item) return;
     const id = item.dataset.id;
@@ -4902,7 +4930,7 @@ async function paginaNotificacoes(){
       n.lida = true;
       item.classList.remove('notif-nao-lida');
       btnTodas.style.display = notifs.some(x => !x.lida) ? '' : 'none';
-      apiMarcarNotifLidas([id]);
+      await apiMarcarNotifLidas([id]);   // grava no servidor ANTES de recontar
       atualizarBadgeNotificacoes();
     }
   });
@@ -4912,8 +4940,8 @@ async function paginaNotificacoes(){
     if(!ids.length) return;
     notifs.forEach(n => n.lida = true);
     render();
-    atualizarBadgeNotificacoes();
-    await apiMarcarNotifLidas(ids);
+    await apiMarcarNotifLidas(ids);      // espera o servidor marcar como lidas
+    atualizarBadgeNotificacoes();        // só então reconta a bolinha
   });
 
   const r = await apiListarNotificacoes();
@@ -5063,6 +5091,11 @@ async function paginaConfig(){
           <div class="cfg-desc">Encerra a sessão neste aparelho. Seus dados continuam salvos — é só entrar de novo depois.</div></div>
         <div class="cfg-ctrl"><button class="btn btn-ghost" id="cfgSair">Sair</button></div>
       </div>
+      <div class="cfg-row" style="display:block;">
+        <div class="cfg-info"><div class="cfg-label">📱 Aparelhos conectados</div>
+          <div class="cfg-desc">Onde sua conta está logada agora. Você pode desconectar qualquer um.</div></div>
+        <div id="cfgSessoes" style="margin-top:10px;"><div class="empty-note">Carregando…</div></div>
+      </div>
     </div>
 
     <div class="cfg-group cfg-danger">
@@ -5169,11 +5202,30 @@ async function paginaConfig(){
     }
   }
 
-  document.getElementById('cfgSair').addEventListener('click', () => {
+  document.getElementById('cfgSair').addEventListener('click', async () => {
     if(!confirm('Sair da sua conta neste aparelho?')) return;
+    try{ await apiLogout(); }catch(e){}
     sairSessao();
     location.href = BASE + 'index.html';
   });
+
+  /* lista de aparelhos conectados (sessões) */
+  (async () => {
+    const box = document.getElementById('cfgSessoes'); if(!box) return;
+    const r = await apiListarSessoes();
+    const ss = (r && r.sessoes) || [];
+    if(!ss.length){ box.innerHTML = '<div class="empty-note">Não foi possível listar (ou só há a sessão antiga). Entre de novo pra registrar este aparelho.</div>'; return; }
+    box.innerHTML = ss.map(s => `<div class="sessao-item" style="display:flex;align-items:center;justify-content:space-between;gap:10px;padding:9px 0;border-bottom:1px solid var(--border);">
+      <div><b>${esc(s.dispositivo)}</b>${s.atual ? ' <span style="color:var(--gold);font-size:11px;font-weight:700;">• este aparelho</span>' : ''}
+        <div style="font-size:11px;color:var(--text-muted);">entrou ${formatarDataNotif(s.criadoEm)}</div></div>
+      ${s.atual ? '' : `<button class="btn btn-ghost" data-sid="${s.id}" style="flex:0 0 auto;">Desconectar</button>`}
+    </div>`).join('');
+    box.querySelectorAll('[data-sid]').forEach(b => b.addEventListener('click', async () => {
+      b.disabled = true; b.textContent = '…';
+      await apiRevogarSessao(Number(b.dataset.sid));
+      const it = b.closest('.sessao-item'); if(it) it.remove();
+    }));
+  })();
 
   document.getElementById('cfgExcluir').addEventListener('click', async () => {
     const msg = document.getElementById('cfgExcluirMsg');
