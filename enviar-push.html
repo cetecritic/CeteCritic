@@ -36,6 +36,9 @@
   <label for="url">Link ao clicar (opcional)</label>
   <input type="text" id="url" placeholder="/index.html">
 
+  <label for="dur">Tempo na tela do site (segundos) — banner do aviso</label>
+  <input type="number" id="dur" min="0" max="120" placeholder="3 (padrão)">
+
   <button id="enviar">Enviar para todos</button>
   <div class="msg" id="msg"></div>
 </div>
@@ -47,6 +50,7 @@ $('enviar').addEventListener('click', async () => {
   const title = $('title').value.trim();
   const body = $('body').value.trim();
   const url = $('url').value.trim() || '/index.html';
+  const dur = Number($('dur').value) || 0;   // segundos que o banner fica no site (0 = padrão 3s)
   const msg = $('msg');
   if(!secret){ msg.textContent = 'Informe o segredo.'; return; }
   if(!title && !body){ msg.textContent = 'Escreva ao menos um título ou mensagem.'; return; }
@@ -55,7 +59,7 @@ $('enviar').addEventListener('click', async () => {
     const r = await fetch('/api/enviar-push', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ secret, title, body, url })
+      body: JSON.stringify({ secret, title, body, url, dur })
     });
     const j = await r.json();
     if(j && j.ok){

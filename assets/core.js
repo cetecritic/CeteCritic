@@ -919,7 +919,9 @@ function mostrarNotifBanner(n){
   const sair = () => { if(saiu) return; saiu = true; el.classList.remove('show'); el.classList.add('hide'); setTimeout(() => el.remove(), 420); };
   el.querySelector('.notif-toast-x').addEventListener('click', ev => { ev.stopPropagation(); sair(); });
   if(n.url) el.addEventListener('click', () => { location.href = n.url; });
-  setTimeout(sair, 3000);   // 3s e some (fade out)
+  /* fica na tela pelo tempo pedido (padrão 3s) e some com fade */
+  const dur = (typeof n.duracao === 'number' && n.duracao > 0) ? n.duracao : 3000;
+  setTimeout(sair, dur);
 }
 
 async function checarNotificacoesNovas(){
@@ -1070,8 +1072,11 @@ async function checarBroadcasts(){
   let vistos = []; try{ vistos = JSON.parse(localStorage.getItem(key) || '[]'); }catch(e){ vistos = []; }
   const novos = lista.filter(b => vistos.indexOf(String(b.id)) < 0);
   if(!novos.length) return;
-  /* mostra no máx. 3, dos mais antigos p/ os mais novos */
-  novos.slice(0, 3).reverse().forEach((b, i) => setTimeout(() => mostrarNotifBanner({ titulo:b.titulo, corpo:b.corpo, url:b.url }), i * 800));
+  /* mostra no máx. 3, dos mais antigos p/ os mais novos. b.dur = segundos na tela (0/ausente = padrão) */
+  novos.slice(0, 3).reverse().forEach((b, i) => setTimeout(() => mostrarNotifBanner({
+    titulo:b.titulo, corpo:b.corpo, url:b.url,
+    duracao: (Number(b.dur) > 0 ? Number(b.dur) * 1000 : undefined)
+  }), i * 800));
   const todos = vistos.concat(novos.map(b => String(b.id)));
   try{ localStorage.setItem(key, JSON.stringify(todos.slice(-200))); }catch(e){}
 }

@@ -25,7 +25,7 @@ function limparSubject(s) {
   return 'mailto:cetecritic@gmail.com';
 }
 
-async function enviarParaTodos({ title, body, url }) {
+async function enviarParaTodos({ title, body, url, dur }) {
   webpush.setVapidDetails(
     limparSubject(process.env.VAPID_SUBJECT),
     process.env.VAPID_PUBLIC_KEY,
@@ -68,7 +68,7 @@ async function enviarParaTodos({ title, body, url }) {
   try {
     await fetch(APPS_SCRIPT_URL, {
       method: 'POST', headers: { 'Content-Type': 'text/plain;charset=utf-8' },
-      body: JSON.stringify({ action: 'criarBroadcast', secret: secret, titulo: title || 'CETECritic', corpo: body || '', url: url || '/index.html' })
+      body: JSON.stringify({ action: 'criarBroadcast', secret: secret, titulo: title || 'CETECritic', corpo: body || '', url: url || '/index.html', dur: Number(dur) || 0 })
     });
   } catch (e) { /* aviso ainda vai por push mesmo se o broadcast falhar */ }
 
@@ -86,7 +86,7 @@ module.exports = async (req, res) => {
     res.status(401).json({ ok: false, error: 'não autorizado' }); return;
   }
   try {
-    const r = await enviarParaTodos({ title: body.title, body: body.body, url: body.url });
+    const r = await enviarParaTodos({ title: body.title, body: body.body, url: body.url, dur: body.dur });
     res.status(200).json({ ok: true, ...r });
   } catch (e) {
     res.status(500).json({ ok: false, error: String((e && e.message) || e) });
