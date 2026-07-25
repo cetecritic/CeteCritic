@@ -1,0 +1,12 @@
+# dependências (a Vercel instala sozinha a partir do package.json — NÃO suba)
+node_modules/
+
+# ambiente / segredos
+.env
+.env.*
+.vercel
+
+# lixo de sistema / editor
+.DS_Store
+Thumbs.db
+*.log
