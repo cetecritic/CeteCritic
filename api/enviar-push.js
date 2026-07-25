@@ -9,12 +9,14 @@
 
    Variáveis de ambiente necessárias no Vercel:
      VAPID_SUBJECT, VAPID_PUBLIC_KEY, VAPID_PRIVATE_KEY, PUSH_SEND_SECRET
-   (PUSH_SEND_SECRET precisa ser IGUAL ao PUSH_SECRET colado no .gs.) */
+     SUPABASE_URL, SUPABASE_SECRET_KEY  (lê/limpa inscrições e grava broadcast) */
 
 const webpush = require('web-push');
+const { createClient } = require('@supabase/supabase-js');
 
-/* mesma URL do API_URL do config.js (não é segredo) */
-const APPS_SCRIPT_URL = 'https://script.google.com/macros/s/AKfycbwuwKpZ8XUWKHKlw3ZiPS-1HiWvt6hqwHAFtsLS10Rf_ToI3h_eIaDdXIY-ZlQcUuJLQg/exec';
+const sb = createClient(process.env.SUPABASE_URL, process.env.SUPABASE_SECRET_KEY, {
+  auth: { persistSession: false }
+});
 
 /* aceita "mailto: <x@y>" (com espaço/colchetes) e devolve "mailto:x@y" */
 function limparSubject(s) {
@@ -32,10 +34,9 @@ async function enviarParaTodos({ title, body, url, dur }) {
     process.env.VAPID_PRIVATE_KEY
   );
 
-  const secret = process.env.PUSH_SEND_SECRET || '';
-  const resp = await fetch(APPS_SCRIPT_URL + '?listaPush=' + encodeURIComponent(secret) + '&_=' + Date.now());
-  const data = await resp.json();
-  const subs = (data && Array.isArray(data.subs)) ? data.subs : [];
+  // lê as inscrições direto do Supabase
+  const { data: rows } = await sb.from('push').select('endpoint,p256dh,auth');
+  const subs = (rows || []).filter(r => r.endpoint).map(r => ({ endpoint: r.endpoint, keys: { p256dh: r.p256dh, auth: r.auth } }));
 
   const payload = JSON.stringify({ title: title || 'CETECritic', body: body || '', url: url || '/index.html' });
   let ok = 0, fail = 0;
@@ -53,22 +54,19 @@ async function enviarParaTodos({ title, body, url, dur }) {
   /* resume os motivos: ex. { "410": 2 } = 2 inscrições expiradas */
   const resumoErros = erros.reduce((acc, c) => { const k = String(c); acc[k] = (acc[k] || 0) + 1; return acc; }, {});
 
-  /* limpa as inscrições mortas da planilha automaticamente (não trava o retorno) */
+  /* limpa as inscrições mortas do Supabase automaticamente */
   if (mortos.length) {
-    try {
-      await fetch(APPS_SCRIPT_URL, {
-        method: 'POST', headers: { 'Content-Type': 'text/plain;charset=utf-8' },
-        body: JSON.stringify({ action: 'removerPushMorto', secret: secret, endpoints: mortos })
-      });
-    } catch (e) { /* se falhar, elas serão limpas no próximo envio */ }
+    try { await sb.from('push').delete().in('endpoint', mortos); }
+    catch (e) { /* se falhar, elas serão limpas no próximo envio */ }
   }
 
   /* registra o aviso como BROADCAST, pra aparecer no site pra todo mundo
      (inclusive quem não tem login/push) de forma transitória */
   try {
-    await fetch(APPS_SCRIPT_URL, {
-      method: 'POST', headers: { 'Content-Type': 'text/plain;charset=utf-8' },
-      body: JSON.stringify({ action: 'criarBroadcast', secret: secret, titulo: title || 'CETECritic', corpo: body || '', url: url || '/index.html', dur: Number(dur) || 0 })
+    let d = Number(dur) || 0; if (d < 0) d = 0; if (d > 120) d = 120;
+    await sb.from('broadcasts').insert({
+      bc_id: 'bc:' + Date.now(), titulo: title || 'CETECritic', corpo: body || '',
+      url: url || '/index.html', ts: Date.now(), dur: d
     });
   } catch (e) { /* aviso ainda vai por push mesmo se o broadcast falhar */ }
 

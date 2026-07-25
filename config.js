@@ -69,8 +69,10 @@ const EDICOES = [
   //  monteAbreEm: '2028-07-01T00:00:00-03:00' },
 ];
 
-/* Planilha (Google Apps Script) que guarda os votos — vale para todos os anos */
-const API_URL = 'https://script.google.com/macros/s/AKfycbwuwKpZ8XUWKHKlw3ZiPS-1HiWvt6hqwHAFtsLS10Rf_ToI3h_eIaDdXIY-ZlQcUuJLQg/exec';
+/* Backend do site. Agora é a função da Vercel /api/db (Supabase por trás),
+   mesma origem do site. A URL antiga do Apps Script fica de rollback:
+   'https://script.google.com/macros/s/AKfycbwuwKpZ8XUWKHKlw3ZiPS-1HiWvt6hqwHAFtsLS10Rf_ToI3h_eIaDdXIY-ZlQcUuJLQg/exec' */
+const API_URL = '/api/db';
 
 /* Chave PÚBLICA VAPID das notificações push (NÃO é segredo — pode ficar aqui).
    Precisa ser a MESMA da variável VAPID_PUBLIC_KEY na Vercel; a chave privada

@@ -15,7 +15,7 @@
    Ao publicar uma versão nova do site, troque o número em CACHE_VERSION
    para forçar a limpeza do cache antigo. */
  
-const CACHE_VERSION = 'cetecritic-v7';
+const CACHE_VERSION = 'cetecritic-v8';
  
 /* Lê o config.js para saber qual é o festival "em destaque" (EDICAO_EM_DESTAQUE)
    agora — assim, quando esse número mudar no config.js, o service worker passa
@@ -88,8 +88,9 @@ self.addEventListener('fetch', event => {
   const url = new URL(req.url);
   if (url.origin !== self.location.origin) return;
  
-  /* a planilha e o script de insights nunca entram no cache */
+  /* a API (dados frescos) e o script de insights nunca entram no cache */
   if (url.pathname.startsWith('/_vercel/')) return;
+  if (url.pathname.startsWith('/api/')) return;
  
   event.respondWith((async () => {
     const cache = await caches.open(CACHE_VERSION);
