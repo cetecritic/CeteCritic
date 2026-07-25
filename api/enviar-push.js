@@ -39,18 +39,40 @@ async function enviarParaTodos({ title, body, url }) {
 
   const payload = JSON.stringify({ title: title || 'CETECritic', body: body || '', url: url || '/index.html' });
   let ok = 0, fail = 0;
-  const erros = [];   // guarda o motivo de cada falha (status HTTP do serviço de push)
+  const erros = [];    // guarda o motivo de cada falha (status HTTP do serviço de push)
+  const mortos = [];   // endpoints que responderam 410/404 (inscrição expirada) -> remover
   await Promise.all(subs.map(async (sub) => {
     try { await webpush.sendNotification(sub, payload); ok++; }
     catch (e) {
       fail++;
       const code = (e && e.statusCode) ? e.statusCode : (e && e.message) ? e.message : String(e);
       erros.push(code);
+      if (e && (e.statusCode === 410 || e.statusCode === 404) && sub && sub.endpoint) mortos.push(sub.endpoint);
     }
   }));
   /* resume os motivos: ex. { "410": 2 } = 2 inscrições expiradas */
   const resumoErros = erros.reduce((acc, c) => { const k = String(c); acc[k] = (acc[k] || 0) + 1; return acc; }, {});
-  return { enviados: ok, falhas: fail, total: subs.length, erros: resumoErros };
+
+  /* limpa as inscrições mortas da planilha automaticamente (não trava o retorno) */
+  if (mortos.length) {
+    try {
+      await fetch(APPS_SCRIPT_URL, {
+        method: 'POST', headers: { 'Content-Type': 'text/plain;charset=utf-8' },
+        body: JSON.stringify({ action: 'removerPushMorto', secret: secret, endpoints: mortos })
+      });
+    } catch (e) { /* se falhar, elas serão limpas no próximo envio */ }
+  }
+
+  /* registra o aviso como BROADCAST, pra aparecer no site pra todo mundo
+     (inclusive quem não tem login/push) de forma transitória */
+  try {
+    await fetch(APPS_SCRIPT_URL, {
+      method: 'POST', headers: { 'Content-Type': 'text/plain;charset=utf-8' },
+      body: JSON.stringify({ action: 'criarBroadcast', secret: secret, titulo: title || 'CETECritic', corpo: body || '', url: url || '/index.html' })
+    });
+  } catch (e) { /* aviso ainda vai por push mesmo se o broadcast falhar */ }
+
+  return { enviados: ok, falhas: fail, total: subs.length, erros: resumoErros, limpos: mortos.length };
 }
 
 module.exports = async (req, res) => {
