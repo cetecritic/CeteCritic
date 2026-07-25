@@ -333,6 +333,10 @@ function doPost(e) {
   if (action === 'removerPush') return apiRemoverPush_(body);
   if (action === 'pedirReset') return apiPedirReset_(body);
   if (action === 'redefinirSenha') return apiRedefinirSenha_(body);
+  if (action === 'listarNotificacoes') return apiListarNotificacoes_(body);
+  if (action === 'contarNotifNaoLidas') return apiContarNotifNaoLidas_(body);
+  if (action === 'marcarNotifLidas') return apiMarcarNotifLidas_(body);
+  if (action === 'criarNotif') return apiCriarNotif_(body);
   return apiVoto_(body);
 }
 
@@ -419,7 +423,21 @@ function apiPerfil_(body) {
   const u = acharUsuario_(user);
   if (!u) return json_({ ok: false, error: 'usuário não encontrado' });
   const cfg = (body.perfil && typeof body.perfil === 'object') ? body.perfil : {};
+  // amigos que ANTES não estavam na lista e agora estão -> avisa cada novo amigo
+  let antigo = {};
+  try { antigo = JSON.parse(u.perfil || '{}'); } catch (e) { antigo = {}; }
+  const antes = Array.isArray(antigo.amigos) ? antigo.amigos.map(normUser_) : [];
+  const depois = Array.isArray(cfg.amigos) ? cfg.amigos : [];
   getUsersSheet_().getRange(u.row, 8).setValue(JSON.stringify(cfg));
+  const pmapA = lerPerfisMap_();
+  const dispU = (pmapA[normUser_(user)] && pmapA[normUser_(user)].display) || user;
+  depois.forEach(function (a) {
+    const na = normUser_(a);
+    if (na && na !== normUser_(user) && antes.indexOf(na) < 0 && acharUsuario_(a)) {
+      criarNotif_(a, 'amigos', 'amigo:' + normUser_(user), '🤝 Novo amigo',
+        dispU + ' adicionou você como amigo.', '/perfil.html?user=' + encodeURIComponent(dispU));
+    }
+  });
   return json_({ ok: true });
 }
 
@@ -434,6 +452,11 @@ function apiVisita_(body) {
     const sh = getVisitasSheet_();
     const data = sh.getDataRange().getValues();
     const pa = normUser_(alvo), vi = normUser_(user);
+    // avisa o dono do perfil — no máx. 1 vez por visitante por dia (respeita anônimo)
+    const pmap = lerPerfisMap_();
+    const dispV = (pmap[normUser_(user)] && pmap[normUser_(user)].display) || user;
+    const hoje = Utilities.formatDate(new Date(), 'GMT-3', 'yyyy-MM-dd');
+    criarNotif_(alvo, 'visitas', 'visita:' + vi + ':' + hoje, '👀 Nova visita', dispV + ' visitou seu perfil.', '/perfil.html');
     for (let i = 1; i < data.length; i++) {
       if (normUser_(data[i][0]) === pa && normUser_(data[i][1]) === vi) {
         sh.getRange(i + 1, 3).setValue(Date.now());
@@ -466,7 +489,12 @@ function apiCarimbo_(body) {
     }
     const restante = CARIMBO_COOLDOWN_MS - (Date.now() - ultima);
     if (restante > 0) return json_({ ok: false, error: 'espere ' + Math.ceil(restante / 60000) + ' min para carimbar este perfil de novo' });
-    sh.appendRow([alvo, user, tipo, Date.now()]);
+    const agoraTs = Date.now();
+    sh.appendRow([alvo, user, tipo, agoraTs]);
+    // avisa o dono do perfil que recebeu um carimbo (respeita anônimo do remetente)
+    const pmapC = lerPerfisMap_();
+    const dispF = (pmapC[normUser_(user)] && pmapC[normUser_(user)].display) || user;
+    criarNotif_(alvo, 'carimbos', 'carimbo:' + normUser_(user) + ':' + tipo + ':' + agoraTs, '📮 Novo carimbo', dispF + ' te deu o carimbo "' + tipo + '".', '/perfil.html');
     return json_({ ok: true });
   } finally { lock.releaseLock(); }
 }
@@ -617,6 +645,98 @@ function apiRemoverPush_(body) {
   if (!endpoint) return json_({ ok: false });
   apagarLinhas_(getPushSheet_(), r => String(r[1]) === endpoint);
   return json_({ ok: true });
+}
+
+// ===== CENTRAL DE NOTIFICAÇÕES (guardadas por conta na planilha) =====
+// Uma linha por notificação:
+//   user | id | tipo | titulo | corpo | url | ts | lida
+// 'id' é uma chave estável (ex.: 'badge:Colecionador', 'noite:2026:3') usada
+// para NÃO duplicar a mesma notificação. 'tipo' casa com as preferências que o
+// usuário liga/desliga em Configurações (perfil.notif[tipo]).
+const NOTIF_SHEET = 'notificacoes';
+function getNotifSheet_() {
+  const ss = SpreadsheetApp.getActiveSpreadsheet();
+  let sh = ss.getSheetByName(NOTIF_SHEET);
+  if (!sh) { sh = ss.insertSheet(NOTIF_SHEET); sh.appendRow(['user', 'id', 'tipo', 'titulo', 'corpo', 'url', 'ts', 'lida']); }
+  return sh;
+}
+// Preferência de notificação do usuário para um tipo. Padrão: LIGADO —
+// só bloqueia se o usuário desligou explicitamente (perfil.notif[tipo] === false).
+function prefNotifAtiva_(user, tipo) {
+  if (!tipo) return true;
+  const u = acharUsuario_(user);
+  if (!u) return false;
+  let cfg = {};
+  try { cfg = JSON.parse(u.perfil || '{}'); } catch (e) { cfg = {}; }
+  const notif = (cfg && typeof cfg.notif === 'object') ? cfg.notif : {};
+  return notif[tipo] !== false;
+}
+// Cria uma notificação para `user`. Se já existir uma com o mesmo `id` para esse
+// usuário, não duplica. Respeita as preferências (tipo desligado = não cria).
+// Devolve true se realmente gravou uma linha nova.
+function criarNotif_(user, tipo, id, titulo, corpo, url) {
+  user = String(user || '');
+  if (!user) return false;
+  if (!prefNotifAtiva_(user, tipo)) return false;
+  const sh = getNotifSheet_();
+  const data = sh.getDataRange().getValues();
+  const nu = normUser_(user);
+  const chave = String(id || (String(tipo || 'n') + ':' + Date.now()));
+  for (let i = 1; i < data.length; i++) {
+    if (normUser_(data[i][0]) === nu && String(data[i][1]) === chave) return false; // já existe
+  }
+  sh.appendRow([user, chave, String(tipo || ''), String(titulo || ''), String(corpo || ''), String(url || ''), Date.now(), false]);
+  return true;
+}
+// Lista as notificações do usuário (mais recentes primeiro, no máx. 100).
+function apiListarNotificacoes_(body) {
+  const user = String(body.user || '');
+  if (!verificarToken_(user, body.token)) return json_({ ok: false, notificacoes: [] });
+  const nu = normUser_(user);
+  const rows = getNotifSheet_().getDataRange().getValues().slice(1);
+  const notificacoes = rows.filter(r => normUser_(r[0]) === nu).map(r => ({
+    id: String(r[1]), tipo: String(r[2]), titulo: String(r[3]), corpo: String(r[4]),
+    url: String(r[5]), criadoEm: Number(r[6]) || 0, lida: (r[7] === true || String(r[7]) === 'true')
+  })).sort((a, b) => b.criadoEm - a.criadoEm).slice(0, 100);
+  return json_({ ok: true, notificacoes: notificacoes });
+}
+// Conta quantas notificações não lidas o usuário tem (para a bolinha do sino).
+function apiContarNotifNaoLidas_(body) {
+  const user = String(body.user || '');
+  if (!verificarToken_(user, body.token)) return json_({ ok: false, total: 0 });
+  const nu = normUser_(user);
+  const rows = getNotifSheet_().getDataRange().getValues().slice(1);
+  let total = 0;
+  rows.forEach(r => { if (normUser_(r[0]) === nu && !(r[7] === true || String(r[7]) === 'true')) total++; });
+  return json_({ ok: true, total: total });
+}
+// Marca notificações como lidas. Com `ids`, só essas; sem `ids`, todas do usuário.
+// (O botão "Limpar" zera a bolinha marcando tudo como lido — o histórico fica.)
+function apiMarcarNotifLidas_(body) {
+  const user = String(body.user || '');
+  if (!verificarToken_(user, body.token)) return json_({ ok: false });
+  const ids = Array.isArray(body.ids) ? body.ids.map(String) : null;
+  const lock = LockService.getScriptLock();
+  try { lock.waitLock(5000); } catch (e) { return json_({ ok: false }); }
+  try {
+    const sh = getNotifSheet_(); const data = sh.getDataRange().getValues();
+    const nu = normUser_(user);
+    for (let i = 1; i < data.length; i++) {
+      if (normUser_(data[i][0]) !== nu) continue;
+      if (ids && ids.indexOf(String(data[i][1])) < 0) continue;
+      if (!(data[i][7] === true || String(data[i][7]) === 'true')) sh.getRange(i + 1, 8).setValue(true);
+    }
+    return json_({ ok: true });
+  } finally { lock.releaseLock(); }
+}
+// O próprio usuário cria uma notificação PARA SI (badges, noites, votação,
+// edições, resultado do bolão — coisas detectadas no navegador dele).
+function apiCriarNotif_(body) {
+  const user = String(body.user || '');
+  if (!verificarToken_(user, body.token)) return json_({ ok: false });
+  const criada = criarNotif_(user, String(body.tipo || ''), String(body.id || ''),
+    String(body.titulo || ''), String(body.corpo || ''), String(body.url || ''));
+  return json_({ ok: true, criada: criada });
 }
 
 // ===== F1: RECUPERAÇÃO DE SENHA POR E-MAIL =====
