@@ -485,8 +485,22 @@ async function ativarPush(){
   if(perm !== 'granted') return { ok:false, error:'Permissão de notificação negada.' };
   try{
     const reg = await navigator.serviceWorker.ready;
+    const alvoKey = urlBase64ParaUint8(VAPID_PUBLIC_KEY);
     let sub = await reg.pushManager.getSubscription();
-    if(!sub) sub = await reg.pushManager.subscribe({ userVisibleOnly:true, applicationServerKey: urlBase64ParaUint8(VAPID_PUBLIC_KEY) });
+    /* Se já existe uma inscrição, mas foi feita com OUTRA chave VAPID (ex.: você
+       trocou o par de chaves), ela nunca vai receber push (o serviço recusa).
+       Nesse caso a gente descarta a antiga e cria uma nova com a chave atual. */
+    if(sub){
+      const atual = (sub.options && sub.options.applicationServerKey)
+        ? new Uint8Array(sub.options.applicationServerKey) : null;
+      const mesmaChave = atual && atual.length === alvoKey.length && atual.every((b, i) => b === alvoKey[i]);
+      if(!mesmaChave){
+        try{ await apiRemoverPush(sub.endpoint); }catch(e){}
+        try{ await sub.unsubscribe(); }catch(e){}
+        sub = null;
+      }
+    }
+    if(!sub) sub = await reg.pushManager.subscribe({ userVisibleOnly:true, applicationServerKey: alvoKey });
     const r = await apiSalvarPush(sub.toJSON());
     return (r && r.ok) ? { ok:true } : { ok:false, error:(r && r.error) || 'não foi possível registrar' };
   }catch(e){ return { ok:false, error:'não foi possível ativar (' + (e && e.message ? e.message : 'erro') + ')' }; }
