@@ -1616,8 +1616,11 @@ function abrirEscolhaEscopo(numNoites, maxEps){
   return new Promise(resolve => {
     let noiteOpts = '';
     for(let s = 1; s <= numNoites; s++) noiteOpts += `<option value="${s}">Noite ${s}</option>`;
-    let epOpts = '';
-    for(let e = 1; e <= maxEps; e++) epOpts += `<option value="${e}">Episódio ${e}</option>`;
+    // episódios de UMA noite específica (o nº pode variar por noite)
+    const epsDeNoite = s => {
+      const n = (typeof epsDaNoite === 'function') ? epsDaNoite(s) : maxEps;
+      let o = ''; for(let e = 1; e <= n; e++) o += `<option value="${e}">Episódio ${e}</option>`; return o;
+    };
 
     const overlay = document.createElement('div');
     overlay.className = 'share-overlay';
@@ -1631,7 +1634,10 @@ function abrirEscolhaEscopo(numNoites, maxEps){
             <label class="escopo-opt"><input type="radio" name="escopoShare" value="noite"> 🌙 Uma noite específica</label>
             <select id="escopoNoiteSel" class="escopo-select" style="display:none;">${noiteOpts}</select>
             <label class="escopo-opt"><input type="radio" name="escopoShare" value="episodio"> 🎬 Um episódio específico</label>
-            <select id="escopoEpSel" class="escopo-select" style="display:none;">${epOpts}</select>
+            <div id="escopoEpWrap" style="display:none; flex-direction:column; gap:8px;">
+              <select id="escopoEpNoiteSel" class="escopo-select">${noiteOpts}</select>
+              <select id="escopoEpSel" class="escopo-select">${epsDeNoite(1)}</select>
+            </div>
           </div>
           <div class="share-actions" style="margin-top:16px; justify-content:flex-end;">
             <button class="btn btn-ghost" id="escopoCancelar">Cancelar</button>
@@ -1643,11 +1649,15 @@ function abrirEscolhaEscopo(numNoites, maxEps){
 
     const radios = overlay.querySelectorAll('input[name="escopoShare"]');
     const selNoite = overlay.querySelector('#escopoNoiteSel');
+    const selEpNoite = overlay.querySelector('#escopoEpNoiteSel');
     const selEp = overlay.querySelector('#escopoEpSel');
+    const epWrap = overlay.querySelector('#escopoEpWrap');
+    // ao trocar a noite do episódio, recarrega a lista de episódios daquela noite
+    selEpNoite.addEventListener('change', () => { selEp.innerHTML = epsDeNoite(Number(selEpNoite.value)); });
     function atualizarSelects(){
       const v = overlay.querySelector('input[name="escopoShare"]:checked').value;
       selNoite.style.display = (v === 'noite') ? '' : 'none';
-      selEp.style.display = (v === 'episodio') ? '' : 'none';
+      epWrap.style.display = (v === 'episodio') ? 'flex' : 'none';
     }
     radios.forEach(r => r.addEventListener('change', atualizarSelects));
 
@@ -1657,7 +1667,7 @@ function abrirEscolhaEscopo(numNoites, maxEps){
     overlay.querySelector('#escopoConfirmar').addEventListener('click', () => {
       const v = overlay.querySelector('input[name="escopoShare"]:checked').value;
       if(v === 'noite') fechar({ tipo: 'noite', valor: Number(selNoite.value) });
-      else if(v === 'episodio') fechar({ tipo: 'episodio', valor: Number(selEp.value) });
+      else if(v === 'episodio') fechar({ tipo: 'episodio', noite: Number(selEpNoite.value), valor: Number(selEp.value) });
       else fechar({ tipo: 'festival' });
     });
   });
@@ -2711,14 +2721,11 @@ function paginaMonte(){
       }
       sub = `Noite ${s} · Cetec Festival ${ANO}`;
     } else if(escolha.tipo === 'episodio'){
-      const e = escolha.valor;
-      vals = [];
-      for(let s = 1; s <= NUM_NOITES; s++){
-        if(e > epsDaNoite(s)) continue;
-        const v = customValues[`s${s}e${e}`];
-        if(v !== undefined) vals.push(v);
-      }
-      sub = `Episódio ${e} · Cetec Festival ${ANO}`;
+      const s = escolha.noite, e = escolha.valor;
+      const v = customValues[`s${s}e${e}`];
+      vals = (v !== undefined) ? [v] : [];
+      const peca = (ND[s] && Array.isArray(ND[s].pecas)) ? ND[s].pecas[e - 1] : null;
+      sub = (peca && peca.titulo) ? `${peca.titulo} · Cetec Festival ${ANO}` : `Noite ${s} · Episódio ${e} · Cetec Festival ${ANO}`;
     } else {
       vals = Object.values(customValues).map(Number).filter(v => !isNaN(v));
       sub = `Cetec Festival ${ANO}`;
