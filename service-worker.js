@@ -15,7 +15,7 @@
    Ao publicar uma versão nova do site, troque o número em CACHE_VERSION
    para forçar a limpeza do cache antigo. */
  
-const CACHE_VERSION = 'cetecritic-v5';
+const CACHE_VERSION = 'cetecritic-v6';
  
 /* Lê o config.js para saber qual é o festival "em destaque" (EDICAO_EM_DESTAQUE)
    agora — assim, quando esse número mudar no config.js, o service worker passa
@@ -147,6 +147,34 @@ self.addEventListener('notificationclick', event => {
     const clientes = await self.clients.matchAll({ type: 'window', includeUncontrolled: true });
     for (const c of clientes) { if ('focus' in c) { c.navigate(destino); return c.focus(); } }
     if (self.clients.openWindow) return self.clients.openWindow(destino);
+  })());
+});
+
+/* =====================================================================
+   pushsubscriptionchange — o navegador trocou/expirou a inscrição
+   =====================================================================
+   Quando isso acontece (inscrição morta/rotacionada), a gente refaz a
+   inscrição na hora com a MESMA chave pública (vem do config.js importado).
+   O SW não tem o token do usuário pra salvar no servidor, então quem grava a
+   nova inscrição é o site na próxima visita (verificarInscricaoPush no core.js),
+   que faz o apiSalvarPush com o token. Aqui só garantimos que o navegador volte
+   a ter uma inscrição VÁLIDA. */
+function urlB64ParaUint8_(base64){
+  const pad = '='.repeat((4 - base64.length % 4) % 4);
+  const b64 = (base64 + pad).replace(/-/g, '+').replace(/_/g, '/');
+  const raw = atob(b64); const arr = new Uint8Array(raw.length);
+  for (let i = 0; i < raw.length; i++) arr[i] = raw.charCodeAt(i);
+  return arr;
+}
+self.addEventListener('pushsubscriptionchange', event => {
+  event.waitUntil((async () => {
+    try {
+      if (typeof VAPID_PUBLIC_KEY === 'undefined') return;
+      await self.registration.pushManager.subscribe({
+        userVisibleOnly: true,
+        applicationServerKey: urlB64ParaUint8_(VAPID_PUBLIC_KEY)
+      });
+    } catch (e) { /* na próxima visita o site tenta religar */ }
   })());
 });
  

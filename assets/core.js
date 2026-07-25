@@ -1051,6 +1051,85 @@ function checarNotificacoes(){
   })();
 }
 
+/* ---- BROADCASTS (avisos "para todos") ----
+   Aparecem pra QUALQUER visitante (logado ou não), de forma transitória: o
+   banner sobe, fica alguns segundos e some. Cada aviso aparece uma vez por
+   aparelho (guardamos os ids já vistos no localStorage). */
+async function fetchBroadcasts(){
+  if(!API_URL || API_URL.startsWith('COLE_AQUI')) return [];
+  try{
+    const r = await fetch(API_URL + '?broadcasts=1&_=' + Date.now(), { cache:'no-store' });
+    const j = await r.json();
+    return (j && Array.isArray(j.broadcasts)) ? j.broadcasts : [];
+  }catch(e){ return []; }
+}
+async function checarBroadcasts(){
+  const lista = await fetchBroadcasts();
+  if(!lista.length) return;
+  const key = 'cetec-broadcasts-vistos';
+  let vistos = []; try{ vistos = JSON.parse(localStorage.getItem(key) || '[]'); }catch(e){ vistos = []; }
+  const novos = lista.filter(b => vistos.indexOf(String(b.id)) < 0);
+  if(!novos.length) return;
+  /* mostra no máx. 3, dos mais antigos p/ os mais novos */
+  novos.slice(0, 3).reverse().forEach((b, i) => setTimeout(() => mostrarNotifBanner({ titulo:b.titulo, corpo:b.corpo, url:b.url }), i * 800));
+  const todos = vistos.concat(novos.map(b => String(b.id)));
+  try{ localStorage.setItem(key, JSON.stringify(todos.slice(-200))); }catch(e){}
+}
+
+/* ---- saúde da inscrição push ----
+   Se a inscrição do aparelho sumiu/expirou (foi limpa no servidor) mas o usuário
+   queria push, o app tenta religar sozinho (se tiver permissão) ou mostra um
+   banner pedindo pra reativar. */
+async function salvarPushPref(v){
+  const s = usuarioLogado(); if(!s) return;
+  try{
+    const meu = await apiMeuPerfil();
+    const cfg = (meu && meu.ok && meu.perfil && typeof meu.perfil === 'object') ? meu.perfil : {};
+    const notif = Object.assign({}, (cfg.notif || {}), { push: v });
+    salvarPrefsNotifCache(s.user, notif);
+    await apiSalvarPerfil(Object.assign({}, cfg, { notif }));
+  }catch(e){}
+}
+function mostrarBannerReativarPush(){
+  try{ if(sessionStorage.getItem('cetec-reativar-push-off')) return; }catch(e){}
+  if(document.getElementById('reativarPushBanner')) return;
+  const b = document.createElement('div');
+  b.id = 'reativarPushBanner';
+  b.className = 'push-reativar';
+  b.innerHTML = `<span class="pr-txt">🔔 Suas notificações foram desativadas. Quer reativar?</span>
+    <button class="pr-ok" type="button">Reativar</button>
+    <button class="pr-x" type="button" aria-label="Fechar">✕</button>`;
+  document.body.appendChild(b);
+  b.querySelector('.pr-x').addEventListener('click', () => { try{ sessionStorage.setItem('cetec-reativar-push-off','1'); }catch(e){} b.remove(); });
+  b.querySelector('.pr-ok').addEventListener('click', async () => {
+    const ok = b.querySelector('.pr-ok'); ok.textContent = 'Ativando…'; ok.disabled = true;
+    const r = await ativarPush();
+    if(r && r.ok){ await salvarPushPref(true); b.remove(); mostrarNotifBanner({ titulo:'🔔 Notificações reativadas' }); }
+    else { alert('Não deu pra reativar: ' + ((r && r.error) || 'erro')); ok.textContent = 'Reativar'; ok.disabled = false; }
+  });
+}
+async function verificarInscricaoPush(){
+  const s = usuarioLogado(); if(!s) return;
+  if(!('serviceWorker' in navigator) || !('PushManager' in window) || typeof Notification === 'undefined') return;
+  if(lerPrefsNotif().push !== true) return;   // usuário nunca ligou o push: não insiste
+  try{
+    const reg = await navigator.serviceWorker.ready;
+    const sub = await reg.pushManager.getSubscription();
+    if(sub){
+      /* ainda inscrito: re-salva no servidor (caso a linha dele tenha sido limpa) */
+      try{ await apiSalvarPush(sub.toJSON()); }catch(e){}
+      return;
+    }
+    /* inscrição sumiu, mas o usuário queria push */
+    if(Notification.permission === 'granted'){
+      const r = await ativarPush();          // dá pra religar sem gesto se já tem permissão
+      if(!r || !r.ok) mostrarBannerReativarPush();
+    } else {
+      mostrarBannerReativarPush();            // precisa da ação do usuário
+    }
+  }catch(e){}
+}
+
 function montarShell(conteudo){
   document.body.insertAdjacentHTML('afterbegin', `
     <nav class="sidebar">${htmlSidebar()}</nav>
@@ -1126,6 +1205,8 @@ function montarShell(conteudo){
 
   atualizarBadgeNotificacoes();
   checarNotificacoes();   // banner de novidades + detecção de noites/edições/bolão
+  checarBroadcasts();     // avisos "para todos" — aparecem pra qualquer visitante
+  verificarInscricaoPush();   // religa/pede pra religar se a inscrição push sumiu
 
   /* ---- aviso de edição histórica (anos <= ANO_EDICAO_HISTORICA) ----
      aparece 1x por sessão para cada ano histórico visitado */
