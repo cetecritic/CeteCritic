@@ -83,8 +83,24 @@ async function acharUsuario(usuario){
 }
 async function verificarToken(usuario, token){
   if(!usuario || !token) return false;
+  const nu = norm(usuario);
+  // 1) sessões novas (múltiplos dispositivos)
+  try{
+    const { data } = await sb.from('sessoes').select('usuario').eq('token', String(token)).limit(5);
+    if((data||[]).some(r => norm(r.usuario) === nu)) return true;
+  }catch(e){ /* tabela sessoes ainda não existe: cai no legado */ }
+  // 2) legado: token único guardado em usuarios (sessões antigas continuam válidas)
   const u = await acharUsuario(usuario);
   return !!(u && u.token && u.token === String(token));
+}
+// cria uma sessão (1 token por dispositivo). Se a tabela 'sessoes' não existir,
+// cai no comportamento antigo (token único em usuarios) — login nunca quebra.
+async function criarSessao(usuario, dispositivo){
+  const token = novoToken();
+  const now = Date.now();
+  const { error } = await sb.from('sessoes').insert({ usuario, token, dispositivo: String(dispositivo || '').slice(0, 120), criado_em: now, ultimo_uso: now });
+  if(error){ try{ await sb.from('usuarios').update({ token }).eq('usuario', usuario); }catch(e){} }
+  return token;
 }
 // mapa normUser -> { user, display, anonimo, privado, email }
 async function lerPerfisMap(){
@@ -267,11 +283,11 @@ async function apiRegistrar(body){
   if(senha.length<4) return { ok:false, error:'a senha precisa de pelo menos 4 caracteres' };
   if(await acharUsuario(usuario)) return { ok:false, error:'esse usuário já existe' };
   const salt = novoToken().slice(0,8);
-  const token = novoToken();
   const email = String(body.email||'').trim();
   const perfil = (email && /^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(email)) ? { email } : {};
-  const { error } = await sb.from('usuarios').insert({ usuario, senha_hash: hash(senha,salt), salt, token, criado_em: Date.now(), tentativas:0, lock_until:0, perfil });
+  const { error } = await sb.from('usuarios').insert({ usuario, senha_hash: hash(senha,salt), salt, token: null, criado_em: Date.now(), tentativas:0, lock_until:0, perfil });
   if(error) return { ok:false, error:'esse usuário já existe' };
+  const token = await criarSessao(usuario, body.dispositivo);
   return { ok:true, user:usuario, token };
 }
 
@@ -297,8 +313,8 @@ async function apiLogin(body){
     await sb.from('usuarios').update({ tentativas:0, lock_until:0 }).eq('usuario', u.usuario);
     return { ok:false, need2fa:true, user:u.usuario };
   }
-  const token = novoToken();
-  await sb.from('usuarios').update({ token, tentativas:0, lock_until:0 }).eq('usuario', u.usuario);
+  await sb.from('usuarios').update({ tentativas:0, lock_until:0 }).eq('usuario', u.usuario);
+  const token = await criarSessao(u.usuario, body.dispositivo);
   return { ok:true, user:u.usuario, token, admin: u.admin === true };
 }
 
@@ -315,8 +331,8 @@ async function apiLogin2fa(body){
   if(Date.now() > Number(row.exp)){ await sb.from('login_codes').delete().eq('usuario', row.usuario); return { ok:false, error:'código expirado — entre de novo' }; }
   if(String(row.code) !== code){ await sb.from('login_codes').update({ tentativas:(row.tentativas||0)+1 }).eq('usuario', row.usuario); return { ok:false, error:'código incorreto' }; }
   await sb.from('login_codes').delete().eq('usuario', row.usuario);
-  const token = novoToken();
-  await sb.from('usuarios').update({ token, tentativas:0, lock_until:0 }).eq('usuario', u.usuario);
+  await sb.from('usuarios').update({ tentativas:0, lock_until:0 }).eq('usuario', u.usuario);
+  const token = await criarSessao(u.usuario, body.dispositivo);
   return { ok:true, user:u.usuario, token, admin: u.admin === true };
 }
 
@@ -446,6 +462,7 @@ async function apiDeletarConta(body){
   await delWhere('palpites', ['usuario']);
   await delWhere('resets', ['usuario']);
   await delWhere('notificacoes', ['usuario']);
+  await delWhere('sessoes', ['usuario']);
   // push (chave é endpoint)
   const { data: pu } = await sb.from('push').select('endpoint,usuario');
   const eps = (pu||[]).filter(r => norm(r.usuario)===nu).map(r => r.endpoint);
@@ -513,9 +530,11 @@ async function apiRedefinirSenha(body){
   if(Date.now() > Number(linha.exp)) return { ok:false, error:'este link expirou — peça outro' };
   const u = await acharUsuario(usuario);
   if(!u) return { ok:false, error:'usuário não encontrado' };
-  const salt = novoToken().slice(0,8); const novoTok = novoToken();
-  await sb.from('usuarios').update({ senha_hash: hash(nova,salt), salt, token: novoTok, tentativas:0, lock_until:0 }).eq('usuario', u.usuario);
+  const salt = novoToken().slice(0,8);
+  await sb.from('usuarios').update({ senha_hash: hash(nova,salt), salt, token: null, tentativas:0, lock_until:0 }).eq('usuario', u.usuario);
+  try{ await sb.from('sessoes').delete().ilike('usuario', u.usuario); }catch(e){}   // desloga todos os dispositivos
   await sb.from('resets').update({ usado:true }).eq('id', linha.id);
+  const novoTok = await criarSessao(u.usuario, body.dispositivo);
   return { ok:true, user:u.usuario, token:novoTok };
 }
 
@@ -535,18 +554,44 @@ async function apiContarNotifNaoLidas(body){
 }
 async function apiMarcarNotifLidas(body){
   const usuario = String(body.user||'');
-  if(!(await verificarToken(usuario, body.token))) return { ok:false };
+  if(!(await verificarToken(usuario, body.token))) return { ok:false, error:'faça login' };
   const ids = Array.isArray(body.ids) ? body.ids.map(String) : null;
-  const { data } = await sb.from('notificacoes').select('id,usuario,notif_id,lida').ilike('usuario', usuario);
-  const alvos = (data||[]).filter(r => norm(r.usuario)===norm(usuario) && r.lida!==true && (!ids || ids.indexOf(String(r.notif_id))>=0)).map(r => r.id);
-  if(alvos.length) await sb.from('notificacoes').update({ lida:true }).in('id', alvos);
-  return { ok:true };
+  const nu = norm(usuario);
+  // seleciona SEM ilike (evita qualquer curinga em usuário com "_") e filtra no JS
+  const { data } = await sb.from('notificacoes').select('id,usuario,notif_id,lida').limit(2000);
+  const alvos = (data||[]).filter(r => norm(r.usuario) === nu && r.lida !== true && (!ids || ids.indexOf(String(r.notif_id)) >= 0)).map(r => r.id);
+  let erro = null;
+  if(alvos.length){ const up = await sb.from('notificacoes').update({ lida:true }).in('id', alvos); erro = up.error ? String(up.error.message) : null; }
+  return { ok:!erro, marcadas: alvos.length, erro };
 }
 async function apiCriarNotif(body){
   const usuario = String(body.user||'');
   if(!(await verificarToken(usuario, body.token))) return { ok:false };
   const criada = await criarNotif(usuario, String(body.tipo||''), String(body.id||''), String(body.titulo||''), String(body.corpo||''), String(body.url||''));
   return { ok:true, criada };
+}
+async function apiListarSessoes(body){
+  const usuario = String(body.user||'');
+  if(!(await verificarToken(usuario, body.token))) return { ok:false, sessoes:[] };
+  const { data } = await sb.from('sessoes').select('*').ilike('usuario', usuario).order('criado_em', { ascending:false });
+  const sessoes = (data||[]).filter(r => norm(r.usuario) === norm(usuario)).map(r => ({
+    id: r.id, dispositivo: r.dispositivo || 'Dispositivo', criadoEm: Number(r.criado_em)||0,
+    ultimoUso: Number(r.ultimo_uso)||0, atual: String(r.token) === String(body.token)
+  }));
+  return { ok:true, sessoes };
+}
+async function apiRevogarSessao(body){
+  const usuario = String(body.user||'');
+  if(!(await verificarToken(usuario, body.token))) return { ok:false };
+  const { data } = await sb.from('sessoes').select('id,usuario').eq('id', body.id).limit(1);
+  const s = (data||[])[0];
+  if(s && norm(s.usuario) === norm(usuario)) await sb.from('sessoes').delete().eq('id', body.id);
+  return { ok:true };
+}
+async function apiLogout(body){
+  const token = String(body.token||'');
+  if(token){ try{ await sb.from('sessoes').delete().eq('token', token); }catch(e){} }
+  return { ok:true };
 }
 async function apiCriarBroadcast(body){
   if(String(body.secret||'') !== PUSH_SECRET) return { ok:false, error:'não autorizado' };
@@ -570,7 +615,8 @@ async function handlePost(req, res){
     pedirReset: apiPedirReset, redefinirSenha: apiRedefinirSenha,
     listarNotificacoes: apiListarNotificacoes, contarNotifNaoLidas: apiContarNotifNaoLidas,
     marcarNotifLidas: apiMarcarNotifLidas, criarNotif: apiCriarNotif,
-    removerPushMorto: apiRemoverPushMorto, criarBroadcast: apiCriarBroadcast, voto: apiVoto
+    removerPushMorto: apiRemoverPushMorto, criarBroadcast: apiCriarBroadcast, voto: apiVoto,
+    listarSessoes: apiListarSessoes, revogarSessao: apiRevogarSessao, logout: apiLogout
   };
   const fn = rotas[action] || apiVoto;
   return res.json(await fn(body));

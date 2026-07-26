@@ -4934,20 +4934,23 @@ async function paginaNotificacoes(){
     const n = notifs.find(x => String(x.id) === id);
     if(!n || !n.url) ev.preventDefault();
     if(n && !n.lida){
-      n.lida = true;
-      item.classList.remove('notif-nao-lida');
-      btnTodas.style.display = notifs.some(x => !x.lida) ? '' : 'none';
-      await apiMarcarNotifLidas([id]);   // grava no servidor ANTES de recontar
-      atualizarBadgeNotificacoes();
+      const r = await apiMarcarNotifLidas([id]);   // grava no servidor ANTES de mudar a UI
+      if(r && r.ok){
+        n.lida = true;
+        item.classList.remove('notif-nao-lida');
+        btnTodas.style.display = notifs.some(x => !x.lida) ? '' : 'none';
+        atualizarBadgeNotificacoes();
+      }
     }
   });
 
   btnTodas.addEventListener('click', async () => {
     if(!notifs.some(n => !n.lida)) return;
+    const r = await apiMarcarNotifLidas();          // sem ids = servidor marca TODAS as não lidas
+    if(!r || !r.ok){ alert('Não deu pra limpar: ' + ((r && r.erro) || (r && r.error) || 'erro de conexão')); return; }
     notifs.forEach(n => n.lida = true);
     render();
-    await apiMarcarNotifLidas();          // sem ids = servidor marca TODAS as não lidas (robusto)
-    atualizarBadgeNotificacoes();         // só então reconta a bolinha
+    atualizarBadgeNotificacoes();
   });
 
   const r = await apiListarNotificacoes();

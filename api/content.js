@@ -331,6 +331,38 @@ async function handlePost(req, res) {
     return res.status(200).json({ ok: true, alvos: alvos.length, pushEnviados });
   }
 
+  // ----- moderação de votos (excluir notas com filtros) -----
+  if (action === 'listarVotos' || action === 'deletarVotos') {
+    if (action === 'deletarVotos') {
+      const ids = Array.isArray(body.row_ids) ? body.row_ids : [];
+      if (ids.length) await sb.from('submissions').delete().in('row_id', ids);
+      return res.status(200).json({ ok: true, apagados: ids.length });
+    }
+    // listarVotos com filtros
+    const ano = body.ano ? Number(body.ano) : null;
+    const usuarioF = norm(body.usuario || '');
+    const noite = body.noite ? Number(body.noite) : null;
+    const ep = body.episodio ? Number(body.episodio) : null;
+    const notaF = (body.nota !== '' && body.nota != null) ? Number(body.nota) : null;
+    const chave = (noite && ep) ? ('s' + noite + 'e' + ep) : null;
+    let q = sb.from('submissions').select('row_id,sub_id,usuario,year,grid,ts');
+    if (ano) q = q.eq('year', ano);
+    const { data } = await q.limit(3000);
+    let rows = (data || []);
+    if (usuarioF) rows = rows.filter(r => norm(r.usuario) === usuarioF);
+    rows = rows.filter(r => {
+      const g = (r.grid && typeof r.grid === 'object') ? r.grid : {};
+      if (chave) { if (!(chave in g)) return false; if (notaF != null && Number(g[chave]) !== notaF) return false; return true; }
+      if (notaF != null) return Object.values(g).some(v => Number(v) === notaF);
+      return true;
+    });
+    const votos = rows.slice(0, 400).map(r => {
+      const g = (r.grid && typeof r.grid === 'object') ? r.grid : {};
+      return { row_id: r.row_id, sub_id: r.sub_id, usuario: r.usuario || '(anônimo)', year: r.year, ts: r.ts, nota: chave ? g[chave] : null, notas: Object.keys(g).length };
+    });
+    return res.status(200).json({ ok: true, votos, total: rows.length });
+  }
+
   // ----- upload de imagem (poster / banner) pro Supabase Storage -----
   if (action === 'uploadImagem') {
     const b64 = String(body.data || '');
