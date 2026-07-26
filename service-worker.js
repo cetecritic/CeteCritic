@@ -15,7 +15,7 @@
    Ao publicar uma versão nova do site, troque o número em CACHE_VERSION
    para forçar a limpeza do cache antigo. */
  
-const CACHE_VERSION = 'cetecritic-v24';
+const CACHE_VERSION = 'cetecritic-v25';
  
 /* Lê o config.js para saber qual é o festival "em destaque" (EDICAO_EM_DESTAQUE)
    agora — assim, quando esse número mudar no config.js, o service worker passa
@@ -80,6 +80,19 @@ self.addEventListener('activate', event => {
   })());
 });
  
+/* Estes caminhos são gerados na hora pelo /api/content (config.js, listas de
+   edições, dados de cada noite etc.) — ou seja, mudam sempre que o admin
+   edita algo no painel. Pra esses, NÃO faz sentido "stale-while-revalidate"
+   (que mostra o cache velho e só atualiza pra próxima vez): a gente tenta a
+   rede PRIMEIRO e só cai pro cache se estiver offline. Assim, um reload
+   normal (sem precisar de Ctrl+Shift+R) já mostra a mudança na hora. */
+function ehArquivoDeDados_(pathname) {
+  if (['/config.js', '/hall-dados.js', '/perfil.js', '/home-dados.js'].includes(pathname)) return true;
+  if (/^\/\d{4}\/edicao\.js$/.test(pathname)) return true;
+  if (/^\/\d{4}\/noites\/noite-\d+\.js$/.test(pathname)) return true;
+  return false;
+}
+
 self.addEventListener('fetch', event => {
   const req = event.request;
  
@@ -91,6 +104,25 @@ self.addEventListener('fetch', event => {
   /* a API (dados frescos) e o script de insights nunca entram no cache */
   if (url.pathname.startsWith('/_vercel/')) return;
   if (url.pathname.startsWith('/api/')) return;
+
+  /* arquivos de DADOS (gerados por /api/content): network-first */
+  if (ehArquivoDeDados_(url.pathname)) {
+    event.respondWith((async () => {
+      const cache = await caches.open(CACHE_VERSION);
+      try {
+        const resp = await fetch(req, { cache: 'reload' });
+        if (resp && resp.status === 200 && resp.type === 'basic') {
+          cache.put(req, resp.clone()).catch(() => {});
+        }
+        return resp;
+      } catch (e) {
+        const cacheado = await cache.match(req);
+        if (cacheado) return cacheado;
+        return new Response('Offline', { status: 503, statusText: 'Offline' });
+      }
+    })());
+    return;
+  }
  
   event.respondWith((async () => {
     const cache = await caches.open(CACHE_VERSION);

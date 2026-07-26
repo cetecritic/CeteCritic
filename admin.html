@@ -885,6 +885,7 @@ async function buscarUsuarios(){
         <button class="ghost small" data-act="carimbos">Limpar carimbos</button>
         <button class="ghost small" data-act="visitas">Limpar visitas</button>
         <button class="ghost small" data-act="reputacao">Zerar reputação</button>
+        <button class="ghost small" data-act="editarRep">✏️ Editar reputação</button>
         <button class="ghost small" data-act="showcase">Limpar destaques</button>
         <button class="danger small" data-act="excluir">Excluir conta</button>
       </div>
@@ -899,6 +900,16 @@ async function buscarUsuarios(){
       if(act === 'excluir'){
         if(!confirm('Excluir a conta "'+alvo+'"? Apaga perfil, carimbos, visitas, reputação e palpites. Os votos viram anônimos. Isso é permanente.')) return;
         await post('deletarUsuario', { alvo }); buscarUsuarios(); return;
+      }
+      if(act === 'editarRep'){
+        const atual = await post('lerReputacao', { alvo });
+        const val = prompt('Reputação de "'+alvo+'" (atual: '+((atual&&atual.totalAtual)||0)+'):', (atual&&atual.totalAtual)||0);
+        if(val === null) return;
+        const num = Number(val);
+        if(!Number.isFinite(num)){ alert('Número inválido.'); return; }
+        await post('ajustarReputacao', { alvo, valor: num });
+        buscarUsuarios();
+        return;
       }
       const rotulo = { carimbos:'os carimbos', visitas:'as visitas', reputacao:'a reputação', showcase:'os destaques/favoritas' }[act];
       if(!confirm('Remover '+rotulo+' de "'+alvo+'"?')) return;

@@ -330,6 +330,37 @@ async function handlePost(req, res) {
     await sb.from('usuarios').update({ admin: !!body.valor }).eq('usuario', real.usuario);
     return res.status(200).json({ ok: true });
   }
+  // ----- item 6: reputação editável pelo admin -----
+  // Guardamos o ajuste do admin como uma linha ESPECIAL em `reputacao`
+  // (from_user = '__admin__'), com o valor sendo a diferença entre o
+  // número desejado e a soma dos votos reais. Assim o total bate com o
+  // que o admin definiu, sem apagar ou sobrescrever o voto de ninguém.
+  const ADMIN_REP_FROM = '__admin__';
+
+  if (action === 'lerReputacao') {
+    const alvo = String(body.alvo || '');
+    const { data } = await sb.from('reputacao').select('from_user,valor').ilike('profile_user', alvo);
+    const rows = data || [];
+    const votosReais = rows.filter(r => r.from_user !== ADMIN_REP_FROM).reduce((s, r) => s + (Number(r.valor) || 0), 0);
+    const ajuste = (rows.find(r => r.from_user === ADMIN_REP_FROM) || {}).valor || 0;
+    return res.status(200).json({ ok: true, totalAtual: votosReais + Number(ajuste) });
+  }
+
+  if (action === 'ajustarReputacao') {
+    const alvo = String(body.alvo || '');
+    const desejado = Number(body.valor);
+    if (!alvo || !Number.isFinite(desejado)) return res.status(400).json({ ok: false, error: 'parâmetros inválidos' });
+    const { data } = await sb.from('reputacao').select('id,from_user,valor').ilike('profile_user', alvo);
+    const rows = data || [];
+    const votosReais = rows.filter(r => r.from_user !== ADMIN_REP_FROM).reduce((s, r) => s + (Number(r.valor) || 0), 0);
+    const linhaAdmin = rows.find(r => r.from_user === ADMIN_REP_FROM);
+    const ajuste = desejado - votosReais;
+    if (ajuste === 0 && linhaAdmin) await sb.from('reputacao').delete().eq('id', linhaAdmin.id);
+    else if (linhaAdmin) await sb.from('reputacao').update({ valor: ajuste, ts: Date.now() }).eq('id', linhaAdmin.id);
+    else await sb.from('reputacao').insert({ profile_user: alvo, from_user: ADMIN_REP_FROM, valor: ajuste, ts: Date.now() });
+    return res.status(200).json({ ok: true, totalAtual: votosReais + ajuste });
+  }
+
   if (action === 'moderarPerfil') {
     const nu = norm(body.alvo || ''); const op = body.opcoes || {};
     const limpar = async (table) => {
