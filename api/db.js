@@ -557,12 +557,17 @@ async function apiMarcarNotifLidas(body){
   if(!(await verificarToken(usuario, body.token))) return { ok:false, error:'faça login' };
   const ids = Array.isArray(body.ids) ? body.ids.map(String) : null;
   const nu = norm(usuario);
-  // filtra o usuário no banco (mesmo caminho da listagem, que funciona)
-  const { data, error: errSel } = await sb.from('notificacoes').select('id,usuario,notif_id,lida').ilike('usuario', usuario).limit(500);
-  const alvos = (data||[]).filter(r => norm(r.usuario) === nu && r.lida !== true && (!ids || ids.indexOf(String(r.notif_id)) >= 0)).map(r => r.id);
+  // a tabela pode não ter coluna 'id' — usamos (usuario + notif_id) como alvo
+  const { data, error: errSel } = await sb.from('notificacoes').select('usuario,notif_id,lida').ilike('usuario', usuario).limit(1000);
+  const meus = (data||[]).filter(r => norm(r.usuario) === nu);
+  const alvos = meus.filter(r => r.lida !== true && (!ids || ids.indexOf(String(r.notif_id)) >= 0)).map(r => String(r.notif_id));
+  const usuariosExatos = [...new Set(meus.map(r => r.usuario))];   // valores exatos p/ o update preciso
   let erro = errSel ? String(errSel.message) : null;
-  if(alvos.length){ const up = await sb.from('notificacoes').update({ lida:true }).in('id', alvos); if(up.error) erro = String(up.error.message); }
-  return { ok:!erro, marcadas: alvos.length, achadas: (data||[]).length, erro };
+  if(alvos.length && usuariosExatos.length){
+    const up = await sb.from('notificacoes').update({ lida: true }).in('usuario', usuariosExatos).in('notif_id', alvos);
+    if(up.error) erro = String(up.error.message);
+  }
+  return { ok: !erro, marcadas: alvos.length, achadas: (data||[]).length, erro };
 }
 async function apiCriarNotif(body){
   const usuario = String(body.user||'');
