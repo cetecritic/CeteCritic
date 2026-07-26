@@ -497,7 +497,7 @@ function pecaBlockHtml(p){
     <div class="row2"><div><label>Título</label><input class="pc-titulo" value="${(p.titulo||'').replace(/"/g,'&quot;')}"></div>
     <div><label>Turma</label><input class="pc-turma" value="${(p.turma||'').replace(/"/g,'&quot;')}"></div></div>
     <label>Sinopse</label><textarea class="pc-sinopse">${p.sinopse||''}</textarea>
-    <div class="row2"><div><label>YouTube (id)</label><input class="pc-yt" value="${(p.youtube||'').replace(/"/g,'&quot;')}"></div>
+    <div class="row2"><div><label>YouTube (cole o link ou só o ID)</label><input class="pc-yt" value="${(p.youtube||'').replace(/"/g,'&quot;')}" placeholder="cole o link (com ou sem &t=) que preenche sozinho"></div>
     <div><label>Início no vídeo (s)</label><input class="pc-yti" type="number" value="${p.youtubeInicio||p.youtube_inicio||0}"></div></div>
     <div class="toolbar"><button class="danger small btn-rm-peca" type="button">Remover peça</button></div>
   </div>`;
@@ -506,6 +506,18 @@ function wireNoites(){
   $('noitesBox').querySelectorAll('.btn-add-peca').forEach(b => b.onclick = () => { b.closest('.noite-block').querySelector('.pecas').insertAdjacentHTML('beforeend', pecaBlockHtml({})); wireNoites(); });
   $('noitesBox').querySelectorAll('.btn-rm-peca').forEach(b => b.onclick = () => b.closest('.peca-block').remove());
   $('noitesBox').querySelectorAll('.btn-rm-noite').forEach(b => b.onclick = () => b.closest('.noite-block').remove());
+  // colou um link do YouTube (com ou sem &t=/&start=)? extrai o ID e o início sozinho.
+  // se já for só o ID (sem "http"/"youtu"), não mexe em nada.
+  $('noitesBox').querySelectorAll('.pc-yt').forEach(input => { input.onchange = () => tratarColarYoutube(input); });
+}
+function tratarColarYoutube(input){
+  const raw = input.value.trim();
+  if(!raw || !(/^https?:\/\//i.test(raw) || /youtu\.?be/i.test(raw))) return;   // não parece link: deixa como está
+  const parsed = parseYoutubeLinkClient(raw);
+  if(!parsed) return;
+  input.value = parsed.id;
+  const yti = input.closest('.peca-block') && input.closest('.peca-block').querySelector('.pc-yti');
+  if(yti) yti.value = parsed.inicio || 0;
 }
 
 /* ---------- CSV: importar ano/noite/título/turma/sinopse/YouTube ---------- */
