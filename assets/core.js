@@ -1156,17 +1156,27 @@ async function fetchBroadcasts(){
 async function checarBroadcasts(){
   const lista = await fetchBroadcasts();
   if(!lista.length) return;
-  const key = 'cetec-broadcasts-vistos';
+  const key = 'cetec-broadcasts-vistos';   // transitórios: uma vez por aparelho
   let vistos = []; try{ vistos = JSON.parse(localStorage.getItem(key) || '[]'); }catch(e){ vistos = []; }
-  const novos = lista.filter(b => vistos.indexOf(String(b.id)) < 0);
+  const novos = [];
+  lista.forEach(b => {
+    const modo = b.modo || 'uma_vez';
+    if(modo === 'sempre'){
+      novos.push(b);                                   // toda visita
+    } else if(modo === 'sessao'){
+      const ks = 'cetec-banner-sessao-' + b.id;        // 1× por sessão
+      let jaViu = true; try{ jaViu = !!sessionStorage.getItem(ks); }catch(e){}
+      if(!jaViu){ novos.push(b); try{ sessionStorage.setItem(ks, '1'); }catch(e){} }
+    } else {
+      if(vistos.indexOf(String(b.id)) < 0){ novos.push(b); vistos.push(String(b.id)); }  // 1× por aparelho
+    }
+  });
   if(!novos.length) return;
-  /* mostra no máx. 3, dos mais antigos p/ os mais novos. b.dur = segundos na tela (0/ausente = padrão) */
+  try{ localStorage.setItem(key, JSON.stringify(vistos.slice(-200))); }catch(e){}
   novos.slice(0, 3).reverse().forEach((b, i) => setTimeout(() => mostrarNotifBanner({
     titulo:b.titulo, corpo:b.corpo, url:b.url,
     duracao: (Number(b.dur) > 0 ? Number(b.dur) * 1000 : undefined)
   }), i * 800));
-  const todos = vistos.concat(novos.map(b => String(b.id)));
-  try{ localStorage.setItem(key, JSON.stringify(todos.slice(-200))); }catch(e){}
 }
 
 /* ---- saúde da inscrição push ----
@@ -1221,6 +1231,53 @@ async function verificarInscricaoPush(){
       mostrarBannerReativarPush();            // precisa da ação do usuário
     }
   }catch(e){}
+}
+
+/* banner "ativar notificações?" — usado na 1ª abertura do app instalado (e no
+   iPhone, onde o pedido de permissão precisa vir de um toque do usuário). */
+function mostrarBannerPedirPush(){
+  if(document.getElementById('pedirPushBanner')) return;
+  const b = document.createElement('div');
+  b.id = 'pedirPushBanner'; b.className = 'push-reativar';
+  b.innerHTML = `<span class="pr-txt">🔔 Ativar as notificações do CETECritic neste aparelho?</span>
+    <button class="pr-ok" type="button">Ativar</button>
+    <button class="pr-x" type="button" aria-label="Agora não">✕</button>`;
+  document.body.appendChild(b);
+  const marcarPerguntado = () => { try{ localStorage.setItem('cetec-pwa-push-perguntado', '1'); }catch(e){} };
+  b.querySelector('.pr-x').addEventListener('click', () => { setPushLocal(false); marcarPerguntado(); b.remove(); });
+  b.querySelector('.pr-ok').addEventListener('click', async () => {
+    const ok = b.querySelector('.pr-ok'); ok.textContent = 'Ativando…'; ok.disabled = true;
+    const r = await ativarPush();
+    if(r && r.ok){ setPushLocal(true); marcarPerguntado(); b.remove(); mostrarNotifBanner({ titulo: '🔔 Notificações ativadas' }); }
+    else { alert('Não deu pra ativar: ' + ((r && r.error) || 'erro')); ok.textContent = 'Ativar'; ok.disabled = false; }
+  });
+}
+/* Na 1ª abertura do app INSTALADO (PWA), pede as notificações automaticamente.
+   Android/desktop: dispara o pedido nativo direto. iPhone: mostra o banner (que
+   pede no toque). Só roda logado (a inscrição precisa da conta) e uma vez só. */
+async function pedirPushNaPrimeiraVezPWA(){
+  if(!usuarioLogado()) return;
+  if(!('serviceWorker' in navigator) || !('PushManager' in window) || typeof Notification === 'undefined') return;
+  const standalone = !!(window.matchMedia && (window.matchMedia('(display-mode: standalone)').matches || navigator.standalone === true));
+  if(!standalone) return;                                       // só no app instalado
+  if(localStorage.getItem('cetec-pwa-push-perguntado')) return; // só na primeira vez
+  if(localStorage.getItem('cetec-push-on') === '0') return;     // já desligou de propósito neste aparelho
+  if(Notification.permission === 'denied'){ localStorage.setItem('cetec-pwa-push-perguntado', '1'); return; }
+  if(Notification.permission === 'granted'){
+    localStorage.setItem('cetec-pwa-push-perguntado', '1');
+    const r = await ativarPush(); if(r && r.ok) setPushLocal(true);
+    return;
+  }
+  // permission 'default'
+  const ehIOS = (typeof window.pwaEhIOS === 'function') ? window.pwaEhIOS() : /iPhone|iPad|iPod/.test(navigator.userAgent || '');
+  if(ehIOS){
+    mostrarBannerPedirPush();   // iOS: precisa de gesto
+  } else {
+    localStorage.setItem('cetec-pwa-push-perguntado', '1');
+    const r = await ativarPush();
+    if(r && r.ok) setPushLocal(true);
+    else if(Notification.permission === 'default') mostrarBannerPedirPush();  // não apareceu: cai no banner
+  }
 }
 
 function montarShell(conteudo){
@@ -1299,7 +1356,8 @@ function montarShell(conteudo){
   atualizarBadgeNotificacoes();
   checarNotificacoes();   // banner de novidades + detecção de noites/edições/bolão
   checarBroadcasts();     // avisos "para todos" — aparecem pra qualquer visitante
-  verificarInscricaoPush();   // religa/pede pra religar se a inscrição push sumiu
+  verificarInscricaoPush();       // religa/pede pra religar se a inscrição push sumiu
+  pedirPushNaPrimeiraVezPWA();     // 1ª abertura do app instalado: pede as notificações
   /* confirma no servidor se a conta é admin e mostra o 💻 (uma vez por sessão
      enquanto ainda não for admin — quem já é admin não precisa re-checar) */
   (async () => {

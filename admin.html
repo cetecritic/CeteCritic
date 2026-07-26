@@ -6,6 +6,8 @@
 <title>Admin — CETECritic</title>
 <meta name="robots" content="noindex">
 <link rel="icon" href="assets/favicon.png">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/cropperjs/1.6.1/cropper.min.css">
+<script src="https://cdnjs.cloudflare.com/ajax/libs/cropperjs/1.6.1/cropper.min.js"></script>
 <style>
   :root{ --bg:#0e0f12; --surface:#17181c; --surface2:#202226; --border:#2c2e33; --text:#fff; --muted:#9a9ea6; --gold:#f5c518; color-scheme:dark; }
   *{ box-sizing:border-box; }
@@ -215,6 +217,17 @@
       </div>
       <label>Mensagem</label><input id="bnCorpo" type="text">
       <label>Link ao clicar</label><input id="bnUrl" type="text" placeholder="/index.html">
+      <label>Como deve aparecer</label>
+      <select id="bnModo">
+        <option value="uma_vez">Uma vez por aparelho (aparece e some pra sempre)</option>
+        <option value="sessao">Recorrente — 1× por sessão</option>
+        <option value="sempre">Insistente — toda visita</option>
+      </select>
+      <div class="row2">
+        <div><label>Aparecer de (opcional)</label><input id="bnInicio" type="datetime-local"></div>
+        <div><label>Até (opcional)</label><input id="bnFim" type="datetime-local"></div>
+      </div>
+      <div class="sub" style="margin:0;">Se você definir um <b>período</b> (de/até), o banner só aparece nesse intervalo e some sozinho no fim. Sem período, vale a partir de agora (transitórios expiram em 7 dias; recorrentes/insistentes ficam até você apagar).</div>
       <div class="toolbar"><button id="btnCriarBanner">Publicar banner</button></div>
       <div class="msg" id="bnMsg"></div>
       <div id="bnLista" style="margin-top:10px;"></div>
@@ -247,6 +260,19 @@
       <div class="toolbar"><button id="btnBuscarVotos">Buscar votos</button></div>
       <div class="msg" id="vMsg"></div>
       <div id="vLista" style="margin-top:8px;"></div>
+    </div>
+  </div>
+</div>
+
+<!-- MODAL DE CORTE DE IMAGEM -->
+<div id="cropModal" style="display:none; position:fixed; inset:0; background:rgba(0,0,0,.85); z-index:1000; align-items:center; justify-content:center; padding:16px;">
+  <div style="background:var(--surface); border:1px solid var(--border); border-radius:14px; padding:16px; max-width:560px; width:100%;">
+    <h2 style="margin:0 0 6px;color:var(--gold);font-size:16px;">✂️ Ajustar imagem</h2>
+    <p class="sub" style="margin:0 0 10px;">Arraste pra mover e use a rolagem/pinça pra dar zoom. A área destacada é o formato final.</p>
+    <div style="max-height:58vh; overflow:hidden; background:#000; border-radius:8px;"><img id="cropImg" style="max-width:100%; display:block;"></div>
+    <div class="toolbar" style="justify-content:flex-end; margin-top:12px;">
+      <button class="ghost" id="cropCancelar">Cancelar</button>
+      <button id="cropConfirmar">Cortar e usar</button>
     </div>
   </div>
 </div>
@@ -514,9 +540,58 @@ $('edPosterFile').addEventListener('change', async e => {
   const url = await uploadImg(e.target.files[0], 'poster_' + ano, $('edPosterMsg'));
   if(url) $('edPoster').value = url;
 });
+/* ---- recortador de imagem (Cropper.js) ---- */
+let _cropper = null, _cropResolve = null;
+function abrirCropper(file, aspect){
+  return new Promise(resolve => {
+    _cropResolve = resolve;
+    const reader = new FileReader();
+    reader.onload = () => {
+      const img = $('cropImg');
+      $('cropModal').style.display = 'flex';
+      if(_cropper){ _cropper.destroy(); _cropper = null; }
+      img.onload = () => {
+        if(typeof Cropper === 'undefined'){ fecharCropper(reader.result); return; }  // sem lib: usa a imagem inteira
+        _cropper = new Cropper(img, { aspectRatio: aspect, viewMode: 1, autoCropArea: 1, background: false, movable: true, zoomable: true });
+      };
+      img.src = reader.result;
+    };
+    reader.readAsDataURL(file);
+  });
+}
+function fecharCropper(resultado){
+  $('cropModal').style.display = 'none';
+  if(_cropper){ _cropper.destroy(); _cropper = null; }
+  const r = _cropResolve; _cropResolve = null;
+  if(r) r(resultado || null);
+}
+$('cropCancelar').addEventListener('click', () => fecharCropper(null));
+$('cropConfirmar').addEventListener('click', () => {
+  if(!_cropper) return fecharCropper(null);
+  const canvas = _cropper.getCroppedCanvas({ maxWidth: 1000, imageSmoothingQuality: 'high' });
+  let out;
+  try{ out = canvas.toDataURL('image/webp', 0.82); if(out.indexOf('data:image/webp') !== 0) out = canvas.toDataURL('image/jpeg', 0.82); }
+  catch(e){ out = canvas.toDataURL('image/jpeg', 0.82); }
+  fecharCropper(out);
+});
+/* sobe uma imagem já pronta (dataURL) — usado pelo corte */
+async function uploadDataUrl(dataUrl, nome, msgEl){
+  if(!dataUrl) return null;
+  if(msgEl) msgEl.textContent = 'Enviando imagem…';
+  const ext = dataUrl.indexOf('data:image/webp') === 0 ? '.webp' : '.jpg';
+  const r = await post('uploadImagem', { data: dataUrl, nome: nome + ext, pasta: 'edicoes' });
+  if(r && r.ok){ if(msgEl) msgEl.textContent = 'Enviada ✓'; return r.url; }
+  if(msgEl) msgEl.textContent = 'Erro: ' + ((r&&r.error)||'');
+  return null;
+}
+/* banner do "Sobre": abre o corte no formato 630×830 antes de enviar */
 $('edSobreFile').addEventListener('change', async e => {
+  const file = e.target.files[0]; if(!file) return;
   const ano = $('edAno').value || 'ed';
-  const url = await uploadImg(e.target.files[0], 'sobre_' + ano, $('edSobreMsg'));
+  const dataUrl = await abrirCropper(file, 630 / 830);
+  e.target.value = '';
+  if(!dataUrl) return;
+  const url = await uploadDataUrl(dataUrl, 'sobre_' + ano, $('edSobreMsg'));
   if(url) $('edSobreBanner').value = url;
 });
 
@@ -572,15 +647,31 @@ $('btnExcluirEdicao').addEventListener('click', async () => {
 async function carregarBanners(){
   const r = await post('listarBanners');
   const bs = (r && r.banners) || [];
-  $('bnLista').innerHTML = bs.map(b =>
-    `<div class="ed-item"><div><b>${(b.titulo||'').replace(/</g,'&lt;')}</b> <span style="color:var(--muted);font-size:12px;">${(b.corpo||'').replace(/</g,'&lt;')}</span></div>
-     <button class="danger small" data-bn="${b.bc_id}">Apagar</button></div>`).join('') || '<div class="msg">Nenhum banner.</div>';
+  const agora = Date.now();
+  const rotuloModo = { uma_vez:'1× por aparelho', sessao:'1× por sessão', sempre:'toda visita' };
+  $('bnLista').innerHTML = bs.map(b => {
+    const ini = b.inicio ? Number(b.inicio) : null;
+    const fim = b.fim ? Number(b.fim) : null;
+    let periodo = '';
+    if(ini || fim) periodo = ' · ' + (ini ? new Date(ini).toLocaleString('pt-BR') : '…') + ' → ' + (fim ? new Date(fim).toLocaleString('pt-BR') : '…');
+    let status = 'ativo';
+    if(ini && agora < ini) status = 'agendado';
+    else if(fim && agora > fim) status = 'expirado';
+    const cor = status === 'ativo' ? 'var(--gold)' : 'var(--muted)';
+    return `<div class="ed-item"><div><b>${escH(b.titulo)}</b> <span style="color:var(--muted);font-size:12px;">${escH(b.corpo)} · ${rotuloModo[b.modo||'uma_vez']||b.modo}${periodo} · <span style="color:${cor}">${status}</span></span></div>
+      <button class="danger small" data-bn="${b.bc_id}">Apagar</button></div>`;
+  }).join('') || '<div class="msg">Nenhum banner.</div>';
   $('bnLista').querySelectorAll('[data-bn]').forEach(b => b.onclick = async () => { await post('deletarBanner', { bc_id: b.dataset.bn }); carregarBanners(); });
 }
 $('btnCriarBanner').addEventListener('click', async () => {
+  const titulo = $('bnTitulo').value.trim(), corpo = $('bnCorpo').value.trim();
+  if(!titulo && !corpo){ $('bnMsg').textContent = 'Escreva título ou mensagem.'; return; }
+  const inicio = $('bnInicio').value ? new Date($('bnInicio').value).getTime() : null;
+  const fim = $('bnFim').value ? new Date($('bnFim').value).getTime() : null;
+  if(inicio && fim && fim < inicio){ $('bnMsg').textContent = 'A data final é antes da inicial.'; return; }
   $('bnMsg').textContent = 'Publicando…';
-  const r = await post('criarBanner', { titulo: $('bnTitulo').value.trim(), corpo: $('bnCorpo').value.trim(), url: $('bnUrl').value.trim() || '/index.html', dur: Number($('bnDur').value) || 0 });
-  if(r && r.ok){ $('bnMsg').textContent = 'Publicado ✓'; $('bnTitulo').value=''; $('bnCorpo').value=''; $('bnUrl').value=''; $('bnDur').value=''; carregarBanners(); }
+  const r = await post('criarBanner', { titulo, corpo, url: $('bnUrl').value.trim() || '/index.html', dur: Number($('bnDur').value) || 0, modo: $('bnModo').value, inicio, fim });
+  if(r && r.ok){ $('bnMsg').textContent = 'Publicado ✓'; $('bnTitulo').value=''; $('bnCorpo').value=''; $('bnUrl').value=''; $('bnDur').value=''; $('bnInicio').value=''; $('bnFim').value=''; carregarBanners(); }
   else $('bnMsg').textContent = 'Erro: ' + ((r&&r.error)||'');
 });
 

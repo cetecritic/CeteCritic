@@ -420,7 +420,10 @@ async function handlePost(req, res) {
     const titulo = String(body.titulo || '').trim(), corpo = String(body.corpo || '').trim();
     if (!titulo && !corpo) return res.status(400).json({ ok: false, error: 'aviso vazio' });
     let dur = Number(body.dur) || 0; if (dur < 0) dur = 0; if (dur > 120) dur = 120;
-    await sb.from('broadcasts').insert({ bc_id: 'bc:' + Date.now(), titulo, corpo, url: String(body.url || '/index.html'), ts: Date.now(), dur });
+    const inicio = body.inicio ? Number(body.inicio) : null;   // período opcional
+    const fim = body.fim ? Number(body.fim) : null;
+    const modo = ['uma_vez', 'sessao', 'sempre'].indexOf(String(body.modo)) >= 0 ? String(body.modo) : 'uma_vez';
+    await sb.from('broadcasts').insert({ bc_id: 'bc:' + Date.now(), titulo, corpo, url: String(body.url || '/index.html'), ts: Date.now(), dur, inicio, fim, modo });
     return res.status(200).json({ ok: true });
   }
   if (action === 'deletarBanner') {

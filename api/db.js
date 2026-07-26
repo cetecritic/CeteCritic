@@ -237,9 +237,20 @@ async function handleGet(req, res){
 
   // broadcasts (público)
   if(q.broadcasts){
-    const desde = Date.now() - 7*24*60*60*1000;
-    const { data } = await sb.from('broadcasts').select('*').gt('ts', desde).order('ts', { ascending:false }).limit(10);
-    return res.json({ ok:true, broadcasts: (data||[]).map(b => ({ id:b.bc_id, titulo:b.titulo, corpo:b.corpo, url:b.url, ts:b.ts, dur:b.dur||0 })) });
+    const agora = Date.now();
+    const desde = agora - 7 * 24 * 60 * 60 * 1000;
+    const { data } = await sb.from('broadcasts').select('*').order('ts', { ascending:false }).limit(100);
+    const ativos = (data||[]).filter(b => {
+      const ini = b.inicio ? Number(b.inicio) : null;
+      const fim = b.fim ? Number(b.fim) : null;
+      if(ini || fim){                                  // banner com período: ativo dentro do intervalo
+        if(ini && agora < ini) return false;
+        if(fim && agora > fim) return false;
+        return true;
+      }
+      return Number(b.ts) >= desde;                    // sem período: transitório (últimos 7 dias)
+    }).slice(0, 15);
+    return res.json({ ok:true, broadcasts: ativos.map(b => ({ id:b.bc_id, titulo:b.titulo, corpo:b.corpo, url:b.url, ts:b.ts, dur:b.dur||0, modo:b.modo||'uma_vez' })) });
   }
 
   // ranking de reputação
