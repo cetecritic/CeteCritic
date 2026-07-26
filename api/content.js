@@ -380,6 +380,28 @@ async function handlePost(req, res) {
     return res.status(200).json({ ok: true, url: data.publicUrl });
   }
 
+  // ----- agendamento de banner / push -----
+  if (action === 'agendar') {
+    const quando = Number(body.quando) || 0;
+    if (!quando) return res.status(400).json({ ok: false, error: 'informe a data/hora' });
+    const titulo = String(body.titulo || '').trim(), corpo = String(body.corpo || '').trim();
+    if (!titulo && !corpo) return res.status(400).json({ ok: false, error: 'aviso vazio' });
+    let dur = Number(body.dur) || 0; if (dur < 0) dur = 0; if (dur > 120) dur = 120;
+    await sb.from('agendados').insert({
+      tipo: body.push ? 'push' : 'banner', titulo, corpo, url: String(body.url || '/index.html'),
+      dur, push: !!body.push, quando, enviado: false, criado_em: Date.now()
+    });
+    return res.status(200).json({ ok: true });
+  }
+  if (action === 'listarAgendados') {
+    const { data } = await sb.from('agendados').select('*').order('quando', { ascending: true }).limit(100);
+    return res.status(200).json({ ok: true, agendados: data || [] });
+  }
+  if (action === 'cancelarAgendado') {
+    await sb.from('agendados').delete().eq('id', body.id);
+    return res.status(200).json({ ok: true });
+  }
+
   // ----- banners (broadcasts) -----
   if (action === 'listarBanners') {
     const { data } = await sb.from('broadcasts').select('*').order('ts', { ascending: false }).limit(50);

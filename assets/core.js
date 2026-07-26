@@ -1023,24 +1023,30 @@ async function criarNotifSeNova(id, tipo, titulo, corpo, url){
   await apiCriarNotif(tipo, id, titulo, corpo, url);
 }
 
-/* noites/votação/bolão: usa as datas do config/edição (relógio do aparelho — é
-   só aviso, não a trava de voto). Só roda em páginas que carregam a edição. */
+/* noites/votação/bolão: só avisa eventos RECENTES (últimos 3 dias). Antes ele
+   disparava pra qualquer data passada (hoje >= data é verdade sempre), então
+   visitar uma edição de 2025 gerava "noite 5 aberta" de um ano atrás. Agora só
+   dispara se o evento aconteceu de verdade agora, e (pra votação/noite) se a
+   votação ainda não encerrou. Relógio do aparelho — é só aviso, não trava voto. */
 async function checarEventosDaEdicao(){
   const s = usuarioLogado(); if(!s || !ANO) return;
-  const hoje = new Date();
+  const hoje = Date.now();
+  const JANELA = 3 * 24 * 60 * 60 * 1000;   // 3 dias
+  const recente = d => { if(!d) return false; const t = d.getTime(); return hoje >= t && (hoje - t) <= JANELA; };
+  const encerrada = (FIM_VOTACAO && hoje >= FIM_VOTACAO.getTime());
+
   const ini = INICIO || dataNoite(1);
-  if(ini && hoje >= ini){
+  if(recente(ini) && !encerrada){
     await criarNotifSeNova('votacao:' + ANO, 'votacoes', '🗳️ Votação aberta',
       'A votação do Cetec Festival ' + ANO + ' está aberta. Vote nas peças!', '/' + ANO + '/index.html');
   }
   for(let n = 1; n <= NUM_NOITES; n++){
-    const d = dataNoite(n);
-    if(d && hoje >= d){
+    if(recente(dataNoite(n)) && !encerrada){
       await criarNotifSeNova('noite:' + ANO + ':' + n, 'noites', '🎭 Noite ' + n + ' liberada',
         'A Noite ' + n + ' do Cetec Festival ' + ANO + ' já está no ar.', '/' + ANO + '/noite-' + n + '.html');
     }
   }
-  if(FIM_VOTACAO && hoje >= FIM_VOTACAO){
+  if(recente(FIM_VOTACAO)){
     await criarNotifSeNova('bolao:' + ANO, 'bolao', '🔮 Resultado do bolão',
       'A votação de ' + ANO + ' encerrou — veja como você foi no bolão!', '/' + ANO + '/index.html');
   }
@@ -4948,6 +4954,7 @@ async function paginaNotificacoes(){
     if(!notifs.some(n => !n.lida)) return;
     const r = await apiMarcarNotifLidas();          // sem ids = servidor marca TODAS as não lidas
     if(!r || !r.ok){ alert('Não deu pra limpar: ' + ((r && r.erro) || (r && r.error) || 'erro de conexão')); return; }
+    if(!r.marcadas){ alert('Diagnóstico: o servidor não marcou nada.\nachadas=' + r.achadas + ' · marcadas=' + r.marcadas + '\nMe manda esses dois números.'); }
     notifs.forEach(n => n.lida = true);
     render();
     atualizarBadgeNotificacoes();

@@ -189,6 +189,23 @@
       <div class="msg" id="ntMsg"></div>
     </div>
 
+    <!-- AGENDAR -->
+    <div class="card">
+      <h2>⏰ Agendar banner / push</h2>
+      <p class="sub" style="margin:0 0 10px;">Marca pra sair numa data/hora futura. <b>Obs:</b> no plano Hobby da Vercel o cron roda ~1×/dia, então sai na próxima rodada após a hora marcada. Pra hora exata, é preciso Vercel Pro (aí ajusto o cron pra de hora em hora).</p>
+      <div class="row2">
+        <div><label>Quando (data e hora)</label><input id="agQuando" type="datetime-local"></div>
+        <div><label>Tempo do banner na tela (s)</label><input id="agDur" type="number" placeholder="0 = padrão"></div>
+      </div>
+      <label>Título</label><input id="agTitulo" type="text">
+      <label>Mensagem</label><input id="agCorpo" type="text">
+      <label>Link ao clicar</label><input id="agUrl" type="text" placeholder="/index.html">
+      <label style="margin-top:10px;"><input type="checkbox" id="agPush" style="width:auto;"> Também enviar push (aparelhos)</label>
+      <div class="toolbar"><button id="btnAgendar">Agendar</button></div>
+      <div class="msg" id="agMsg"></div>
+      <div id="agLista" style="margin-top:10px;"></div>
+    </div>
+
     <!-- BANNERS -->
     <div class="card">
       <h2>📢 Banners (avisos no site)</h2>
@@ -681,7 +698,32 @@ function renderVotos(){
 }
 $('btnBuscarVotos').addEventListener('click', buscarVotos);
 
-function iniciar(){ carregarConfig(); carregarEdicoes(); carregarBanners(); buscarUsuarios(); carregarIndice(); }
+/* ---------- AGENDAR ---------- */
+async function carregarAgendados(){
+  const r = await post('listarAgendados');
+  const as = (r && r.agendados) || [];
+  $('agLista').innerHTML = as.length ? as.map(a => {
+    const quando = new Date(Number(a.quando)).toLocaleString('pt-BR');
+    const status = a.enviado ? '<span style="color:var(--muted);">enviado</span>' : '<span style="color:var(--gold);">agendado</span>';
+    return `<div class="ed-item"><div><b>${escH(a.titulo)}</b> <span style="color:var(--muted);font-size:12px;">· ${quando} · ${a.push ? 'push+banner' : 'banner'} · ${status}</span></div>
+      ${a.enviado ? '' : `<button class="danger small" data-ag="${a.id}">Cancelar</button>`}</div>`;
+  }).join('') : '<div class="msg">Nada agendado.</div>';
+  $('agLista').querySelectorAll('[data-ag]').forEach(b => b.onclick = async () => { await post('cancelarAgendado', { id: Number(b.dataset.ag) }); carregarAgendados(); });
+}
+$('btnAgendar').addEventListener('click', async () => {
+  const v = $('agQuando').value;
+  if(!v){ $('agMsg').textContent = 'Escolha a data/hora.'; return; }
+  const quando = new Date(v).getTime();
+  if(!quando || quando < Date.now()){ $('agMsg').textContent = 'Escolha uma data/hora futura.'; return; }
+  const titulo = $('agTitulo').value.trim(), corpo = $('agCorpo').value.trim();
+  if(!titulo && !corpo){ $('agMsg').textContent = 'Escreva título ou mensagem.'; return; }
+  $('agMsg').textContent = 'Agendando…';
+  const r = await post('agendar', { quando, titulo, corpo, url: $('agUrl').value.trim() || '/index.html', dur: Number($('agDur').value) || 0, push: $('agPush').checked });
+  if(r && r.ok){ $('agMsg').textContent = 'Agendado ✓'; $('agTitulo').value=''; $('agCorpo').value=''; $('agUrl').value=''; $('agQuando').value=''; carregarAgendados(); }
+  else $('agMsg').textContent = 'Erro: ' + ((r&&r.error)||'');
+});
+
+function iniciar(){ carregarConfig(); carregarEdicoes(); carregarBanners(); buscarUsuarios(); carregarIndice(); carregarAgendados(); }
 </script>
 </body>
 </html>

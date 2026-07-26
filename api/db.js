@@ -557,12 +557,12 @@ async function apiMarcarNotifLidas(body){
   if(!(await verificarToken(usuario, body.token))) return { ok:false, error:'faça login' };
   const ids = Array.isArray(body.ids) ? body.ids.map(String) : null;
   const nu = norm(usuario);
-  // seleciona SEM ilike (evita qualquer curinga em usuário com "_") e filtra no JS
-  const { data } = await sb.from('notificacoes').select('id,usuario,notif_id,lida').limit(2000);
+  // filtra o usuário no banco (mesmo caminho da listagem, que funciona)
+  const { data, error: errSel } = await sb.from('notificacoes').select('id,usuario,notif_id,lida').ilike('usuario', usuario).limit(500);
   const alvos = (data||[]).filter(r => norm(r.usuario) === nu && r.lida !== true && (!ids || ids.indexOf(String(r.notif_id)) >= 0)).map(r => r.id);
-  let erro = null;
-  if(alvos.length){ const up = await sb.from('notificacoes').update({ lida:true }).in('id', alvos); erro = up.error ? String(up.error.message) : null; }
-  return { ok:!erro, marcadas: alvos.length, erro };
+  let erro = errSel ? String(errSel.message) : null;
+  if(alvos.length){ const up = await sb.from('notificacoes').update({ lida:true }).in('id', alvos); if(up.error) erro = String(up.error.message); }
+  return { ok:!erro, marcadas: alvos.length, achadas: (data||[]).length, erro };
 }
 async function apiCriarNotif(body){
   const usuario = String(body.user||'');
