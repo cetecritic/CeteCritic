@@ -967,6 +967,16 @@ function salvarPrefsNotifCache(user, notif){
 }
 function notifTipoLigado(tipo){ return lerPrefsNotif()[tipo] !== false; }
 
+/* push é POR APARELHO (flag local, não vai pra conta): assim dá pra ter ligado
+   no celular e desligado no PC de forma independente. */
+function pushLocalLigado(){
+  const v = localStorage.getItem('cetec-push-on');
+  if(v === '1') return true;
+  if(v === '0') return false;
+  return (typeof Notification !== 'undefined' && Notification.permission === 'granted'); // sem decisão: segue a permissão
+}
+function setPushLocal(on){ try{ localStorage.setItem('cetec-push-on', on ? '1' : '0'); }catch(e){} }
+
 /* marca localmente um id como "já apareceu em banner" (não mexe no lido/servidor) */
 function marcarNotifVistaLocal(id){
   const s = usuarioLogado(); if(!s) return;
@@ -1187,14 +1197,14 @@ function mostrarBannerReativarPush(){
   b.querySelector('.pr-ok').addEventListener('click', async () => {
     const ok = b.querySelector('.pr-ok'); ok.textContent = 'Ativando…'; ok.disabled = true;
     const r = await ativarPush();
-    if(r && r.ok){ await salvarPushPref(true); b.remove(); mostrarNotifBanner({ titulo:'🔔 Notificações reativadas' }); }
+    if(r && r.ok){ setPushLocal(true); b.remove(); mostrarNotifBanner({ titulo:'🔔 Notificações reativadas' }); }
     else { alert('Não deu pra reativar: ' + ((r && r.error) || 'erro')); ok.textContent = 'Reativar'; ok.disabled = false; }
   });
 }
 async function verificarInscricaoPush(){
   const s = usuarioLogado(); if(!s) return;
   if(!('serviceWorker' in navigator) || !('PushManager' in window) || typeof Notification === 'undefined') return;
-  if(lerPrefsNotif().push !== true) return;   // usuário nunca ligou o push: não insiste
+  if(localStorage.getItem('cetec-push-on') !== '1') return;   // este aparelho não optou por push
   try{
     const reg = await navigator.serviceWorker.ready;
     const sub = await reg.pushManager.getSubscription();
@@ -5093,9 +5103,9 @@ async function paginaConfig(){
       <h2>Notificações</h2>
       <div class="cfg-group-sub">Avisos no aparelho quando algo importante rolar. </div>
       <div class="cfg-row">
-        <div class="cfg-info"><div class="cfg-label">Notificações push</div>
-          <div class="cfg-desc">Avisos no aparelho quando uma noite abre, resultados saem etc. No iPhone, só depois de instalar o app na tela inicial. Todas ficam guardadas na sua <a href="${BASE}notificacoes.html" style="color:var(--gold);">central de notificações 🔔</a> também.</div></div>
-        <div class="cfg-ctrl">${switchHtml('cfgPush', notif.push !== false)}</div>
+        <div class="cfg-info"><div class="cfg-label">Notificações push <span style="color:var(--text-muted);font-weight:400;">(só neste aparelho)</span></div>
+          <div class="cfg-desc">Vale <b>só para este dispositivo</b> — dá pra ligar no celular e deixar desligado no PC. No iPhone, só depois de instalar o app na tela inicial. Tudo fica guardado na sua <a href="${BASE}notificacoes.html" style="color:var(--gold);">central de notificações 🔔</a> de qualquer jeito.</div></div>
+        <div class="cfg-ctrl">${switchHtml('cfgPush', pushLocalLigado())}</div>
       </div>
       <div class="cfg-group-sub" style="margin-top:14px;">Escolha o que você quer receber (vale para a central 🔔 e para o push):</div>
       ${TIPOS_NOTIF.map(([t, lab, desc]) => `
@@ -5171,57 +5181,32 @@ async function paginaConfig(){
   }
   /* liga os interruptores de cada tipo de notificação */
   TIPOS_NOTIF.forEach(([t]) => wireSwitch('cfgNotif_' + t, v => salvarNotif({ [t]: v })));
+  /* push é POR APARELHO: liga/desliga só neste dispositivo (flag local), sem
+     mexer na conta. Assim dá pra ter ligado no celular e desligado no PC. */
   wireSwitch('cfgPush', async v => {
     const msg = document.getElementById('cfgNotifMsg');
     const el = document.getElementById('cfgPush');
     if(v){
-      msg.textContent = 'Ativando…';
+      msg.textContent = 'Ativando neste aparelho…';
       const r = await ativarPush();
       if(!r.ok){
-        if(el) el.checked = false;
+        if(el) el.checked = false; setPushLocal(false);
         const motivo = r.error || 'não foi possível ativar';
-        msg.textContent = motivo;
-        alert('Push não ativou:\n\n' + motivo);   // TEMP: mostra o motivo no celular
+        msg.textContent = motivo; alert('Push não ativou:\n\n' + motivo);
         return;
       }
+      setPushLocal(true);
+      msg.textContent = 'Push ligado neste aparelho ✓';
     } else {
       await desativarPush();
+      setPushLocal(false);
+      msg.textContent = 'Push desligado neste aparelho ✓';
     }
-    await salvarNotif({ push: v });
   });
-  /* push: se a pessoa ainda não decidiu nada (nunca ligou nem desligou aqui),
-     o switch já nasce marcado, mas o valor real depende da permissão do
-     navegador — então a gente já dispara o pedido nativo e deixa o resultado
-     (aceitou/recusou) definir o estado final do switch e o que fica salvo. */
-  if(notif.push === undefined && typeof Notification !== 'undefined'){
+  /* 1ª vez neste aparelho e o navegador já bloqueou: reflete desligado */
+  if(localStorage.getItem('cetec-push-on') === null && typeof Notification !== 'undefined' && Notification.permission === 'denied'){
     const elPush = document.getElementById('cfgPush');
-    const msgPush = document.getElementById('cfgNotifMsg');
-    if(Notification.permission === 'denied'){
-      /* o navegador já bloqueou notificações antes — não tem prompt pra mostrar,
-         então refletimos isso no switch em vez de fingir que está ativado */
-      if(elPush) elPush.checked = false;
-      salvarNotif({ push: false });
-    } else if(Notification.permission === 'default'){
-      (async () => {
-        if(msgPush) msgPush.textContent = 'Pedindo permissão de notificações…';
-        const r = await ativarPush();
-        if(r.ok){
-          if(msgPush) msgPush.textContent = 'Notificações ativadas ✓';
-          await salvarNotif({ push: true });
-        } else {
-          if(elPush) elPush.checked = false;
-          if(msgPush) msgPush.textContent = '';
-          await salvarNotif({ push: false });
-        }
-      })();
-    } else {
-      /* já estava 'granted' de antes (ex: outra página pediu) — só garante a inscrição e salva */
-      (async () => {
-        const r = await ativarPush();
-        await salvarNotif({ push: !!r.ok });
-        if(!r.ok && elPush) elPush.checked = false;
-      })();
-    }
+    if(elPush) elPush.checked = false; setPushLocal(false);
   }
 
   document.getElementById('cfgSair').addEventListener('click', async () => {

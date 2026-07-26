@@ -15,7 +15,7 @@
    Ao publicar uma versão nova do site, troque o número em CACHE_VERSION
    para forçar a limpeza do cache antigo. */
  
-const CACHE_VERSION = 'cetecritic-v19';
+const CACHE_VERSION = 'cetecritic-v20';
  
 /* Lê o config.js para saber qual é o festival "em destaque" (EDICAO_EM_DESTAQUE)
    agora — assim, quando esse número mudar no config.js, o service worker passa

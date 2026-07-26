@@ -50,9 +50,18 @@ async function enviarPushPara(usuarios, payloadObj) {
 
 async function ehAdmin(usuario, token) {
   if (!usuario || !token) return false;
-  const { data } = await sb.from('usuarios').select('usuario,token,admin').ilike('usuario', usuario).limit(10);
-  const u = (data || []).find(r => norm(r.usuario) === norm(usuario));
-  return !!(u && u.admin === true && u.token && u.token === String(token));
+  const nu = norm(usuario);
+  // token válido? checa sessoes (vários aparelhos) + legado usuarios.token
+  let tokenOk = false;
+  try {
+    const { data } = await sb.from('sessoes').select('usuario').eq('token', String(token)).limit(5);
+    if ((data || []).some(r => norm(r.usuario) === nu)) tokenOk = true;
+  } catch (e) { /* sem tabela sessoes: cai no legado */ }
+  const { data: us } = await sb.from('usuarios').select('usuario,token,admin').ilike('usuario', usuario).limit(10);
+  const u = (us || []).find(r => norm(r.usuario) === nu);
+  if (!u) return false;
+  if (!tokenOk && u.token && u.token === String(token)) tokenOk = true;   // legado
+  return tokenOk && u.admin === true;
 }
 
 /* ---------- montar objetos a partir do banco ---------- */

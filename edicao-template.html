@@ -1,0 +1,46 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Cetec Festival — CETECritic</title>
+<link rel="icon" href="/assets/favicon.png">
+<link rel="stylesheet" href="/assets/estilo.css">
+</head>
+<body>
+<!-- =====================================================================
+     PÁGINA-MODELO DE EDIÇÃO
+     =====================================================================
+     Servida via rewrite (vercel.json) pra qualquer /ANO/*.html que NÃO tenha
+     um arquivo próprio. Descobre o ano e o tipo de página pela URL, então uma
+     edição nova adicionada no painel já fica navegável — sem criar HTML nem
+     fazer deploy. Anos que ainda têm HTML estático continuam usando o deles. -->
+<script>
+  var _parts = location.pathname.split('/').filter(Boolean);   // ['2007','noite-1.html']
+  var _ano = _parts[0];
+  var _f = (_parts[1] || 'index.html').replace('.html', '');
+  const BASE = '../';
+  var PAGINA;
+  if(_f === '' || _f === 'index') PAGINA = { tipo: 'edicao', ano: Number(_ano) };
+  else if(_f === 'sobre') PAGINA = { tipo: 'sobre', ano: Number(_ano) };
+  else if(_f === 'abertura') PAGINA = { tipo: 'abertura', ano: Number(_ano) };
+  else if(_f === 'monte') PAGINA = { tipo: 'monte', ano: Number(_ano) };
+  else if(/^noite-\d+$/.test(_f)) PAGINA = { tipo: 'noite', noite: Number(_f.split('-')[1]), ano: Number(_ano) };
+  else PAGINA = { tipo: 'edicao', ano: Number(_ano) };
+</script>
+<script src="/config.js"></script>
+<script>
+  /* edição "em breve" não tem conteúdo: manda pra página compartilhada */
+  var _cfg = (typeof EDICOES !== 'undefined' ? EDICOES.find(function (e) { return e.ano === Number(_ano); }) : null) || { noites: 5 };
+  if(_cfg && _cfg.emBreve){
+    location.replace('/em-breve.html?ano=' + _ano);
+  } else {
+    /* carrega os dados do ano (gerados pelo /api/content via rewrite) */
+    document.write('<script src="/' + _ano + '/edicao.js"><\/script>');
+    for(var n = 1; n <= (_cfg.noites || 5); n++) document.write('<script src="/' + _ano + '/noites/noite-' + n + '.js"><\/script>');
+  }
+</script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/html2canvas/1.4.1/html2canvas.min.js"></script>
+<script src="/assets/core.js"></script>
+</body>
+</html>
