@@ -183,6 +183,13 @@
       <label>Abertura — Spotify (embed src)</label><input id="edAberturaSpotify" type="text">
 
       <h2 style="margin-top:18px;">🌙 Noites e peças</h2>
+      <div class="toolbar" style="margin-bottom:6px;">
+        <button id="btnImportarCsv" class="ghost small" type="button">📥 Importar CSV</button>
+        <input type="file" id="edCsvFile" accept=".csv,text/csv" style="display:none;">
+        <button id="btnAplicarDatas" class="ghost small" type="button">🔁 Datas +1 dia (a partir da noite 1)</button>
+      </div>
+      <p class="sub" style="margin:0 0 10px;">CSV com colunas <b>ano, noite, titulo, turma, sinopse, youtubeLink</b> e opcionalmente <b>data</b> (aceita ISO, <code>AAAA-MM-DD</code> ou <code>DD/MM/AAAA</code>) — cabeçalho flexível, aceita <code>;</code> ou <code>,</code>. Isso <b>substitui</b> as noites/peças atuais do editor. Campo vazio de subtítulo usa o padrão ("Turmas que se apresentaram na 1ª/2ª/... noite do festival"); se a coluna "data" só vier preenchida na noite 1, as outras já saem calculadas automaticamente (+1 dia cada, sempre editável depois). Sem a coluna "data", preencha a da noite 1 na mão e use "Datas +1 dia".</p>
+      <div class="msg" id="edCsvMsg"></div>
       <div id="noitesBox"></div>
       <div class="toolbar"><button id="btnAddNoite" class="ghost small">+ Adicionar noite</button></div>
 
@@ -500,6 +507,147 @@ function wireNoites(){
   $('noitesBox').querySelectorAll('.btn-rm-peca').forEach(b => b.onclick = () => b.closest('.peca-block').remove());
   $('noitesBox').querySelectorAll('.btn-rm-noite').forEach(b => b.onclick = () => b.closest('.noite-block').remove());
 }
+
+/* ---------- CSV: importar ano/noite/título/turma/sinopse/YouTube ---------- */
+// subtítulo padrão quando a noite não tem um definido
+function subtituloPadrao(n){
+  const ordinais = ['primeira','segunda','terceira','quarta','quinta','sexta','sétima','oitava','nona','décima'];
+  const ord = ordinais[n - 1] || (n + 'ª');
+  return 'Turmas que se apresentaram na ' + ord + ' noite do festival';
+}
+// soma "dias" na parte de data de um ISO tipo "2026-07-15T19:00:00-03:00", mantendo hora/fuso
+function somarDiasISO(iso, dias){
+  const m = String(iso || '').trim().match(/^(\d{4})-(\d{2})-(\d{2})(T\d{2}:\d{2}:\d{2})?([+-]\d{2}:\d{2}|Z)?$/);
+  if(!m) return iso;
+  const [, y, mo, d, hora, tz] = m;
+  const dt = new Date(Date.UTC(Number(y), Number(mo) - 1, Number(d)));
+  dt.setUTCDate(dt.getUTCDate() + dias);
+  const yy = dt.getUTCFullYear(), mm = String(dt.getUTCMonth() + 1).padStart(2, '0'), dd = String(dt.getUTCDate()).padStart(2, '0');
+  return yy + '-' + mm + '-' + dd + (hora || 'T19:00:00') + (tz || '-03:00');
+}
+// aceita data em vários formatos na coluna opcional "data" do CSV e converte pro ISO usado no site
+function normalizarDataCSV(v){
+  v = String(v || '').trim();
+  if(!v) return '';
+  if(/^\d{4}-\d{2}-\d{2}T/.test(v)) return v;   // já é ISO completo
+  let m = v.match(/^(\d{4})-(\d{2})-(\d{2})$/);
+  if(m) return v + 'T19:00:00-03:00';
+  m = v.match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})(?:\s+(\d{1,2}):(\d{2}))?$/);   // DD/MM/AAAA [HH:MM]
+  if(m){
+    const [, d, mo, y, h, mi] = m;
+    return y + '-' + mo.padStart(2, '0') + '-' + d.padStart(2, '0') + 'T' + (h || '19').padStart(2, '0') + ':' + (mi || '00') + ':00-03:00';
+  }
+  return v;   // não reconhecido: guarda como veio, dá pra ajustar na mão
+}
+$('btnAplicarDatas').addEventListener('click', () => {
+  const blocos = [...$('noitesBox').querySelectorAll('.noite-block')];
+  if(!blocos.length){ $('edCsvMsg').textContent = 'Adicione as noites primeiro.'; return; }
+  const base = blocos[0].querySelector('.nd-data').value.trim();
+  if(!base){ $('edCsvMsg').textContent = 'Preencha a data da noite 1 primeiro (campo "Noite 1 — data").'; return; }
+  blocos.forEach((bl, i) => { if(i === 0) return; bl.querySelector('.nd-data').value = somarDiasISO(base, i); });
+  marcarDirty('edicao', 'Editor de edição (não salvo)');
+  $('edCsvMsg').textContent = 'Datas recalculadas a partir da noite 1 ✓ (dá pra ajustar cada uma antes de salvar).';
+});
+
+// parser simples de CSV (aceita ; ou , e campos entre aspas)
+function parseCSV(text){
+  text = String(text || '').replace(/^\uFEFF/, '');
+  const primeiraLinha = text.split(/\r?\n/, 1)[0] || '';
+  const delim = (primeiraLinha.split(';').length > primeiraLinha.split(',').length) ? ';' : ',';
+  const linhas = []; let campo = '', linha = [], entreAspas = false;
+  for(let i = 0; i < text.length; i++){
+    const c = text[i], prox = text[i + 1];
+    if(entreAspas){
+      if(c === '"'){ if(prox === '"'){ campo += '"'; i++; } else entreAspas = false; }
+      else campo += c;
+    } else if(c === '"'){ entreAspas = true; }
+    else if(c === delim){ linha.push(campo); campo = ''; }
+    else if(c === '\n'){ linha.push(campo); linhas.push(linha); linha = []; campo = ''; }
+    else if(c === '\r'){ /* ignora */ }
+    else campo += c;
+  }
+  if(campo.length || linha.length){ linha.push(campo); linhas.push(linha); }
+  return linhas.filter(l => l.some(v => String(v).trim() !== ''));
+}
+// mini-parser de link do YouTube (mesma lógica do /api/content parseLink, só a parte de vídeo)
+function parseTimestampYTClient(str){
+  if(!str) return 0;
+  str = String(str);
+  if(/^\d+$/.test(str)) return parseInt(str, 10);
+  const m = str.match(/(?:(\d+)h)?(?:(\d+)m)?(?:(\d+)s)?/i);
+  if(!m) return 0;
+  return (parseInt(m[1] || 0, 10) * 3600) + (parseInt(m[2] || 0, 10) * 60) + parseInt(m[3] || 0, 10);
+}
+function parseYoutubeLinkClient(urlStr){
+  const raw = String(urlStr || '').trim();
+  if(!raw) return null;
+  if(!/^https?:/i.test(raw)) return { id: raw, inicio: 0 };   // já veio só o ID/código
+  let u; try{ u = new URL(raw); }catch(e){ return { id: raw, inicio: 0 }; }
+  const host = u.hostname.replace(/^www\./, '');
+  if(host === 'youtu.be'){
+    const id = u.pathname.replace(/^\//, '').split('/')[0];
+    return { id, inicio: parseTimestampYTClient(u.searchParams.get('t') || u.searchParams.get('start')) };
+  }
+  if(host === 'youtube.com' || host === 'm.youtube.com' || host === 'music.youtube.com'){
+    let id = u.searchParams.get('v');
+    if(!id){ const m = u.pathname.match(/\/(embed|shorts|live)\/([^/?]+)/); if(m) id = m[2]; }
+    if(id) return { id, inicio: parseTimestampYTClient(u.searchParams.get('t') || u.searchParams.get('start')) };
+  }
+  return { id: raw, inicio: 0 };   // link não reconhecido: guarda como veio, dá pra ajustar na mão
+}
+async function importarCSV(file){
+  const msgEl = $('edCsvMsg');
+  if(!file) return;
+  msgEl.textContent = 'Lendo CSV…';
+  try{
+    const text = await file.text();
+    const linhas = parseCSV(text);
+    if(linhas.length < 2){ msgEl.textContent = 'CSV vazio ou sem linhas de dados.'; return; }
+    const header = linhas[0].map(h => normTxt(h).trim());
+    const buscarCol = nomes => { for(const n of nomes){ const i = header.indexOf(n); if(i >= 0) return i; } return -1; };
+    const iAno = buscarCol(['ano', 'year']);
+    const iNoite = buscarCol(['noite', 'night']);
+    const iTitulo = buscarCol(['titulo', 'title']);
+    const iTurma = buscarCol(['turma', 'classe', 'class']);
+    const iSinopse = buscarCol(['sinopse', 'synopsis', 'descricao']);
+    const iYt = buscarCol(['youtubelink', 'youtube', 'link', 'video', 'videolink']);
+    const iData = buscarCol(['data', 'date']);
+    if(iNoite < 0 || iTitulo < 0){ msgEl.textContent = 'O CSV precisa ter pelo menos as colunas "noite" e "titulo".'; return; }
+    if($('noitesBox').querySelectorAll('.noite-block').length){
+      if(!confirm('Isso vai SUBSTITUIR as noites/peças que já estão neste editor pelas do CSV. Continuar?')){ msgEl.textContent = ''; return; }
+    }
+    const porNoite = {}, dataPorNoite = {}; let primeiroAno = null;
+    linhas.slice(1).forEach(cols => {
+      const noite = Number(cols[iNoite]); if(!noite) return;
+      if(iAno >= 0 && !primeiroAno){ const a = Number(cols[iAno]); if(a) primeiroAno = a; }
+      if(!porNoite[noite]) porNoite[noite] = [];
+      if(iData >= 0 && !dataPorNoite[noite]){ const dv = normalizarDataCSV(cols[iData]); if(dv) dataPorNoite[noite] = dv; }
+      const ytRaw = iYt >= 0 ? String(cols[iYt] || '').trim() : '';
+      const parsed = ytRaw ? parseYoutubeLinkClient(ytRaw) : null;
+      porNoite[noite].push({
+        titulo: (iTitulo >= 0 ? String(cols[iTitulo] || '') : '').trim(),
+        turma: (iTurma >= 0 ? String(cols[iTurma] || '') : '').trim(),
+        sinopse: (iSinopse >= 0 ? String(cols[iSinopse] || '') : '').trim(),
+        youtube: parsed ? parsed.id : '',
+        youtubeInicio: parsed ? parsed.inicio : 0
+      });
+    });
+    const ns = Object.keys(porNoite).map(Number).sort((a, b) => a - b);
+    if(!ns.length){ msgEl.textContent = 'Nenhuma linha válida encontrada (confira a coluna "noite").'; return; }
+    // se a noite 1 veio com data no CSV, propaga +1 dia pras noites que não trouxeram data própria
+    if(dataPorNoite[ns[0]]) ns.forEach((n, i) => { if(i > 0 && !dataPorNoite[n]) dataPorNoite[n] = somarDiasISO(dataPorNoite[ns[0]], i); });
+    if(primeiroAno && !$('edAno').value) $('edAno').value = primeiroAno;
+    if(!$('edNoites').value || Number($('edNoites').value) < ns.length) $('edNoites').value = ns[ns.length - 1];
+    $('noitesBox').innerHTML = ns.map(n => noiteBlockHtml(n, { data: dataPorNoite[n] || '', subtitulo: subtituloPadrao(n), pecas: porNoite[n] })).join('');
+    wireNoites();
+    marcarDirty('edicao', 'Editor de edição (não salvo)');
+    const totalPecas = ns.reduce((s, n) => s + porNoite[n].length, 0);
+    msgEl.textContent = ns.length + ' noite(s) e ' + totalPecas + ' peça(s) importadas ✓ — confira, ajuste as datas e clique em "Salvar edição".';
+  }catch(e){ msgEl.textContent = 'Erro ao importar: ' + ((e && e.message) || e); }
+}
+$('btnImportarCsv').addEventListener('click', () => $('edCsvFile').click());
+$('edCsvFile').addEventListener('change', e => { const f = e.target.files[0]; e.target.value = ''; importarCSV(f); });
+
 
 async function abrirEdicao(ano){
   const r = await getJson('q=edicao&ano=' + ano);
