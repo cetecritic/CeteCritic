@@ -114,6 +114,15 @@ async function handleGet(req, res) {
   if (q.file === 'config') {
     const cfg = await lerConfig();
     const edicoes = edicoesParaMenu(await lerEdicoesLista());
+    // curiosidades UNIFICADAS (Home + Hall): usa cfg.curiosidades; se ainda não
+    // existir, junta as antigas de HOME_DADOS + HALL (sem duplicar por texto)
+    let curios = Array.isArray(cfg.curiosidades) ? cfg.curiosidades : null;
+    if (!curios) {
+      const h = (cfg.HOME_DADOS && Array.isArray(cfg.HOME_DADOS.curiosidades)) ? cfg.HOME_DADOS.curiosidades : [];
+      const l = (cfg.HALL && Array.isArray(cfg.HALL.curiosidades)) ? cfg.HALL.curiosidades : [];
+      const vistos = {}; curios = [];
+      [].concat(h, l).forEach(c => { const t = (c && c.texto) || (typeof c === 'string' ? c : ''); if (t && !vistos[t]) { vistos[t] = 1; curios.push(typeof c === 'string' ? { texto: c } : c); } });
+    }
     const js =
       `/* gerado por /api/content (config) */\n` +
       `const EDICAO_EM_DESTAQUE = ${JSON.stringify(cfg.EDICAO_EM_DESTAQUE || null)};\n` +
@@ -126,7 +135,8 @@ async function handleGet(req, res) {
       `const SLOGAN_HOME = ${JSON.stringify(cfg.SLOGAN_HOME || '')};\n` +
       `const COOLDOWN_MINUTOS = ${JSON.stringify(cfg.COOLDOWN_MINUTOS != null ? cfg.COOLDOWN_MINUTOS : 5)};\n` +
       `const RODAPE = ${JSON.stringify(cfg.RODAPE || '')};\n` +
-      `const VAPID_PUBLIC_KEY = ${JSON.stringify(cfg.VAPID_PUBLIC_KEY || '')};\n`;
+      `const VAPID_PUBLIC_KEY = ${JSON.stringify(cfg.VAPID_PUBLIC_KEY || '')};\n` +
+      `const CURIOSIDADES = ${JSON.stringify(curios)};\n`;
     return jsResp(res, js);
   }
 
@@ -200,9 +210,12 @@ async function handlePost(req, res) {
     const { data } = await sb.from('usuarios').select('usuario,admin,criado_em,perfil');
     let lista = (data || []).map(u => {
       const p = (u.perfil && typeof u.perfil === 'object') ? u.perfil : {};
-      return { usuario: u.usuario, admin: u.admin === true, criadoEm: u.criado_em || 0, email: String(p.email || ''), anonimo: !!p.anonimo, privado: !!p.privado };
+      // pseudônimo do anônimo (o número que aparece no site); mesma regra do db.js
+      const pseudo = p.anonimo ? (String(p.pseudo || '').trim() || ('Anônimo ' + ((function(s){s=String(s).toLowerCase();let h=0;for(let i=0;i<s.length;i++){h=(h*31+s.charCodeAt(i))>>>0;}return h;})(u.usuario) % 9000 + 1000))) : '';
+      return { usuario: u.usuario, admin: u.admin === true, criadoEm: u.criado_em || 0, email: String(p.email || ''), anonimo: !!p.anonimo, privado: !!p.privado, pseudo };
     });
-    if (busca) lista = lista.filter(u => norm(u.usuario).includes(busca) || norm(u.email).includes(busca));
+    // busca casa também pelo pseudônimo (nº do anônimo) — perfis privados TAMBÉM aparecem aqui
+    if (busca) lista = lista.filter(u => norm(u.usuario).includes(busca) || norm(u.email).includes(busca) || norm(u.pseudo).includes(busca));
     lista.sort((a, b) => (b.criadoEm || 0) - (a.criadoEm || 0));
     return res.status(200).json({ ok: true, usuarios: lista.slice(0, 200) });
   }

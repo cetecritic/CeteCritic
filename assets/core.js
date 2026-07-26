@@ -422,6 +422,29 @@ function descreverDispositivo(){
 async function apiRegistrar(user, senha, email){ return apiPost({ action:'registrar', user, senha, email, dispositivo: descreverDispositivo() }); }
 async function apiLogin(user, senha){ return apiPost({ action:'login', user, senha, dispositivo: descreverDispositivo() }); }
 async function apiLogin2fa(user, code){ return apiPost({ action:'login2fa', user, code, dispositivo: descreverDispositivo() }); }
+
+/* botão "reenviar": nasce oculto; ao chamar isto ele aparece grayed com um
+   timer de 90s e só fica clicável no fim. Ao clicar, reenvia e reinicia o timer. */
+function iniciarTimerReenvio(btn, aoReenviar, segundos){
+  if(!btn) return;
+  if(btn._timer){ clearTimeout(btn._timer); btn._timer = null; }
+  btn.style.display = '';
+  btn.disabled = true;
+  let seg = segundos || 90;
+  const tick = () => {
+    if(seg <= 0){ btn.disabled = false; btn.textContent = 'Reenviar código'; return; }
+    const m = Math.floor(seg / 60), s = seg % 60;
+    btn.textContent = 'Reenviar em ' + m + ':' + String(s).padStart(2, '0');
+    seg--; btn._timer = setTimeout(tick, 1000);
+  };
+  tick();
+  btn.onclick = async () => {
+    if(btn.disabled) return;
+    btn.disabled = true; btn.textContent = 'Reenviando…';
+    try{ await aoReenviar(); }catch(e){}
+    iniciarTimerReenvio(btn, aoReenviar, segundos);   // reinicia o timer
+  };
+}
 async function apiListarSessoes(){ const s = usuarioLogado(); if(!s) return { ok:false, sessoes:[] }; return apiPost({ action:'listarSessoes', user:s.user, token:s.token }); }
 async function apiRevogarSessao(id){ const s = usuarioLogado(); if(!s) return { ok:false }; return apiPost({ action:'revogarSessao', user:s.user, token:s.token, id }); }
 async function apiLogout(){ const s = usuarioLogado(); if(!s) return { ok:true }; return apiPost({ action:'logout', user:s.user, token:s.token }); }
@@ -649,8 +672,9 @@ function htmlModalLogin(){
           <span id="loginToggleTxt">Ainda não tem conta?</span>
           <button type="button" id="loginToggleBtn">Criar conta</button>
         </div>
-        <div class="login-toggle" id="loginEsqueci">
+        <div class="login-toggle" id="loginEsqueci" style="display:flex; justify-content:space-between; gap:10px;">
           <button type="button" id="loginEsqueciBtn">Esqueci a senha</button>
+          <button type="button" id="loginReenviarReset" style="display:none;">Reenviar link</button>
         </div>
       </div>
       <div class="login-form" id="login2faWrap" style="display:none;">
@@ -659,7 +683,10 @@ function htmlModalLogin(){
         <input type="text" id="login2faCode" inputmode="numeric" maxlength="6" autocomplete="one-time-code" placeholder="000000" style="letter-spacing:8px; text-align:center; font-size:20px;">
         <div class="login-erro" id="login2faErro"></div>
         <button class="submit-btn" id="login2faSubmit">Confirmar código</button>
-        <div class="login-toggle"><button type="button" id="login2faVoltar">Voltar</button></div>
+        <div class="login-toggle" style="display:flex; justify-content:space-between; gap:10px;">
+          <button type="button" id="login2faVoltar">Voltar</button>
+          <button type="button" id="login2faReenviar" style="display:none;">Reenviar código</button>
+        </div>
       </div>
     </div>
   </div>`;
@@ -687,9 +714,24 @@ function wireLogin(){
   const wrap2fa = document.getElementById('login2faWrap');
   const inp2fa = document.getElementById('login2faCode');
   const erro2fa = document.getElementById('login2faErro');
-  let pending2faUser = null;
-  function mostrar2fa(u){ pending2faUser = u; if(erro2fa) erro2fa.textContent = ''; if(formPrincipal) formPrincipal.style.display = 'none'; if(wrap2fa) wrap2fa.style.display = ''; if(submit) submit.disabled = false; if(inp2fa){ inp2fa.value = ''; setTimeout(() => inp2fa.focus(), 60); } }
-  function voltar2fa(){ pending2faUser = null; if(wrap2fa) wrap2fa.style.display = 'none'; if(formPrincipal) formPrincipal.style.display = ''; aplicarModo(); }
+  let pending2faUser = null, pending2faSenha = '';
+  function mostrar2fa(u){
+    pending2faUser = u; if(erro2fa) erro2fa.textContent = '';
+    if(formPrincipal) formPrincipal.style.display = 'none';
+    if(wrap2fa) wrap2fa.style.display = '';
+    if(submit) submit.disabled = false;
+    if(inp2fa){ inp2fa.value = ''; setTimeout(() => inp2fa.focus(), 60); }
+    /* botão reenviar: aparece grayed com timer de 1:30 e reenvia o código */
+    iniciarTimerReenvio(document.getElementById('login2faReenviar'), async () => {
+      const rr = await apiLogin(pending2faUser, pending2faSenha);
+      if(erro2fa) erro2fa.textContent = (rr && rr.need2fa) ? 'Novo código enviado ✓' : ((rr && rr.error) || 'Não foi possível reenviar.');
+    });
+  }
+  function voltar2fa(){
+    pending2faUser = null; pending2faSenha = '';
+    const bR = document.getElementById('login2faReenviar'); if(bR){ if(bR._timer) clearTimeout(bR._timer); bR.style.display = 'none'; }
+    if(wrap2fa) wrap2fa.style.display = 'none'; if(formPrincipal) formPrincipal.style.display = ''; aplicarModo();
+  }
 
   function aplicarModo(){
     const ent = modo === 'login';
@@ -755,7 +797,7 @@ function wireLogin(){
     erro.textContent = '';
     try{
       const r = modo === 'login' ? await apiLogin(user, senha) : await apiRegistrar(user, senha, email);
-      if(r && r.need2fa){ mostrar2fa(r.user); return; }   // conta com 2FA: vai pra etapa do código
+      if(r && r.need2fa){ pending2faSenha = senha; mostrar2fa(r.user); return; }   // conta com 2FA: vai pra etapa do código
       if(r && r.ok){
         salvarSessao(r.user, r.token, r.admin);
         location.reload();
@@ -803,6 +845,12 @@ function wireLogin(){
     try{
       const r = await apiPedirReset(conta);
       erro.textContent = (r && r.msg) ? r.msg : 'Se houver um e-mail cadastrado, enviamos o link.';
+      /* botão reenviar: aparece grayed com timer de 1:30 e reenvia o link */
+      iniciarTimerReenvio(document.getElementById('loginReenviarReset'), async () => {
+        const rr = await apiPedirReset(conta);
+        erro.style.color = 'var(--text-muted)';
+        erro.textContent = (rr && rr.msg) ? rr.msg : 'Reenviado — confira seu e-mail.';
+      });
     }catch(e){ erro.style.color = ''; erro.textContent = 'Falha de conexão. Tente de novo.'; }
   });
 }
@@ -3013,7 +3061,7 @@ async function paginaHall(){
     recComunidade: `<div class="section"><h2>👥 Números da Comunidade</h2><div class="sub">A escala da plateia do CETECritic.</div><div class="record-list" id="recComunidade"></div></div>`,
     rankUsuarios: `<div class="section"><h2>👤 Ranking de usuários</h2><div class="sub">Os perfis mais ativos do acervo (top ${CNT.rankUsuarios}) — clique num nome para abrir o perfil.</div><div class="rank-cols" id="rankUsuarios"><div class="empty-note">Carregando...</div></div></div>`,
     topReputacao: `<div class="section"><h2>👑 Maiores reputações</h2><div class="sub">Os perfis com mais reputação (votos 👍/👎 da comunidade) e o cargo que ocupam. Clique num nome para abrir o perfil.</div><div class="rep-rank" id="topReputacao"><div class="empty-note">Carregando...</div></div></div>`,
-    curiosidades: `<div class="section" id="secCurio" style="display:none"><h2>🎭 Curiosidades</h2><div class="record-list" id="recCurio"></div></div>`
+    curiosidades: `<div class="section" id="secCurio" style="display:none"><h2>🎭 Curiosidades</h2><div class="record-list" id="recCurio"></div><button class="btn btn-ghost" id="curioToggle" style="display:none; margin-top:12px;">Ver todas</button></div>`
   };
 
   montarShell(`
@@ -3605,27 +3653,47 @@ async function paginaHall(){
     }
     preencher('recComunidade', recsC);
 
-    /* ---- curiosidades manuais (hall-dados.js) ----
-       mais de 5 cadastradas: mostra 5 sorteadas por vez, trocando a cada 8s */
-    const cur = HALL.curiosidades || [];
+    /* ---- curiosidades UNIFICADAS (mesma lista da Home) ----
+       retraído: mostra 5 sorteadas, trocando a cada 8s.
+       "Ver todas": expande e mostra todas (para a rotação). */
+    const cur = (typeof CURIOSIDADES !== 'undefined' && Array.isArray(CURIOSIDADES) && CURIOSIDADES.length)
+      ? CURIOSIDADES : (HALL.curiosidades || []);
     const sec = document.getElementById('secCurio');
     if(cur.length){
       sec.style.display = '';
       const alvo = document.getElementById('recCurio');
+      const btn = document.getElementById('curioToggle');
       const POR_VEZ = 5;
+      let expandido = false;
       if(curioTimer){ clearInterval(curioTimer); curioTimer = null; }
+      const rotacionar = () => {
+        const escolhidas = [...cur].sort(() => Math.random() - 0.5).slice(0, POR_VEZ);
+        alvo.classList.remove('curio-fade'); void alvo.offsetWidth; alvo.classList.add('curio-fade');
+        alvo.innerHTML = escolhidas.map(rItem).join('');
+      };
+      const ligarRotacao = () => { if(curioTimer){ clearInterval(curioTimer); } curioTimer = setInterval(() => { if(!expandido) rotacionar(); }, 8000); };
       if(cur.length <= POR_VEZ){
         alvo.innerHTML = cur.map(rItem).join('');
+        if(btn) btn.style.display = 'none';
       } else {
-        const sortear = () => {
-          const escolhidas = [...cur].sort(() => Math.random() - 0.5).slice(0, POR_VEZ);
-          alvo.classList.remove('curio-fade');
-          void alvo.offsetWidth; /* reinicia a animação */
-          alvo.classList.add('curio-fade');
-          alvo.innerHTML = escolhidas.map(rItem).join('');
-        };
-        sortear();
-        curioTimer = setInterval(sortear, 8000);
+        rotacionar();
+        ligarRotacao();
+        if(btn){
+          btn.style.display = '';
+          btn.textContent = 'Ver todas (' + cur.length + ')';
+          btn.onclick = () => {
+            expandido = !expandido;
+            if(expandido){
+              if(curioTimer){ clearInterval(curioTimer); curioTimer = null; }
+              alvo.classList.remove('curio-fade');
+              alvo.innerHTML = cur.map(rItem).join('');
+              btn.textContent = 'Ver menos';
+            } else {
+              btn.textContent = 'Ver todas (' + cur.length + ')';
+              rotacionar(); ligarRotacao();
+            }
+          };
+        }
       }
     }
   }
@@ -3947,8 +4015,10 @@ async function paginaHome(){
     if(acima9 > 0) autoCurio.push(`${acima9} peça(s) de ${ANO} ${acima9 === 1 ? 'tem' : 'têm'} média 9 ou mais.`);
     if(totalVotos > 0) autoCurio.push(`A plateia já enviou ${totalVotos} avaliaç${totalVotos === 1 ? 'ão' : 'ões'}, somando ${todasNotas.length} notas.`);
 
+    /* curiosidades manuais UNIFICADAS (mesma lista da Home e do Hall) */
+    const manuaisCurio = (typeof CURIOSIDADES !== 'undefined' && Array.isArray(CURIOSIDADES)) ? CURIOSIDADES : (HD.curiosidades || []);
     const curios = [
-      ...((HD.curiosidades || []).map(c => typeof c === 'string' ? { texto: c } : c)),
+      ...(manuaisCurio.map(c => typeof c === 'string' ? { texto: c } : c)),
       ...autoCurio.map(t => ({ texto: t }))
     ];
     /* mostra só 5 por vez, sorteadas — troca a cada ciclo (20s), igual ao hall */

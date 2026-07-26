@@ -13,6 +13,18 @@
   *{ box-sizing:border-box; }
   body{ margin:0; background:var(--bg); color:var(--text); font-family:'Inter',system-ui,sans-serif; padding:24px 16px 80px; }
   .wrap{ max-width:1300px; margin:0 auto; }
+  .admin-nav{ background:var(--surface); border:1px solid var(--border); border-radius:14px; padding:10px; }
+  .admin-nav a{ display:block; padding:7px 10px; border-radius:8px; color:var(--muted); text-decoration:none; font-size:12.5px; cursor:pointer; }
+  .admin-nav a:hover{ background:var(--surface2); color:var(--text); }
+  .admin-nav a.sub{ padding-left:22px; font-size:11.5px; }
+  .admin-nav .voltar{ margin-top:10px; border-top:1px solid var(--border); padding-top:10px; }
+  .admin-nav .voltar a{ color:var(--gold); font-weight:800; }
+  .card{ scroll-margin-top:14px; }
+  @media (min-width:1100px){
+    .wrap{ padding-left:214px; }
+    .admin-nav{ position:fixed; top:14px; left:14px; width:188px; max-height:calc(100vh - 28px); overflow:auto; z-index:50; }
+  }
+  @media (max-width:1099px){ .admin-nav{ margin-bottom:16px; } }
   .grid2{ display:grid; grid-template-columns:1fr 1fr; gap:18px; align-items:start; }
   @media (max-width:820px){ .grid2{ grid-template-columns:1fr; } }
   .u-item{ display:flex; align-items:center; justify-content:space-between; gap:8px; padding:8px 0; border-bottom:1px solid var(--border); flex-wrap:wrap; }
@@ -52,15 +64,29 @@
   </div>
 
   <div id="painel" class="hidden">
+    <nav class="admin-nav">
+      <a href="#secBusca">🔎 Buscar</a>
+      <a href="#secConfig">⚙️ Configurações</a>
+      <a href="#secHall">🏆 Hall &amp; avançado</a>
+      <a href="#secCurios">📝 Curiosidades/badges</a>
+      <a href="#secEdicoes">🎬 Edições</a>
+      <a href="#secAgendar">⏰ Agendar</a>
+      <a href="#secNotif">🔔 Notificação</a>
+      <a href="#secBanners">📢 Banners</a>
+      <a href="#secUsuarios">👥 Usuários</a>
+      <a href="#secVotos">🗑️ Excluir notas</a>
+      <div class="voltar"><a id="btnVoltarSite">← Voltar ao site</a></div>
+    </nav>
+
     <!-- BUSCA -->
-    <div class="card">
+    <div class="card" id="secBusca">
       <h2>🔎 Buscar pra editar</h2>
       <input id="buscaAdmin" type="text" placeholder="Digite uma edição (ex: 2026) ou o nome de uma peça…">
       <div id="buscaRes" style="margin-top:8px;"></div>
     </div>
 
     <!-- CONFIG GLOBAL -->
-    <div class="card">
+    <div class="card" id="secConfig">
       <h2>⚙️ Configurações gerais</h2>
       <div class="row2">
         <div><label>Edição em destaque (ano)</label><input id="cfgDestaque" type="number"></div>
@@ -79,7 +105,7 @@
     </div>
 
     <!-- HALL / AVANÇADO -->
-    <div class="card">
+    <div class="card" id="secHall">
       <h2>🏆 Hall da Fama &amp; configs avançadas</h2>
       <div class="row3">
         <div><label>Mín. de votos p/ aparecer no Hall</label><input id="hallMin" type="number"></div>
@@ -99,19 +125,16 @@
     </div>
 
     <!-- EDITORES AMIGÁVEIS (curiosidades, badges, linha do tempo) -->
-    <div class="card">
+    <div class="card" id="secCurios">
       <h2>📝 Curiosidades, badges & linha do tempo</h2>
       <p class="sub" style="margin:0 0 8px;">Adicione ou remova itens direto aqui — cada mudança já salva. <span id="edavMsg" style="color:var(--gold);"></span></p>
 
-      <h3 style="color:var(--gold);font-size:14px;margin:16px 0 6px;">🎭 Curiosidades do Hall da Fama</h3>
-      <div id="edHallCurio"></div>
+      <h3 style="color:var(--gold);font-size:14px;margin:16px 0 6px;">🎭 Curiosidades (aparecem na Home e no Hall da Fama)</h3>
+      <div id="edCurio"></div>
 
       <h3 style="color:var(--gold);font-size:14px;margin:18px 0 6px;">🏅 Badges manuais (peças específicas)</h3>
       <div class="sub" style="margin:0 0 6px;">chave = <code>s&lt;noite&gt;e&lt;episódio&gt;</code>, ex.: <code>s2e1</code> = Noite 2, 1ª peça.</div>
       <div id="edHallBadges"></div>
-
-      <h3 style="color:var(--gold);font-size:14px;margin:18px 0 6px;">🏠 Curiosidades da Home</h3>
-      <div id="edHomeCurio"></div>
 
       <h3 style="color:var(--gold);font-size:14px;margin:18px 0 6px;">🗓️ Linha do tempo (Home)</h3>
       <div id="edHomeLinha"></div>
@@ -121,7 +144,7 @@
     </div>
 
     <!-- EDIÇÕES -->
-    <div class="card">
+    <div class="card" id="secEdicoes">
       <h2>🎬 Edições</h2>
       <div id="edLista"><div class="msg">Carregando…</div></div>
       <div class="toolbar"><button id="btnNovaEdicao" class="ghost">+ Nova edição</button></div>
@@ -172,7 +195,7 @@
     </div>
 
     <!-- ENVIAR NOTIFICAÇÃO -->
-    <div class="card">
+    <div class="card" id="secNotif">
       <h2>🔔 Enviar notificação</h2>
       <p class="sub" style="margin:0 0 12px;">Vai pra central 🔔 da pessoa. Marque "push" pra também tocar no aparelho de quem tem push ligado.</p>
       <div class="row2">
@@ -192,7 +215,7 @@
     </div>
 
     <!-- AGENDAR -->
-    <div class="card">
+    <div class="card" id="secAgendar">
       <h2>⏰ Agendar banner / push</h2>
       <p class="sub" style="margin:0 0 10px;">Marca pra sair numa data/hora futura. <b>Obs:</b> no plano Hobby da Vercel o cron roda ~1×/dia, então sai na próxima rodada após a hora marcada. Pra hora exata, é preciso Vercel Pro (aí ajusto o cron pra de hora em hora).</p>
       <div class="row2">
@@ -209,7 +232,7 @@
     </div>
 
     <!-- BANNERS -->
-    <div class="card">
+    <div class="card" id="secBanners">
       <h2>📢 Banners (avisos no site)</h2>
       <div class="row2">
         <div><label>Título</label><input id="bnTitulo" type="text"></div>
@@ -234,7 +257,7 @@
     </div>
 
     <!-- USUÁRIOS -->
-    <div class="card">
+    <div class="card" id="secUsuarios">
       <h2>👥 Usuários</h2>
       <div class="row2">
         <div><label>Buscar (usuário ou e-mail)</label><input id="uBusca" type="text" placeholder="deixe vazio pra listar todos"></div>
@@ -245,7 +268,7 @@
     </div>
 
     <!-- MODERAR / EXCLUIR NOTAS -->
-    <div class="card">
+    <div class="card" id="secVotos">
       <h2>🗑️ Excluir notas (votos)</h2>
       <p class="sub" style="margin:0 0 10px;">Filtre e apague votos. Deixe um filtro vazio pra ignorá-lo. Noite + episódio localizam a nota daquela peça.</p>
       <div class="row3">
@@ -384,21 +407,24 @@ function montarEditoresAvancados(){
   if(!CFG.HALL) CFG.HALL = {};
   if(!CFG.HOME_DADOS) CFG.HOME_DADOS = {};
   const H = CFG.HALL, HD = CFG.HOME_DADOS;
-  if(!Array.isArray(H.curiosidades)) H.curiosidades = [];
   if(!Array.isArray(H.badgesExtras)) H.badgesExtras = [];
-  if(!Array.isArray(HD.curiosidades)) HD.curiosidades = [];
   if(!HD.linhaDoTempo || typeof HD.linhaDoTempo !== 'object') HD.linhaDoTempo = {};
   if(!Array.isArray(HD.nesteDia)) HD.nesteDia = [];
+  /* curiosidades UNIFICADAS (Home + Hall): se ainda não existir a lista única,
+     junta as antigas (Home + Hall) sem duplicar por texto */
+  if(!Array.isArray(CFG.curiosidades)){
+    const vistos = {}; const juntas = [];
+    [].concat(Array.isArray(HD.curiosidades)?HD.curiosidades:[], Array.isArray(H.curiosidades)?H.curiosidades:[])
+      .forEach(c => { const t = (c && c.texto) || (typeof c === 'string' ? c : ''); if(t && !vistos[t]){ vistos[t]=1; juntas.push(typeof c==='string'?{texto:c}:c); } });
+    CFG.curiosidades = juntas;
+  }
 
-  montarEditor('edHallCurio',
+  montarEditor('edCurio',
     [{k:'emoji',label:'Emoji'},{k:'titulo',label:'Título'},{k:'texto',label:'Texto'},{k:'url',label:'Link (opcional)'}],
-    H.curiosidades, arr => { H.curiosidades = arr; salvarSilencioso(Object.assign({}, CFG, { HALL: H })); });
+    CFG.curiosidades, arr => { CFG.curiosidades = arr; salvarSilencioso(Object.assign({}, CFG, { curiosidades: arr })); });
   montarEditor('edHallBadges',
     [{k:'ano',label:'Ano',type:'number'},{k:'chave',label:'Chave (s1e1)'},{k:'emoji',label:'Emoji'},{k:'nome',label:'Nome'},{k:'desc',label:'Descrição'}],
     H.badgesExtras, arr => { H.badgesExtras = arr; salvarSilencioso(Object.assign({}, CFG, { HALL: H })); });
-  montarEditor('edHomeCurio',
-    [{k:'emoji',label:'Emoji'},{k:'titulo',label:'Título'},{k:'texto',label:'Texto'},{k:'url',label:'Link (opcional)'}],
-    HD.curiosidades, arr => { HD.curiosidades = arr; salvarSilencioso(Object.assign({}, CFG, { HOME_DADOS: HD })); });
   montarEditorLinha('edHomeLinha', HD.linhaDoTempo, m => { HD.linhaDoTempo = m; salvarSilencioso(Object.assign({}, CFG, { HOME_DADOS: HD })); });
   montarEditor('edHomeNesteDia',
     [{k:'dia',label:'Dia',type:'number'},{k:'mes',label:'Mês',type:'number'},{k:'emoji',label:'Emoji'},{k:'texto',label:'Texto'},{k:'url',label:'Link (opcional)'}],
@@ -413,13 +439,13 @@ async function salvarDados(dados, msgEl){
 document.addEventListener('click', ev => {
   if(ev.target && ev.target.id === 'btnSalvarHall'){
     const H = Object.assign({}, CFG.HALL || {}, { minAvaliacoes: Number($('hallMin').value) || 0, edicoesRealizadas: $('hallEdicoes').value.trim(), publicoEstimado: $('hallPublico').value.trim() });
-    salvarDados(Object.assign({}, CFG, { HALL: H }), $('hallMsg'));
+    salvarDados(Object.assign({}, CFG, { HALL: H }), $('hallMsg')); limparDirty('hall');
   }
   if(ev.target && ev.target.id === 'btnSalvarJson'){
     let H, P, HD;
     try{ H = JSON.parse($('jsonHall').value || '{}'); P = JSON.parse($('jsonPerfil').value || '{}'); HD = JSON.parse($('jsonHome').value || '{}'); }
     catch(e){ $('jsonMsg').textContent = 'JSON inválido: ' + e.message; return; }
-    salvarDados(Object.assign({}, CFG, { HALL: H, PERFIL: P, HOME_DADOS: HD }), $('jsonMsg'));
+    salvarDados(Object.assign({}, CFG, { HALL: H, PERFIL: P, HOME_DADOS: HD }), $('jsonMsg')); limparDirty('json');
   }
 });
 $('btnSalvarConfig').addEventListener('click', async () => {
@@ -436,6 +462,7 @@ $('btnSalvarConfig').addEventListener('click', async () => {
   $('cfgMsg').textContent = 'Salvando…';
   const r = await post('salvarConfig', { dados });
   $('cfgMsg').textContent = (r && r.ok) ? 'Salvo ✓' : ('Erro: ' + ((r&&r.error)||'')); CFG = dados;
+  if(r && r.ok) limparDirty('config');
 });
 
 /* ---------- EDIÇÕES ---------- */
@@ -484,6 +511,7 @@ async function abrirEdicao(ano){
 function novaEdicao(){ preencherEditor({ ano:'', noites:5, episodios_por_noite:3, em_breve:false, sobre:{}, abertura:{} }, [], []); }
 
 function preencherEditor(e, noites, pecas){
+  limparDirty('edicao');   // acabou de carregar: nada pendente ainda
   $('edEditor').classList.remove('hidden');
   $('edEditorTitulo').textContent = e.ano ? ('Editar Cetec Festival ' + e.ano) : 'Nova edição';
   $('edAno').value = e.ano || ''; $('edNoites').value = e.noites || 5; $('edOrdem').value = e.ordem ?? e.ano ?? '';
@@ -535,9 +563,14 @@ async function uploadImg(file, nome, msgEl){
   }catch(e){ if(msgEl) msgEl.textContent = 'Falha ao processar a imagem.'; }
   return null;
 }
+/* poster: abre o corte no formato 630×830 antes de enviar */
 $('edPosterFile').addEventListener('change', async e => {
+  const file = e.target.files[0]; if(!file) return;
   const ano = $('edAno').value || 'ed';
-  const url = await uploadImg(e.target.files[0], 'poster_' + ano, $('edPosterMsg'));
+  const dataUrl = await abrirCropper(file, 630 / 830);
+  e.target.value = '';
+  if(!dataUrl) return;
+  const url = await uploadDataUrl(dataUrl, 'poster_' + ano, $('edPosterMsg'));
   if(url) $('edPoster').value = url;
 });
 /* ---- recortador de imagem (Cropper.js) ---- */
@@ -584,14 +617,10 @@ async function uploadDataUrl(dataUrl, nome, msgEl){
   if(msgEl) msgEl.textContent = 'Erro: ' + ((r&&r.error)||'');
   return null;
 }
-/* banner do "Sobre": abre o corte no formato 630×830 antes de enviar */
+/* banner do "Sobre": envia direto (sem corte) */
 $('edSobreFile').addEventListener('change', async e => {
-  const file = e.target.files[0]; if(!file) return;
   const ano = $('edAno').value || 'ed';
-  const dataUrl = await abrirCropper(file, 630 / 830);
-  e.target.value = '';
-  if(!dataUrl) return;
-  const url = await uploadDataUrl(dataUrl, 'sobre_' + ano, $('edSobreMsg'));
+  const url = await uploadImg(e.target.files[0], 'sobre_' + ano, $('edSobreMsg'));
   if(url) $('edSobreBanner').value = url;
 });
 
@@ -631,7 +660,7 @@ $('btnSalvarEdicao').addEventListener('click', async () => {
   };
   $('edMsg').textContent = 'Salvando…';
   const r = await post('salvarEdicaoCompleta', { edicao, noites: coletarNoites() });
-  if(r && r.ok){ $('edMsg').textContent = 'Salvo ✓'; carregarEdicoes(); }
+  if(r && r.ok){ $('edMsg').textContent = 'Salvo ✓'; limparDirty('edicao'); carregarEdicoes(); }
   else $('edMsg').textContent = 'Erro: ' + ((r&&r.error)||'');
 });
 $('btnExcluirEdicao').addEventListener('click', async () => {
@@ -682,10 +711,15 @@ async function buscarUsuarios(){
   const us = (r && r.usuarios) || [];
   $('uMsg').textContent = us.length + ' usuário(s).';
   $('uLista').innerHTML = us.map(u => {
-    const nome = u.usuario.replace(/</g,'&lt;');
+    const nome = escH(u.usuario);
+    const tag = (bg, txt) => `<span style="background:${bg};color:#fff;font-size:10px;font-weight:800;border-radius:20px;padding:1px 8px;margin-left:4px;">${txt}</span>`;
+    const tags =
+      (u.admin ? tag('#f5c518', 'ADMIN').replace('#fff','#0b0c0f') : '') +
+      (u.anonimo ? tag('#6d28d9', '🕶️ anônimo' + (u.pseudo ? ' · ' + escH(u.pseudo) : '')) : '') +
+      (u.privado ? tag('#d93c3c', '🔒 privado') : '');
     return `<div class="u-item" data-u="${nome}">
-      <div><b>${nome}</b>${u.admin?' <span class="u-tag">admin</span>':''}
-        <span style="color:var(--muted);font-size:12px;">${u.email?('· '+u.email.replace(/</g,'&lt;')):''}${u.anonimo?' · anônimo':''}${u.privado?' · privado':''}</span></div>
+      <div><b>${nome}</b>${tags}
+        <span style="color:var(--muted);font-size:12px;">${u.email?(' · '+escH(u.email)):''}</span></div>
       <div class="u-acts">
         <button class="ghost small" data-act="admin" data-v="${u.admin?0:1}">${u.admin?'Remover admin':'Tornar admin'}</button>
         <button class="ghost small" data-act="carimbos">Limpar carimbos</button>
@@ -771,17 +805,36 @@ function renderVotos(){
   const box = $('vLista');
   if(!VOTOS.length){ box.innerHTML = '<div class="msg">Nenhum voto com esses filtros.</div>'; return; }
   box.innerHTML =
-    `<div class="toolbar"><button class="danger small" id="btnDelTodos">Excluir os ${VOTOS.length} mostrados</button></div>` +
+    `<div class="toolbar" style="align-items:center;">
+       <label style="font-size:12px;display:flex;align-items:center;gap:6px;"><input type="checkbox" id="vMarcarTodos" style="width:auto;"> marcar todos</label>
+       <button class="danger small" id="btnDelSelec">Excluir selecionados (0)</button>
+       <button class="danger small" id="btnDelTodos">Excluir os ${VOTOS.length} mostrados</button>
+     </div>` +
     VOTOS.map(v => `<div class="ed-item">
-      <div><b>${escH(v.usuario)}</b> <span style="color:var(--muted);font-size:12px;">· ${v.year}${v.nota != null ? (' · nota <b style="color:var(--gold)">' + v.nota + '</b>') : ''} · ${v.notas} nota(s) neste voto</span></div>
+      <div style="display:flex;align-items:center;gap:10px;"><input type="checkbox" class="v-chk" data-rid="${v.row_id}" style="width:auto;">
+        <div><b>${escH(v.usuario)}</b> <span style="color:var(--muted);font-size:12px;">· ${v.year}${v.nota != null ? (' · nota <b style="color:var(--gold)">' + v.nota + '</b>') : ''} · ${v.notas} nota(s) neste voto</span></div></div>
       <button class="danger small" data-rid="${v.row_id}">Excluir</button></div>`).join('');
-  box.querySelectorAll('[data-rid]').forEach(b => b.onclick = async () => {
+  const atualizarContador = () => {
+    const n = box.querySelectorAll('.v-chk:checked').length;
+    const bs = $('btnDelSelec'); if(bs) bs.textContent = 'Excluir selecionados (' + n + ')';
+  };
+  box.querySelectorAll('.v-chk').forEach(c => c.addEventListener('change', atualizarContador));
+  const marcarTodos = $('vMarcarTodos');
+  if(marcarTodos) marcarTodos.addEventListener('change', () => { box.querySelectorAll('.v-chk').forEach(c => c.checked = marcarTodos.checked); atualizarContador(); });
+  box.querySelectorAll('button[data-rid]').forEach(b => b.onclick = async () => {
     if(!confirm('Excluir este voto? (apaga a linha inteira daquele envio)')) return;
     await post('deletarVotos', { row_ids: [Number(b.dataset.rid)] });
     VOTOS = VOTOS.filter(v => String(v.row_id) !== b.dataset.rid); renderVotos();
   });
-  const bt = $('btnDelTodos');
-  if(bt) bt.onclick = async () => {
+  $('btnDelSelec').onclick = async () => {
+    const ids = [...box.querySelectorAll('.v-chk:checked')].map(c => Number(c.dataset.rid));
+    if(!ids.length){ $('vMsg').textContent = 'Selecione ao menos um voto.'; return; }
+    if(!confirm('Excluir os ' + ids.length + ' votos selecionados? Permanente.')) return;
+    await post('deletarVotos', { row_ids: ids });
+    const set = new Set(ids.map(String));
+    VOTOS = VOTOS.filter(v => !set.has(String(v.row_id))); renderVotos(); $('vMsg').textContent = ids.length + ' excluído(s) ✓';
+  };
+  $('btnDelTodos').onclick = async () => {
     if(!confirm('Excluir os ' + VOTOS.length + ' votos mostrados? Permanente.')) return;
     await post('deletarVotos', { row_ids: VOTOS.map(v => v.row_id) });
     VOTOS = []; renderVotos(); $('vMsg').textContent = 'Excluídos ✓';
@@ -814,7 +867,29 @@ $('btnAgendar').addEventListener('click', async () => {
   else $('agMsg').textContent = 'Erro: ' + ((r&&r.error)||'');
 });
 
-function iniciar(){ carregarConfig(); carregarEdicoes(); carregarBanners(); buscarUsuarios(); carregarIndice(); carregarAgendados(); }
+/* ---------- mudanças pendentes + voltar ao site ---------- */
+const _dirty = {};
+function marcarDirty(k, label){ _dirty[k] = label; }
+function limparDirty(k){ delete _dirty[k]; }
+function configurarDirty(){
+  ['cfgDestaque','cfgCooldown','cfgNotaMax','cfgHistorica','cfgVotosAntigos','cfgEmail','cfgSlogan','cfgRodape']
+    .forEach(id => { const el = $(id); if(el) el.addEventListener('input', () => marcarDirty('config', 'Configurações gerais')); });
+  ['hallMin','hallEdicoes','hallPublico']
+    .forEach(id => { const el = $(id); if(el) el.addEventListener('input', () => marcarDirty('hall', 'Hall da Fama (mín. votos etc.)')); });
+  ['jsonHall','jsonPerfil','jsonHome']
+    .forEach(id => { const el = $(id); if(el) el.addEventListener('input', () => marcarDirty('json', 'JSON avançado')); });
+  const ed = $('edEditor');
+  if(ed) ed.addEventListener('input', () => { if(!ed.classList.contains('hidden')) marcarDirty('edicao', 'Editor de edição (não salvo)'); });
+}
+$('btnVoltarSite').addEventListener('click', () => {
+  const pend = Object.values(_dirty);
+  if(pend.length && !confirm('Você tem mudanças NÃO salvas em:\n\n• ' + pend.join('\n• ') + '\n\nSair mesmo assim? As mudanças não salvas serão perdidas.')) return;
+  location.href = '/index.html';
+});
+/* avisa também ao fechar/atualizar a aba */
+window.addEventListener('beforeunload', e => { if(Object.keys(_dirty).length){ e.preventDefault(); e.returnValue = ''; } });
+
+function iniciar(){ carregarConfig(); carregarEdicoes(); carregarBanners(); buscarUsuarios(); carregarIndice(); carregarAgendados(); configurarDirty(); }
 </script>
 </body>
 </html>
