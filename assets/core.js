@@ -176,6 +176,13 @@ function wireBannerInstalar(id, comFechar){
 
 /* ---------------------- utilidades ---------------------- */
 function esc(str){ const d = document.createElement('div'); d.textContent = str ?? ''; return d.innerHTML; }
+/* resolve caminho de imagem: URL absoluta (http) ou caminho absoluto (/) fica
+   como está; nome de arquivo simples é relativo à pasta dada (ex.: '2026/'). */
+function urlRecurso(v, base){
+  v = String(v || '');
+  if(/^https?:\/\//i.test(v) || v.charAt(0) === '/') return v;
+  return (base || '') + v;
+}
 function media(arr){ return (!arr || !arr.length) ? null : arr.reduce((a,b)=>a+b,0)/arr.length; }
 
 function corDaNota(r){
@@ -3683,7 +3690,7 @@ async function paginaHome(){
     ${htmlBannerHome}
     <div class="home-hero">
       <div class="poster-box has-image home-poster">
-        <img src="${pastaDest}${esc((ED && ED.poster) || 'poster.jpg')}" alt="Poster da edição" onerror="this.closest('.poster-box').classList.remove('has-image')">
+        <img src="${esc(urlRecurso((ED && ED.poster) || 'poster.jpg', pastaDest))}" alt="Poster da edição" onerror="this.closest('.poster-box').classList.remove('has-image')">
         <div class="poster-hint"><b>poster.jpg</b>Capa da edição em destaque</div>
       </div>
       <div class="home-info">
@@ -4936,12 +4943,11 @@ async function paginaNotificacoes(){
   });
 
   btnTodas.addEventListener('click', async () => {
-    const ids = notifs.filter(n => !n.lida).map(n => n.id);
-    if(!ids.length) return;
+    if(!notifs.some(n => !n.lida)) return;
     notifs.forEach(n => n.lida = true);
     render();
-    await apiMarcarNotifLidas(ids);      // espera o servidor marcar como lidas
-    atualizarBadgeNotificacoes();        // só então reconta a bolinha
+    await apiMarcarNotifLidas();          // sem ids = servidor marca TODAS as não lidas (robusto)
+    atualizarBadgeNotificacoes();         // só então reconta a bolinha
   });
 
   const r = await apiListarNotificacoes();
