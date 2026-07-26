@@ -1294,14 +1294,20 @@ function montarShell(conteudo){
      enquanto ainda não for admin — quem já é admin não precisa re-checar) */
   (async () => {
     const s = usuarioLogado();
-    if(!s || s.admin === true) return;
-    if(sessionStorage.getItem('cetec-admin-checado')) return;
+    if(!s) return;
+    if(sessionStorage.getItem('cetec-sess-checada')) return;
     try{
       const r = await apiMeuPerfil();
-      sessionStorage.setItem('cetec-admin-checado', '1');
-      if(r && r.ok && r.admin){ marcarSessaoAdmin(true); location.reload(); }
-      else marcarSessaoAdmin(false);
-    }catch(e){}
+      // r.ok === false significa que o SERVIDOR recusou o token (sessão derrubada
+      // em outro aparelho, senha trocada, sessão revogada). Aí desloga de vez em
+      // vez de ficar "fantasma" (parece logado mas nada funciona).
+      if(r && r.ok === false){ sairSessao(); location.reload(); return; }
+      sessionStorage.setItem('cetec-sess-checada', '1');
+      if(r && r.ok){
+        const admin = !!r.admin;
+        if(admin !== !!s.admin){ marcarSessaoAdmin(admin); location.reload(); }
+      }
+    }catch(e){ /* erro de rede: mantém a sessão, tenta de novo depois */ }
   })();
 
   /* ---- aviso de edição histórica (anos <= ANO_EDICAO_HISTORICA) ----
