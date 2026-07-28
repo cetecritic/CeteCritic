@@ -4283,7 +4283,7 @@ async function paginaPerfil(){
     <div class="perfil-head">
       <div class="perfil-avatar" id="perfilAvatar">${esc(alvoUser.slice(0,1).toUpperCase())}</div>
       <div class="perfil-head-info">
-        <h1>${esc(alvoUser)} <span class="nivel-chip" id="nivelChip"></span> <span class="titulo-chip" id="tituloChip" style="display:none;"></span></h1>
+        <h1><span id="perfilNome">${esc(alvoUser)}</span><span class="perfil-flags" id="perfilFlags"></span><span class="perfil-nome-real" id="perfilNomeReal" style="display:none;"></span> <span class="nivel-chip" id="nivelChip"></span> <span class="titulo-chip" id="tituloChip" style="display:none;"></span></h1>
         <div class="perfil-sub" id="perfilSub">Carregando...</div>
         <div class="perfil-meta" id="perfilMeta">
           <button class="perfil-meta-chip" type="button" id="chipAmigos" title="Ver amigos">👥 <b id="amigosCount">0</b> amigos</button>
@@ -4469,6 +4469,35 @@ async function paginaPerfil(){
        pessoa for anônima) para casar as avaliações dela no feed já anonimizado */
     const pub = await fetchPerfilPublico(alvoUser, meuSess ? meuSess.user : null) || {};
     const alvoMatch = (pub.anonimo && pub.nomeExib) ? String(pub.nomeExib).trim().toLowerCase() : alvo;
+
+    /* ---- selos: 🔒 privado / 🕶️ anonimo + pseudonimo no lugar do nome ---- */
+    {
+      const anon = !!pub.anonimo;                                  /* ja vem do servidor respeitando o anon_ate */
+      const priv = !!(pub.perfil && pub.perfil.privado);
+      const nomeExib = String(pub.nomeExib || alvoUser);
+      const elNome  = document.getElementById('perfilNome');
+      const elFlags = document.getElementById('perfilFlags');
+      const elReal  = document.getElementById('perfilNomeReal');
+      const elAv    = document.getElementById('perfilAvatar');
+
+      if(elNome) elNome.textContent = anon ? nomeExib : alvoUser;
+      if(elAv)   elAv.textContent   = (anon ? nomeExib : alvoUser).slice(0,1).toUpperCase();
+
+      if(elFlags){
+        let h = '';
+        if(priv) h += `<span class="perfil-flag priv" title="Perfil privado — você não aparece na busca nem na lista de usuários">🔒</span>`;
+        if(anon) h += `<span class="perfil-flag anon" title="Perfil anônimo — seu nome real fica escondido nos feeds e rankings">🕶️</span>`;
+        elFlags.innerHTML = h;
+      }
+
+      /* o nome real SÓ aparece pra você — se aparecesse pros visitantes,
+         o modo anônimo não serviria pra nada */
+      if(elReal && anon && ehMeu){
+        elReal.style.display = '';
+        elReal.textContent = alvoUser;
+        elReal.title = 'Seu nome real — só você enxerga isto aqui';
+      }
+    }
 
     /* dataset global + avaliações do dono do perfil + do visitante (p/ compare) */
     const todosSubs = [];
@@ -5541,12 +5570,22 @@ async function paginaConfig(){
   document.getElementById('cfgExcluir').addEventListener('click', async () => {
     const msg = document.getElementById('cfgExcluirMsg');
     if(!confirm('Tem certeza que quer EXCLUIR sua conta? Isso é permanente.')) return;
-    const nome = prompt('Para confirmar, digite seu usuário (' + sess.user + '):');
-    if(!nome || nome.trim().toLowerCase() !== sess.user.toLowerCase()){ msg.textContent = 'Nome não confere — cancelado.'; return; }
+    const nome = prompt('Para confirmar, digite seu NOME DE USUÁRIO (não a senha):\n\n' + sess.user);
+    if(!nome || nome.trim().toLowerCase() !== sess.user.toLowerCase()){
+      msg.textContent = 'Nome não confere — cancelado.';
+      alert('O que pedimos aqui é o seu NOME DE USUÁRIO (' + sess.user + '), não a senha. Nada foi excluído.');
+      return;
+    }
     msg.textContent = 'Excluindo…';
     const r = await apiPost({ action:'deletarConta', user:sess.user, token:sess.token });
     if(r && r.ok){ sairSessao(); alert('Conta excluída.'); location.href = BASE + 'index.html'; }
-    else msg.textContent = (r && r.error) ? r.error : 'Ainda não disponível';
+    else {
+      /* nunca mais deslogar sem ter certeza que apagou: mostra o motivo real */
+      const motivo = (r && r.error) ? r.error : 'não foi possível excluir';
+      const det = (r && Array.isArray(r.detalhes) && r.detalhes.length) ? '\n\n' + r.detalhes.join('\n') : '';
+      msg.textContent = motivo;
+      alert('A conta NÃO foi excluída.\n\n' + motivo + det);
+    }
   });
 }
 

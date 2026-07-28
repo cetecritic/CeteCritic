@@ -379,30 +379,55 @@ async function handlePost(req, res) {
     }
     return res.status(200).json({ ok: true });
   }
+  /* mesmo tratamento do apiDeletarConta do db.js: filtro no servidor (o select('*')
+     sem filtro só traz 1000 linhas e deixava rastro pra FK barrar) + checagem de erro */
   if (action === 'deletarUsuario') {
     const alvo = String(body.alvo || ''); const nu = norm(alvo);
     if (!nu) return res.status(400).json({ ok: false, error: 'usuário inválido' });
-    const { data: subs } = await sb.from('submissions').select('row_id,usuario');
-    const meus = (subs || []).filter(r => norm(r.usuario) === nu).map(r => r.row_id);
-    if (meus.length) await sb.from('submissions').update({ usuario: null }).in('row_id', meus);
+
+    const avisos = [];
+    const anota = (etapa, error) => { if (error) avisos.push(etapa + ': ' + (error.message || String(error))); };
+
+    {
+      const { data, error } = await sb.from('submissions').select('row_id,usuario').ilike('usuario', alvo);
+      anota('ler submissions', error);
+      const ids = (data || []).filter(r => norm(r.usuario) === nu).map(r => r.row_id);
+      if (ids.length) { const { error: e2 } = await sb.from('submissions').update({ usuario: null }).in('row_id', ids); anota('anonimizar votos', e2); }
+    }
+
     const delWhere = async (table, cols) => {
-      const { data } = await sb.from(table).select('*');
-      const ids = (data || []).filter(r => cols.some(c => norm(r[c]) === nu)).map(r => r.id).filter(x => x != null);
-      if (ids.length) await sb.from(table).delete().in('id', ids);
+      const ids = new Set();
+      for (const c of cols) {
+        const { data, error } = await sb.from(table).select('*').ilike(c, alvo);
+        if (error) { anota('ler ' + table + '.' + c, error); continue; }
+        (data || []).forEach(r => { if (norm(r[c]) === nu && r.id != null) ids.add(r.id); });
+      }
+      if (ids.size) { const { error } = await sb.from(table).delete().in('id', [...ids]); anota('apagar ' + table, error); }
     };
-    await delWhere('carimbos', ['profile_user', 'from_user']);
-    await delWhere('visitas', ['profile_user', 'visitor_user']);
-    await delWhere('reputacao', ['profile_user', 'from_user']);
-    await delWhere('palpites', ['usuario']);
-    await delWhere('resets', ['usuario']);
+    await delWhere('carimbos',     ['profile_user', 'from_user']);
+    await delWhere('visitas',      ['profile_user', 'visitor_user']);
+    await delWhere('reputacao',    ['profile_user', 'from_user']);
+    await delWhere('palpites',     ['usuario']);
+    await delWhere('resets',       ['usuario']);
     await delWhere('notificacoes', ['usuario']);
-    const { data: pu } = await sb.from('push').select('endpoint,usuario');
-    const eps = (pu || []).filter(r => norm(r.usuario) === nu).map(r => r.endpoint);
-    if (eps.length) await sb.from('push').delete().in('endpoint', eps);
+    await delWhere('sessoes',      ['usuario']);
+
+    { const { error } = await sb.from('login_codes').delete().ilike('usuario', alvo); anota('apagar login_codes', error); }
+
+    {
+      const { data, error } = await sb.from('push').select('endpoint,usuario').ilike('usuario', alvo);
+      anota('ler push', error);
+      const eps = (data || []).filter(r => norm(r.usuario) === nu).map(r => r.endpoint);
+      if (eps.length) { const { error: e2 } = await sb.from('push').delete().in('endpoint', eps); anota('apagar push', e2); }
+    }
+
     const { data: us } = await sb.from('usuarios').select('usuario').ilike('usuario', alvo);
     const real = (us || []).find(r => norm(r.usuario) === nu);
-    if (real) await sb.from('usuarios').delete().eq('usuario', real.usuario);
-    return res.status(200).json({ ok: true });
+    if (real) {
+      const { error } = await sb.from('usuarios').delete().eq('usuario', real.usuario);
+      if (error) return res.status(500).json({ ok: false, error: 'não deu pra apagar o usuário — ' + (error.message || error), detalhes: avisos });
+    }
+    return res.status(200).json({ ok: true, avisos });
   }
 
   if (action === 'salvarConfig') {

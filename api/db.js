@@ -456,35 +456,73 @@ async function apiReputacao(body){
   return { ok:true, total, meu };
 }
 
+/* Apaga a conta de vez.
+   ATENÇÃO ao histórico deste trecho: a versão antiga fazia select('*') SEM filtro,
+   e o PostgREST corta em 1000 linhas — em tabelas grandes (visitas, notificacoes)
+   as linhas do usuário nem apareciam, a FK bloqueava o delete final em `usuarios`,
+   o erro era ignorado e a função devolvia ok:true com a conta ainda no banco.
+   Agora: filtro no servidor + checagem de erro em cada passo + confirmação no fim. */
 async function apiDeletarConta(body){
   const usuario = String(body.user||'');
   if(!(await verificarToken(usuario, body.token))) return { ok:false, error:'faça login' };
-  const nu = norm(usuario);
-  // anonimiza votos (zera usuario)
-  const { data: subs } = await sb.from('submissions').select('row_id,usuario');
-  const meus = (subs||[]).filter(r => norm(r.usuario)===nu).map(r => r.row_id);
-  if(meus.length) await sb.from('submissions').update({ usuario: null }).in('row_id', meus);
-  // remove rastros nas tabelas com PK 'id'
-  const delWhere = async (table, cols) => {
-    const { data } = await sb.from(table).select('*');
-    const ids = (data||[]).filter(r => cols.some(c => norm(r[c])===nu)).map(r => r.id).filter(x => x!=null);
-    if(ids.length) await sb.from(table).delete().in('id', ids);
-  };
-  await delWhere('carimbos', ['profile_user','from_user']);
-  await delWhere('visitas', ['profile_user','visitor_user']);
-  await delWhere('reputacao', ['profile_user','from_user']);
-  await delWhere('palpites', ['usuario']);
-  await delWhere('resets', ['usuario']);
-  await delWhere('notificacoes', ['usuario']);
-  await delWhere('sessoes', ['usuario']);
-  // push (chave é endpoint)
-  const { data: pu } = await sb.from('push').select('endpoint,usuario');
-  const eps = (pu||[]).filter(r => norm(r.usuario)===nu).map(r => r.endpoint);
-  if(eps.length) await sb.from('push').delete().in('endpoint', eps);
-  // usuário por último
   const u = await acharUsuario(usuario);
-  if(u) await sb.from('usuarios').delete().eq('usuario', u.usuario);
-  return { ok:true };
+  if(!u) return { ok:false, error:'usuário não encontrado' };
+  const nu = norm(usuario);
+
+  const avisos = [];
+  const anota = (etapa, error) => { if(error) avisos.push(etapa + ': ' + (error.message || String(error))); };
+
+  /* 1) anonimiza os votos (as médias das peças continuam) */
+  {
+    const { data, error } = await sb.from('submissions').select('row_id,usuario').ilike('usuario', usuario);
+    anota('ler submissions', error);
+    const ids = (data||[]).filter(r => norm(r.usuario)===nu).map(r => r.row_id);
+    if(ids.length){
+      const { error: e2 } = await sb.from('submissions').update({ usuario: null }).in('row_id', ids);
+      anota('anonimizar votos', e2);
+    }
+  }
+
+  /* 2) apaga os rastros — uma consulta FILTRADA por coluna */
+  const delWhere = async (table, cols) => {
+    const ids = new Set();
+    for(const c of cols){
+      const { data, error } = await sb.from(table).select('*').ilike(c, usuario);
+      if(error){ anota('ler ' + table + '.' + c, error); continue; }
+      (data||[]).forEach(r => { if(norm(r[c])===nu && r.id != null) ids.add(r.id); });
+    }
+    if(ids.size){
+      const { error } = await sb.from(table).delete().in('id', [...ids]);
+      anota('apagar ' + table, error);
+    }
+  };
+  await delWhere('carimbos',     ['profile_user','from_user']);
+  await delWhere('visitas',      ['profile_user','visitor_user']);
+  await delWhere('reputacao',    ['profile_user','from_user']);
+  await delWhere('palpites',     ['usuario']);
+  await delWhere('resets',       ['usuario']);
+  await delWhere('notificacoes', ['usuario']);
+  await delWhere('sessoes',      ['usuario']);
+
+  /* login_codes tem a PK na própria coluna usuario */
+  { const { error } = await sb.from('login_codes').delete().ilike('usuario', usuario); anota('apagar login_codes', error); }
+
+  /* push (a chave é o endpoint, não id) */
+  {
+    const { data, error } = await sb.from('push').select('endpoint,usuario').ilike('usuario', usuario);
+    anota('ler push', error);
+    const eps = (data||[]).filter(r => norm(r.usuario)===nu).map(r => r.endpoint);
+    if(eps.length){ const { error: e2 } = await sb.from('push').delete().in('endpoint', eps); anota('apagar push', e2); }
+  }
+
+  /* 3) o usuário por último — agora COM checagem de erro */
+  const { error: erroFinal } = await sb.from('usuarios').delete().eq('usuario', u.usuario);
+  if(erroFinal) return { ok:false, error:'não deu pra apagar a conta — ' + (erroFinal.message || erroFinal), detalhes: avisos };
+
+  /* 4) confirma que sumiu mesmo (nunca mais devolver ok:true sem checar) */
+  if(await acharUsuario(usuario)) return { ok:false, error:'a conta continua no banco (alguma tabela ainda referencia ela)', detalhes: avisos };
+
+  return { ok:true, avisos };
 }
 
 async function apiMeuPerfil(body){
