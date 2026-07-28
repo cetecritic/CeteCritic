@@ -5601,4 +5601,9 @@ function mostrarOnboarding(){
   if(btn) btn.addEventListener('click', fechar);
   ov.addEventListener('click', ev => { if(ev.target === ov) fechar(); });
 }
-try{ if(!localStorage.getItem('cc_onboarded')) mostrarOnboarding(); }catch(e){ /* modo privado sem storage: simplesmente não mostra */ }
+/* dispara só na HOME e DEPOIS que a página já pintou (não bloqueia o carregamento) */
+try{
+  if(PAGINA.tipo === 'home' && !localStorage.getItem('cc_onboarded')){
+    setTimeout(mostrarOnboarding, 500);
+  }
+}catch(e){ /* modo privado sem storage: simplesmente não mostra */ }

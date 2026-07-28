@@ -1189,7 +1189,7 @@ a.showcase-card:hover{ border-color: var(--gold); }
 /* --- Onboarding (Seção 6) --- */
 .onboarding-overlay{
   position:fixed; inset:0; z-index:9999; display:flex; align-items:center; justify-content:center;
-  background:rgba(6,7,9,.72); backdrop-filter:blur(4px); padding:20px;
+  background:rgba(6,7,9,.82); padding:20px;
   opacity:0; transition:opacity .25s ease;
 }
 .onboarding-overlay.show{ opacity:1; }
