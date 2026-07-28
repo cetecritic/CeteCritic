@@ -200,7 +200,8 @@ async function handleGet(req, res) {
       `const COOLDOWN_MINUTOS = ${JSON.stringify(cfg.COOLDOWN_MINUTOS != null ? cfg.COOLDOWN_MINUTOS : 5)};\n` +
       `const RODAPE = ${JSON.stringify(cfg.RODAPE || '')};\n` +
       `const VAPID_PUBLIC_KEY = ${JSON.stringify(cfg.VAPID_PUBLIC_KEY || '')};\n` +
-      `const CURIOSIDADES = ${JSON.stringify(curios)};\n`;
+      `const CURIOSIDADES = ${JSON.stringify(curios)};\n` +
+      `const FEED = ${JSON.stringify((Array.isArray(cfg.feed) ? cfg.feed : []).slice(0, 40))};\n`;
     return jsResp(res, js);
   }
 
@@ -407,6 +408,24 @@ async function handlePost(req, res) {
   if (action === 'salvarConfig') {
     const dados = (body.dados && typeof body.dados === 'object') ? body.dados : {};
     await sb.from('config_site').upsert({ id: 1, dados }, { onConflict: 'id' });
+    return res.status(200).json({ ok: true });
+  }
+
+  // ----- postar no FEED social (aparece na aba Social > Geral do perfil) -----
+  if (action === 'postarFeed') {
+    const cfg = await lerConfig();
+    const feed = Array.isArray(cfg.feed) ? cfg.feed : [];
+    const item = {
+      autor: String(body.autor || 'CETECritic').slice(0, 40),
+      emoji: String(body.emoji || '📣').slice(0, 4),
+      texto: String(body.texto || '').trim().slice(0, 300),
+      url: String(body.url || '').trim().slice(0, 300),
+      ts: Date.now()
+    };
+    if (!item.texto) return res.status(400).json({ ok: false, error: 'escreva o texto do post' });
+    feed.unshift(item);
+    const novo = Object.assign({}, cfg, { feed: feed.slice(0, 40) });
+    await sb.from('config_site').upsert({ id: 1, dados: novo }, { onConflict: 'id' });
     return res.status(200).json({ ok: true });
   }
 

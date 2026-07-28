@@ -1208,9 +1208,10 @@ a.showcase-card:hover{ border-color: var(--gold); }
 
 /* --- "Você sabia?" na Home (Seção 10) --- */
 .voce-sabia{
-  display:block; text-decoration:none; margin-bottom:18px; padding:16px 18px;
+  display:block; text-decoration:none; box-sizing:border-box;
+  width:100%; max-width:900px; padding:24px 26px; margin-bottom:24px; border-radius:10px;
   background:linear-gradient(135deg, rgba(245,197,24,.12), rgba(245,197,24,.03));
-  border:1px solid rgba(245,197,24,.4); border-radius:12px; transition:border-color .15s ease, transform .15s ease;
+  border:1px solid rgba(245,197,24,.4); transition:border-color .15s ease, transform .15s ease;
 }
 .voce-sabia:hover{ border-color:var(--gold); transform:translateY(-1px); }
 .voce-sabia .vs-badge{ display:inline-block; font-size:12px; font-weight:800; letter-spacing:.4px; color:var(--gold); text-transform:uppercase; margin-bottom:6px; }
@@ -1245,3 +1246,50 @@ a.showcase-card:hover{ border-color: var(--gold); }
 .perfil-tab:hover{ color:var(--text); }
 .perfil-tab.active{ color:var(--gold); border-bottom-color:var(--gold); }
 .social-sub{ margin-top:4px; margin-bottom:6px; }
+
+/* ---- cabeçalho do perfil: meta (amigos/reputação), barra XP menor, ícones ---- */
+.nivel-bar-wrap.slim{ height:6px; max-width:260px; margin-top:8px; }
+.perfil-meta{ display:flex; flex-wrap:wrap; gap:8px; margin-top:8px; }
+.perfil-meta-chip{
+  display:inline-flex; align-items:center; gap:5px;
+  background:var(--surface-2); border:1px solid var(--border); color:var(--text);
+  border-radius:999px; padding:5px 12px; font-size:12.5px; font-weight:600; font-family:inherit;
+}
+button.perfil-meta-chip{ cursor:pointer; transition:border-color .15s ease, color .15s ease; }
+button.perfil-meta-chip:hover{ border-color:var(--gold); color:var(--gold); }
+.perfil-meta-chip b{ font-weight:800; }
+.icon-btn{ padding:4px 9px; font-size:14px; line-height:1; }
+
+/* ---- painel de amigos (abre pelo chip do cabeçalho) ---- */
+.amigos-panel{
+  width:100%; max-width:900px; box-sizing:border-box;
+  background:var(--surface); border:1px solid var(--border); border-radius:10px;
+  padding:16px 18px; margin-bottom:20px;
+}
+.amigos-panel-head{ font-family:'Bebas Neue', sans-serif; font-size:18px; letter-spacing:.6px; color:var(--gold); margin-bottom:10px; }
+
+/* ---- feed social (bolinha + texto) ---- */
+.feed{ display:flex; flex-direction:column; gap:2px; }
+.feed-item{
+  display:flex; align-items:flex-start; gap:12px; text-decoration:none; color:inherit;
+  padding:12px 6px; border-bottom:1px solid var(--border);
+}
+.feed-item:last-child{ border-bottom:none; }
+a.feed-item:hover{ background:rgba(245,197,24,.05); }
+.feed-ava{
+  flex-shrink:0; width:38px; height:38px; border-radius:50%;
+  background:var(--surface-2); border:1px solid var(--border); color:var(--gold);
+  display:flex; align-items:center; justify-content:center; font-weight:800; font-size:16px;
+}
+.feed-body{ flex:1 1 auto; min-width:0; }
+.feed-text{ font-size:14px; line-height:1.45; color:var(--text); }
+.feed-when{ font-size:11px; color:var(--text-muted); margin-top:3px; }
+
+/* ---- mobile: cabeçalho e feed ---- */
+@media (max-width:860px){
+  .voce-sabia{ padding:18px 16px; }
+  .perfil-meta-chip{ font-size:12px; padding:5px 10px; }
+  .amigos-panel{ padding:14px 14px; }
+  .feed-ava{ width:34px; height:34px; font-size:15px; }
+  .feed-text{ font-size:13.5px; }
+}

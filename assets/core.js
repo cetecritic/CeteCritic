@@ -4285,26 +4285,41 @@ async function paginaPerfil(){
       <div class="perfil-head-info">
         <h1>${esc(alvoUser)} <span class="nivel-chip" id="nivelChip"></span> <span class="titulo-chip" id="tituloChip" style="display:none;"></span></h1>
         <div class="perfil-sub" id="perfilSub">Carregando...</div>
-        <div class="nivel-bar-wrap"><div class="nivel-bar" id="nivelBar"></div></div>
+        <div class="perfil-meta" id="perfilMeta">
+          <button class="perfil-meta-chip" type="button" id="chipAmigos" title="Ver amigos">👥 <b id="amigosCount">0</b> amigos</button>
+          <span class="perfil-meta-chip" id="chipRep" style="display:none;" title="Sua reputação">👍 <b id="repHeaderN">0</b> reputação</span>
+        </div>
+        <div class="nivel-bar-wrap slim"><div class="nivel-bar" id="nivelBar"></div></div>
         <div class="nivel-txt" id="nivelTxt"></div>
       </div>
       <div class="perfil-actions" id="perfilActions"></div>
     </div>
-    <div id="perfilShowcase"></div>
-    <div class="perfil-quick" id="perfilQuick">
-      <button class="pq-chip" type="button" id="pqAmigosBtn"><span id="pqAmigos">👥 Amigos</span></button>
+    <!-- painel de amigos: abre pelo chip 👥 do cabeçalho -->
+    <div class="amigos-panel" id="amigosPanel" style="display:none;">
+      <div class="amigos-panel-head">👥 Amigos</div>
+      <div id="amigosBox"><div class="empty-note">Carregando...</div></div>
+      <div id="amigosAdd"></div>
     </div>
+    <div id="perfilShowcase"></div>
     <div class="section" id="favSection">
-      <h2>❤️ Edições preferidas <button class="btn btn-ghost btn-mini" id="btnEditarFavs" style="display:none;">Editar</button></h2>
+      <h2>❤️ Edições preferidas <button class="btn btn-ghost btn-mini icon-btn" id="btnEditarFavs" title="Editar preferidas" style="display:none;">✏️</button></h2>
       <div id="favBox"><div class="empty-note">Carregando...</div></div>
     </div>
     <div class="hall-cards" id="perfilStats"></div>
 
-    <!-- abas do perfil (Plano de Ação, Seção 7): Atividade / Social / Badges.
-         A Página Principal acima (destaques, preferidas, stats) fica sempre visível. -->
+    <!-- comparação (só faz sentido ao visitar OUTRO perfil) -->
+    <div class="section" id="compareSection" style="display:none;"><h2>🔗 Comparação</h2><div id="compareBox"></div></div>
+    <!-- carimbos: dar/ver ao visitar OUTRO perfil (no seu, aparecem no feed Amigos) -->
+    <div class="section" id="carimbosSection" style="display:none;">
+      <h2>🏷️ Carimbos <button class="ajuda-btn" id="carimboAjuda" title="O que são os carimbos?">?</button></h2>
+      <div class="carimbo-legenda" id="carimboLegenda" style="display:none;"></div>
+      <div id="carimbosBox"><div class="empty-note">Carregando...</div></div>
+    </div>
+
+    <!-- abas do perfil (Plano de Ação, Seção 7): Atividade / Social / Badges. -->
     <div class="perfil-tabs" id="perfilTabs">
       <button class="perfil-tab active" type="button" data-aba="abaAtividade">📝 Atividade</button>
-      <button class="perfil-tab" type="button" data-aba="abaSocial">👥 Social</button>
+      <button class="perfil-tab" type="button" data-aba="abaSocial" id="tabSocialBtn">💬 Social</button>
       <button class="perfil-tab" type="button" data-aba="abaBadges">🏅 Badges</button>
     </div>
 
@@ -4323,27 +4338,16 @@ async function paginaPerfil(){
     </div>
 
     <div class="perfil-aba" id="abaSocial" style="display:none;">
-      <!-- sub-divisão da aba Social: Amigos (rede pessoal) x Geral (comunidade) -->
+      <!-- feed social: Amigos (rede pessoal) x Geral (comunidade). Só no próprio perfil. -->
       <div class="rev-tabs social-sub">
         <button class="rev-tab active" type="button" id="socialTabAmigos" data-sub="socialAmigos">👥 Amigos</button>
         <button class="rev-tab" type="button" id="socialTabGeral" data-sub="socialGeral">🌐 Geral</button>
       </div>
-
       <div class="social-sub-pane" id="socialAmigos">
-        <div class="section" id="amigosSection"><h2>👥 Amigos <span class="badge-count" id="amigosCount"></span></h2>
-          <div id="amigosBox"><div class="empty-note">Carregando...</div></div>
-          <div id="amigosAdd"></div></div>
+        <div class="feed" id="feedAmigos"><div class="empty-note">Carregando...</div></div>
       </div>
-
       <div class="social-sub-pane" id="socialGeral" style="display:none;">
-        <div class="section" id="compareSection" style="display:none;"><h2>🔗 Comparação</h2><div id="compareBox"></div></div>
-        <div class="section">
-          <h2>🏷️ Carimbos <button class="ajuda-btn" id="carimboAjuda" title="O que são os carimbos?">?</button></h2>
-          <div class="carimbo-legenda" id="carimboLegenda" style="display:none;"></div>
-          <div id="carimbosBox"><div class="empty-note">Carregando...</div></div>
-        </div>
-        <div class="section"><h2>👀 Visitantes <span class="badge-count" id="visitasCount"></span></h2>
-          <div id="visitantesBox"><div class="empty-note">Carregando...</div></div></div>
+        <div class="feed" id="feedGeral"><div class="empty-note">Carregando...</div></div>
       </div>
     </div>
 
@@ -4370,7 +4374,7 @@ async function paginaPerfil(){
       <button class="btn btn-ghost" id="btnAddFriend">➕ Amigo</button>
       <button class="btn btn-solid" id="btnCompare">🔗 Compare</button>`;
   } else if(actEl && ehMeu){
-    actEl.innerHTML = `<button class="btn btn-ghost" id="btnEditarShowcase">✏️ Editar destaques</button>`;
+    actEl.innerHTML = `<button class="btn btn-ghost icon-btn" id="btnEditarShowcase" title="Editar destaques">✏️</button>`;
   }
 
   /* ---- reputação (karma): estado + UI ---- */
@@ -4378,6 +4382,9 @@ async function paginaPerfil(){
   function atualizarRepUI(){
     const c = document.getElementById('repCount');
     if(c) c.textContent = (repTotal === null ? '–' : repTotal);
+    /* reputação também visível no cabeçalho do PRÓPRIO perfil */
+    const rh = document.getElementById('repHeaderN'); if(rh) rh.textContent = (repTotal === null ? 0 : repTotal);
+    const cr = document.getElementById('chipRep'); if(cr && ehMeu) cr.style.display = '';
     const up = document.getElementById('repUp'), dn = document.getElementById('repDown');
     if(up) up.classList.toggle('ativo', repMeu === 1);
     if(dn) dn.classList.toggle('ativo', repMeu === -1);
@@ -4485,11 +4492,11 @@ async function paginaPerfil(){
     /* header + nível */
     const chip = document.getElementById('nivelChip'); if(chip) chip.textContent = `Nível ${nivel.nivel}`;
     const nbar = document.getElementById('nivelBar'); if(nbar) nbar.style.width = nivel.pct + '%';
-    const ntxt = document.getElementById('nivelTxt'); if(ntxt) ntxt.textContent = `${nivel.xp} XP · faltam ${nivel.faltamXp} XP para o nível ${nivel.nivel + 1} (cada episódio avaliado = ${XP_POR_EPISODIO} XP)`;
+    const ntxt = document.getElementById('nivelTxt'); if(ntxt) ntxt.textContent = `${nivel.xp} XP · faltam ${nivel.faltamXp} XP para o nível ${nivel.nivel + 1}`;
     const subEl = document.getElementById('perfilSub');
     if(subEl) subEl.textContent = alvoSubs.length
       ? `${alvoSubs.length} avaliaç${alvoSubs.length === 1 ? 'ão' : 'ões'} · ${anosPart.length} ediç${anosPart.length === 1 ? 'ão' : 'ões'} · membro desde ${new Date(Math.min(...alvoSubs.map(s => Number(s.ts)))).toLocaleDateString('pt-BR')}`
-      : (ehMeu ? 'Você ainda não enviou nenhuma avaliação logado. Vá a uma edição e avalie!' : 'Ainda não tem avaliações públicas.');
+      : (ehMeu ? '' : 'Ainda não tem avaliações públicas.');
 
     /* ---- cartões de estatística ---- */
     const cards = [
@@ -4518,15 +4525,14 @@ async function paginaPerfil(){
     renderAmigos(perfilCfg.amigos || []);
     montarAmigosAdd();
     renderCarimbos(pub.carimbos || []);
-    renderVisitantes(pub.visitas || [], pub.totalVisitas || 0);
+    if(ehMeu) montarFeeds(todosSubs, perfilCfg, pub);
 
     /* reputação (karma) + título */
     if(typeof pub.reputacao === 'number') repTotal = pub.reputacao; else if(repTotal === null) repTotal = 0;
     if(typeof pub.meuVoto === 'number') repMeu = pub.meuVoto;
     atualizarRepUI();
 
-    /* registra a visita (1x) quando estou vendo o perfil de outra pessoa */
-    if(!ehMeu && meuSess && !visitaRegistrada){ visitaRegistrada = true; apiRegistrarVisita(alvoUser); }
+    /* (função de visitas removida do perfil) */
 
     /* ---- estatísticas por episódio / edição (para badges) ---- */
     const epStats = {};
@@ -4776,8 +4782,7 @@ async function paginaPerfil(){
   /* ---- amigos ---- */
   function renderAmigos(lista){
     const arr = (Array.isArray(lista) ? lista : []).filter(Boolean);
-    const cnt = document.getElementById('amigosCount'); if(cnt) cnt.textContent = arr.length ? String(arr.length) : '';
-    const pq = document.getElementById('pqAmigos'); if(pq) pq.textContent = arr.length ? `👥 ${arr.length} ${arr.length === 1 ? 'amigo' : 'amigos'}` : '👥 Amigos';
+    const cnt = document.getElementById('amigosCount'); if(cnt) cnt.textContent = String(arr.length);
     const box = document.getElementById('amigosBox');
     if(!box) return;
     box.innerHTML = arr.length
@@ -4935,15 +4940,49 @@ async function paginaPerfil(){
     }
   }
 
-  /* ---- visitantes ---- */
-  function renderVisitantes(lista, total){
-    const cnt = document.getElementById('visitasCount'); if(cnt) cnt.textContent = `${total} visita${total === 1 ? '' : 's'}`;
-    const box = document.getElementById('visitantesBox');
-    if(!box) return;
-    if(!lista.length){ box.innerHTML = '<div class="empty-note">Nenhuma visita ainda.</div>'; return; }
-    const recentes = [...lista].sort((a,b) => Number(b.ts) - Number(a.ts)).slice(0, 12);
-    box.innerHTML = `<div class="visit-list">${recentes.map(v =>
-      `<a class="visit-chip" href="${BASE}perfil.html?user=${encodeURIComponent(v.visitor)}"><span class="visit-ava">${esc(String(v.visitor).slice(0,1).toUpperCase())}</span>${esc(v.visitor)} <span class="visit-when">${tempoAtras(Number(v.ts))}</span></a>`).join('')}</div>`;
+  /* ---- FEED SOCIAL (só no meu perfil) ----
+     Amigos: ações da minha rede (reviews de amigos, carimbos que recebi).
+     Geral: novidades da comunidade (posts do admin/CETECritic + reviews recentes). */
+  function feedItemHtml(it){
+    const letra = esc(String(it.nome || '?').slice(0,1).toUpperCase());
+    const quando = it.ts ? tempoAtras(Number(it.ts)) : '';
+    const corpo = `<div class="feed-ava">${letra}</div><div class="feed-body"><div class="feed-text">${it.html || esc(it.texto || '')}</div>${quando ? `<div class="feed-when">${quando}</div>` : ''}</div>`;
+    return it.url ? `<a class="feed-item" href="${esc(it.url)}">${corpo}</a>` : `<div class="feed-item">${corpo}</div>`;
+  }
+  function montarFeeds(todosSubs, perfilCfg, pub){
+    /* ---- GERAL ---- */
+    const geral = [];
+    const feedAdmin = (typeof FEED !== 'undefined' && Array.isArray(FEED)) ? FEED : [];
+    feedAdmin.forEach(f => geral.push({
+      nome: f.autor || 'CETECritic', ts: f.ts, url: f.url || '',
+      html: `<b>${esc(f.autor || 'CETECritic')}</b> ${esc(f.emoji || '')} ${esc(f.texto || '')}`
+    }));
+    todosSubs
+      .filter(s => { const u = String(s.user || '').trim(); return u && u.toLowerCase() !== alvo; })
+      .sort((a,b) => Number(b.ts) - Number(a.ts)).slice(0, 25)
+      .forEach(s => geral.push({ nome: s.user, ts: s.ts, url: `${BASE}${s.year}/index.html`,
+        html: `<b>${esc(s.user)}</b> avaliou o <b>Cetec Festival ${s.year}</b>` }));
+    geral.sort((a,b) => Number(b.ts || 0) - Number(a.ts || 0));
+    const bg = document.getElementById('feedGeral');
+    if(bg) bg.innerHTML = geral.length ? geral.slice(0, 40).map(feedItemHtml).join('')
+      : '<div class="empty-note">Sem novidades por enquanto. Volte depois — o feed enche conforme a comunidade se movimenta.</div>';
+
+    /* ---- AMIGOS ---- */
+    const amigos = new Set((Array.isArray(perfilCfg.amigos) ? perfilCfg.amigos : []).map(a => String(a).trim().toLowerCase()));
+    const amig = [];
+    todosSubs
+      .filter(s => amigos.has(String(s.user || '').trim().toLowerCase()))
+      .forEach(s => amig.push({ nome: s.user, ts: s.ts, url: `${BASE}${s.year}/index.html`,
+        html: `<b>${esc(s.user)}</b> avaliou o <b>Cetec Festival ${s.year}</b>` }));
+    (pub.carimbos || []).forEach(c => {
+      const cr = (typeof CARIMBOS !== 'undefined' && CARIMBOS[c.tipo]) ? CARIMBOS[c.tipo] : { emoji:'🏷️', nome:c.tipo };
+      amig.push({ nome: c.from, ts: c.ts, url: `${BASE}perfil.html?user=${encodeURIComponent(c.from)}`,
+        html: `<b>${esc(c.from)}</b> te deu o carimbo ${cr.emoji} <b>${esc(cr.nome)}</b>` });
+    });
+    amig.sort((a,b) => Number(b.ts || 0) - Number(a.ts || 0));
+    const ba = document.getElementById('feedAmigos');
+    if(ba) ba.innerHTML = amig.length ? amig.slice(0, 40).map(feedItemHtml).join('')
+      : '<div class="empty-note">Sem atividade de amigos ainda. Adicione amigos pelo 👥 do topo ou pelo perfil deles.</div>';
   }
 
   /* botão editar destaques (meu perfil) */
@@ -4957,11 +4996,6 @@ async function paginaPerfil(){
   /* botão compare (perfil de outra pessoa) */
   const btnCompare = document.getElementById('btnCompare');
   if(btnCompare) btnCompare.addEventListener('click', () => {
-    /* comparação vive na aba Social › sub-aba Geral: garante que estejam visíveis */
-    document.querySelectorAll('.perfil-tab').forEach(x => x.classList.toggle('active', x.dataset.aba === 'abaSocial'));
-    document.querySelectorAll('.perfil-aba').forEach(p => p.style.display = (p.id === 'abaSocial') ? '' : 'none');
-    document.querySelectorAll('.social-sub .rev-tab').forEach(x => x.classList.toggle('active', x.dataset.sub === 'socialGeral'));
-    document.querySelectorAll('.social-sub-pane').forEach(p => p.style.display = (p.id === 'socialGeral') ? '' : 'none');
     const sec = document.getElementById('compareSection');
     const box = document.getElementById('compareBox');
     const meus = carregar._minhasSubs || [];
@@ -5009,14 +5043,20 @@ async function paginaPerfil(){
   }
   document.querySelectorAll('.social-sub .rev-tab').forEach(t => t.addEventListener('click', () => trocarSubSocial(t.dataset.sub)));
 
-  /* chip "Amigos" da Página Principal → abre a aba Social na sub-aba Amigos (CTA da Seção 7.1) */
-  const pqAmigosBtn = document.getElementById('pqAmigosBtn');
-  if(pqAmigosBtn) pqAmigosBtn.addEventListener('click', () => {
-    trocarAba('abaSocial');
-    trocarSubSocial('socialAmigos');
-    const sec = document.getElementById('amigosSection');
-    if(sec) sec.scrollIntoView({ behavior:'smooth', block:'start' });
+  /* chip "amigos" do cabeçalho → abre/fecha o painel de amigos */
+  const chipAmigos = document.getElementById('chipAmigos');
+  if(chipAmigos) chipAmigos.addEventListener('click', () => {
+    const p = document.getElementById('amigosPanel');
+    if(p) p.style.display = (!p.style.display || p.style.display === 'none') ? 'block' : 'none';
   });
+  /* visibilidade por tipo de perfil: feed Social só no MEU; carimbos só em OUTROS */
+  if(ehMeu){
+    const cs = document.getElementById('carimbosSection'); if(cs) cs.style.display = 'none';
+  } else {
+    const tb = document.getElementById('tabSocialBtn'); if(tb) tb.style.display = 'none';
+    const ab = document.getElementById('abaSocial'); if(ab) ab.style.display = 'none';
+    const cs = document.getElementById('carimbosSection'); if(cs) cs.style.display = '';
+  }
 
   carregar();
   setInterval(carregar, 30000);

@@ -72,6 +72,7 @@
       <a href="#secEdicoes">🎬 Edições</a>
       <a href="#secAgendar">⏰ Agendar</a>
       <a href="#secNotif">🔔 Notificação</a>
+      <a href="#secFeed">📰 Feed</a>
       <a href="#secBanners">📢 Banners</a>
       <a href="#secUsuarios">👥 Usuários</a>
       <a href="#secVotos">🗑️ Excluir notas</a>
@@ -220,6 +221,20 @@
       <label style="margin-top:10px;"><input type="checkbox" id="ntPush" style="width:auto;"> Também enviar push (aparelho)</label>
       <div class="toolbar"><button id="btnEnviarNotif">Enviar</button></div>
       <div class="msg" id="ntMsg"></div>
+    </div>
+
+    <!-- ADICIONAR AO FEED -->
+    <div class="card" id="secFeed">
+      <h2>📰 Adicionar ao feed</h2>
+      <p class="sub" style="margin:0 0 12px;">Posta na aba <b>Social › Geral</b> dos perfis, como se o CETECritic tivesse publicado. Ótimo pra "nova noite liberada", "vídeos no ar", recordes e avisos da comunidade.</p>
+      <div class="row2">
+        <div><label>Autor (quem aparece postando)</label><input id="fdAutor" type="text" placeholder="CETECritic"></div>
+        <div><label>Emoji</label><input id="fdEmoji" type="text" placeholder="📣" maxlength="4"></div>
+      </div>
+      <label>Texto do post</label><input id="fdTexto" type="text" placeholder="ex: As noites de 2026 já estão no ar!">
+      <label>Link ao clicar (opcional)</label><input id="fdUrl" type="text" placeholder="/2026/noite-1.html">
+      <div class="toolbar"><button id="btnPostarFeed">Postar no feed</button></div>
+      <div class="msg" id="fdMsg"></div>
     </div>
 
     <!-- AGENDAR -->
@@ -937,6 +952,16 @@ $('btnEnviarNotif').addEventListener('click', async () => {
   const r = await post('enviarNotif', { alvoTipo, alvo, titulo, corpo, url: $('ntUrl').value.trim() || '/index.html', push: $('ntPush').checked });
   if(r && r.ok){ $('ntMsg').textContent = 'Enviado pra ' + r.alvos + ' usuário(s)' + ($('ntPush').checked ? (' · push: ' + r.pushEnviados) : '') + ' ✓'; $('ntTitulo').value=''; $('ntCorpo').value=''; $('ntUrl').value=''; }
   else $('ntMsg').textContent = 'Erro: ' + ((r&&r.error)||'');
+});
+
+/* ---------- ADICIONAR AO FEED ---------- */
+$('btnPostarFeed').addEventListener('click', async () => {
+  const texto = $('fdTexto').value.trim();
+  if(!texto){ $('fdMsg').textContent = 'Escreva o texto do post.'; return; }
+  $('fdMsg').textContent = 'Postando…';
+  const r = await post('postarFeed', { autor: $('fdAutor').value.trim() || 'CETECritic', emoji: $('fdEmoji').value.trim() || '📣', texto, url: $('fdUrl').value.trim() });
+  if(r && r.ok){ $('fdMsg').textContent = 'Postado no feed ✓'; $('fdTexto').value=''; $('fdUrl').value=''; }
+  else $('fdMsg').textContent = 'Erro: ' + ((r&&r.error)||'');
 });
 
 /* ---------- BUSCA (edições + peças -> abre no editor) ---------- */
