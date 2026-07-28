@@ -179,6 +179,7 @@
           <input type="file" accept="image/*" id="edSobreFile" style="margin-top:6px;"><span class="msg" id="edSobreMsg"></span></div>
       </div>
       <label>Sobre — texto</label><textarea id="edSobreTexto"></textarea>
+      <label>Curiosidades e Contexto (3ª coluna do "Resumo Rápido": recordes, maior média da década, adiamentos, contexto histórico…)</label><textarea id="edSobreContexto"></textarea>
       <label>Abertura — texto</label><textarea id="edAberturaTexto"></textarea>
       <label>Abertura — Spotify (embed src)</label><input id="edAberturaSpotify" type="text">
 
@@ -681,7 +682,7 @@ function preencherEditor(e, noites, pecas){
   $('edEps').value = e.episodios_por_noite || 3; $('edInicio').value = e.inicio || ''; $('edFim').value = e.fim_votacao || '';
   $('edPoster').value = e.poster || ''; $('edMensagemFim').value = e.mensagem_fim || '';
   const sobre = e.sobre || {}, abertura = e.abertura || {};
-  $('edSobreTitulo').value = sobre.titulo || ''; $('edSobreBanner').value = sobre.banner || ''; $('edSobreTexto').value = sobre.texto || '';
+  $('edSobreTitulo').value = sobre.titulo || ''; $('edSobreBanner').value = sobre.banner || ''; $('edSobreTexto').value = sobre.texto || ''; $('edSobreContexto').value = sobre.contexto || '';
   $('edAberturaTexto').value = abertura.texto || ''; $('edAberturaSpotify').value = abertura.spotify || '';
   // noites
   const nmap = {}; noites.forEach(nd => nmap[nd.noite] = { data:nd.data, subtitulo:nd.subtitulo, pecas:[] });
@@ -815,7 +816,7 @@ $('btnSalvarEdicao').addEventListener('click', async () => {
     titulo: $('edTitulo').value.trim(), descricao: $('edDescricao').value.trim(),
     episodios_por_noite: Number($('edEps').value) || 3, inicio: $('edInicio').value.trim() || null, fim_votacao: $('edFim').value.trim() || null,
     poster: $('edPoster').value.trim() || null, mensagem_fim: $('edMensagemFim').value.trim() || null,
-    sobre: { titulo: $('edSobreTitulo').value.trim(), banner: $('edSobreBanner').value.trim(), texto: $('edSobreTexto').value.trim() },
+    sobre: { titulo: $('edSobreTitulo').value.trim(), banner: $('edSobreBanner').value.trim(), texto: $('edSobreTexto').value.trim(), contexto: $('edSobreContexto').value.trim() },
     abertura: { texto: $('edAberturaTexto').value.trim(), spotify: $('edAberturaSpotify').value.trim() }
   };
   $('edMsg').textContent = 'Salvando…';

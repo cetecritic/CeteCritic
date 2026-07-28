@@ -1,0 +1,11 @@
+User-agent: *
+Allow: /
+
+# Páginas internas/administrativas não devem ser indexadas
+Disallow: /admin.html
+Disallow: /enviar-push.html
+Disallow: /redefinir-senha.html
+Disallow: /configuracoes.html
+Disallow: /notificacoes.html
+
+Sitemap: https://cetecritic.xyz/sitemap.xml

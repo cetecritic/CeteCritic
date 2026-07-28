@@ -1,0 +1,78 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">
+
+  <url><loc>https://cetecritic.xyz/</loc><changefreq>weekly</changefreq><priority>1.0</priority></url>
+  <url><loc>https://cetecritic.xyz/hall.html</loc><changefreq>weekly</changefreq><priority>0.9</priority></url>
+  <url><loc>https://cetecritic.xyz/busca.html</loc><changefreq>monthly</changefreq><priority>0.6</priority></url>
+
+  <!-- 2020 -->
+  <url><loc>https://cetecritic.xyz/2020</loc><changefreq>monthly</changefreq><priority>0.8</priority></url>
+  <url><loc>https://cetecritic.xyz/2020/sobre.html</loc><changefreq>yearly</changefreq><priority>0.6</priority></url>
+  <url><loc>https://cetecritic.xyz/2020/abertura.html</loc><changefreq>yearly</changefreq><priority>0.5</priority></url>
+  <url><loc>https://cetecritic.xyz/2020/noite-1.html</loc><changefreq>yearly</changefreq><priority>0.5</priority></url>
+  <url><loc>https://cetecritic.xyz/2020/noite-2.html</loc><changefreq>yearly</changefreq><priority>0.5</priority></url>
+  <url><loc>https://cetecritic.xyz/2020/noite-3.html</loc><changefreq>yearly</changefreq><priority>0.5</priority></url>
+  <url><loc>https://cetecritic.xyz/2020/noite-4.html</loc><changefreq>yearly</changefreq><priority>0.5</priority></url>
+  <url><loc>https://cetecritic.xyz/2020/noite-5.html</loc><changefreq>yearly</changefreq><priority>0.5</priority></url>
+
+  <!-- 2021 -->
+  <url><loc>https://cetecritic.xyz/2021</loc><changefreq>monthly</changefreq><priority>0.8</priority></url>
+  <url><loc>https://cetecritic.xyz/2021/sobre.html</loc><changefreq>yearly</changefreq><priority>0.6</priority></url>
+  <url><loc>https://cetecritic.xyz/2021/abertura.html</loc><changefreq>yearly</changefreq><priority>0.5</priority></url>
+  <url><loc>https://cetecritic.xyz/2021/noite-1.html</loc><changefreq>yearly</changefreq><priority>0.5</priority></url>
+  <url><loc>https://cetecritic.xyz/2021/noite-2.html</loc><changefreq>yearly</changefreq><priority>0.5</priority></url>
+  <url><loc>https://cetecritic.xyz/2021/noite-3.html</loc><changefreq>yearly</changefreq><priority>0.5</priority></url>
+  <url><loc>https://cetecritic.xyz/2021/noite-4.html</loc><changefreq>yearly</changefreq><priority>0.5</priority></url>
+  <url><loc>https://cetecritic.xyz/2021/noite-5.html</loc><changefreq>yearly</changefreq><priority>0.5</priority></url>
+
+  <!-- 2022 -->
+  <url><loc>https://cetecritic.xyz/2022</loc><changefreq>monthly</changefreq><priority>0.8</priority></url>
+  <url><loc>https://cetecritic.xyz/2022/sobre.html</loc><changefreq>yearly</changefreq><priority>0.6</priority></url>
+  <url><loc>https://cetecritic.xyz/2022/abertura.html</loc><changefreq>yearly</changefreq><priority>0.5</priority></url>
+  <url><loc>https://cetecritic.xyz/2022/noite-1.html</loc><changefreq>yearly</changefreq><priority>0.5</priority></url>
+  <url><loc>https://cetecritic.xyz/2022/noite-2.html</loc><changefreq>yearly</changefreq><priority>0.5</priority></url>
+  <url><loc>https://cetecritic.xyz/2022/noite-3.html</loc><changefreq>yearly</changefreq><priority>0.5</priority></url>
+  <url><loc>https://cetecritic.xyz/2022/noite-4.html</loc><changefreq>yearly</changefreq><priority>0.5</priority></url>
+  <url><loc>https://cetecritic.xyz/2022/noite-5.html</loc><changefreq>yearly</changefreq><priority>0.5</priority></url>
+
+  <!-- 2023 -->
+  <url><loc>https://cetecritic.xyz/2023</loc><changefreq>monthly</changefreq><priority>0.8</priority></url>
+  <url><loc>https://cetecritic.xyz/2023/sobre.html</loc><changefreq>yearly</changefreq><priority>0.6</priority></url>
+  <url><loc>https://cetecritic.xyz/2023/abertura.html</loc><changefreq>yearly</changefreq><priority>0.5</priority></url>
+  <url><loc>https://cetecritic.xyz/2023/noite-1.html</loc><changefreq>yearly</changefreq><priority>0.5</priority></url>
+  <url><loc>https://cetecritic.xyz/2023/noite-2.html</loc><changefreq>yearly</changefreq><priority>0.5</priority></url>
+  <url><loc>https://cetecritic.xyz/2023/noite-3.html</loc><changefreq>yearly</changefreq><priority>0.5</priority></url>
+  <url><loc>https://cetecritic.xyz/2023/noite-4.html</loc><changefreq>yearly</changefreq><priority>0.5</priority></url>
+  <url><loc>https://cetecritic.xyz/2023/noite-5.html</loc><changefreq>yearly</changefreq><priority>0.5</priority></url>
+
+  <!-- 2024 -->
+  <url><loc>https://cetecritic.xyz/2024</loc><changefreq>monthly</changefreq><priority>0.8</priority></url>
+  <url><loc>https://cetecritic.xyz/2024/sobre.html</loc><changefreq>yearly</changefreq><priority>0.6</priority></url>
+  <url><loc>https://cetecritic.xyz/2024/abertura.html</loc><changefreq>yearly</changefreq><priority>0.5</priority></url>
+  <url><loc>https://cetecritic.xyz/2024/noite-1.html</loc><changefreq>yearly</changefreq><priority>0.5</priority></url>
+  <url><loc>https://cetecritic.xyz/2024/noite-2.html</loc><changefreq>yearly</changefreq><priority>0.5</priority></url>
+  <url><loc>https://cetecritic.xyz/2024/noite-3.html</loc><changefreq>yearly</changefreq><priority>0.5</priority></url>
+  <url><loc>https://cetecritic.xyz/2024/noite-4.html</loc><changefreq>yearly</changefreq><priority>0.5</priority></url>
+  <url><loc>https://cetecritic.xyz/2024/noite-5.html</loc><changefreq>yearly</changefreq><priority>0.5</priority></url>
+
+  <!-- 2025 -->
+  <url><loc>https://cetecritic.xyz/2025</loc><changefreq>monthly</changefreq><priority>0.8</priority></url>
+  <url><loc>https://cetecritic.xyz/2025/sobre.html</loc><changefreq>yearly</changefreq><priority>0.6</priority></url>
+  <url><loc>https://cetecritic.xyz/2025/abertura.html</loc><changefreq>yearly</changefreq><priority>0.5</priority></url>
+  <url><loc>https://cetecritic.xyz/2025/noite-1.html</loc><changefreq>yearly</changefreq><priority>0.5</priority></url>
+  <url><loc>https://cetecritic.xyz/2025/noite-2.html</loc><changefreq>yearly</changefreq><priority>0.5</priority></url>
+  <url><loc>https://cetecritic.xyz/2025/noite-3.html</loc><changefreq>yearly</changefreq><priority>0.5</priority></url>
+  <url><loc>https://cetecritic.xyz/2025/noite-4.html</loc><changefreq>yearly</changefreq><priority>0.5</priority></url>
+  <url><loc>https://cetecritic.xyz/2025/noite-5.html</loc><changefreq>yearly</changefreq><priority>0.5</priority></url>
+
+  <!-- 2026 (edição em destaque) -->
+  <url><loc>https://cetecritic.xyz/2026</loc><changefreq>daily</changefreq><priority>0.9</priority></url>
+  <url><loc>https://cetecritic.xyz/2026/sobre.html</loc><changefreq>weekly</changefreq><priority>0.6</priority></url>
+  <url><loc>https://cetecritic.xyz/2026/abertura.html</loc><changefreq>weekly</changefreq><priority>0.5</priority></url>
+  <url><loc>https://cetecritic.xyz/2026/noite-1.html</loc><changefreq>weekly</changefreq><priority>0.6</priority></url>
+  <url><loc>https://cetecritic.xyz/2026/noite-2.html</loc><changefreq>weekly</changefreq><priority>0.6</priority></url>
+  <url><loc>https://cetecritic.xyz/2026/noite-3.html</loc><changefreq>weekly</changefreq><priority>0.6</priority></url>
+  <url><loc>https://cetecritic.xyz/2026/noite-4.html</loc><changefreq>weekly</changefreq><priority>0.6</priority></url>
+  <url><loc>https://cetecritic.xyz/2026/noite-5.html</loc><changefreq>weekly</changefreq><priority>0.6</priority></url>
+
+</urlset>

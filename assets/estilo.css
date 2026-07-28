@@ -1180,3 +1180,68 @@ a.showcase-card:hover{ border-color: var(--gold); }
 .push-reativar .pr-ok:disabled{ opacity:.6; cursor:default; }
 .push-reativar .pr-x{ background:transparent; border:0; color:var(--text-muted); font-size:18px; cursor:pointer; line-height:1; padding:2px 6px; }
 .push-reativar .pr-x:hover{ color:var(--text); }
+
+/* =====================================================================
+   PLANO DE AÇÃO V1.0 — refinamentos (onboarding, "Você sabia?", Resumo
+   Rápido das edições, perfil em abas). Adicionado sem alterar o resto.
+   ===================================================================== */
+
+/* --- Onboarding (Seção 6) --- */
+.onboarding-overlay{
+  position:fixed; inset:0; z-index:9999; display:flex; align-items:center; justify-content:center;
+  background:rgba(6,7,9,.72); backdrop-filter:blur(4px); padding:20px;
+  opacity:0; transition:opacity .25s ease;
+}
+.onboarding-overlay.show{ opacity:1; }
+.onboarding-card{
+  width:100%; max-width:440px; background:var(--surface); border:1px solid var(--border);
+  border-top:3px solid var(--gold); border-radius:16px; padding:28px 24px; text-align:center;
+  box-shadow:0 20px 60px rgba(0,0,0,.5); transform:translateY(14px); transition:transform .25s ease;
+}
+.onboarding-overlay.show .onboarding-card{ transform:translateY(0); }
+.onboarding-logo{ width:96px; height:auto; margin:0 auto 14px; display:block; }
+.onboarding-card h2{ color:var(--gold); font-size:22px; margin:0 0 10px; }
+.onboarding-lead{ color:var(--text-muted); font-size:14px; line-height:1.55; margin:0 0 18px; }
+.onboarding-list{ list-style:none; padding:0; margin:0 0 22px; text-align:left; display:grid; gap:10px; }
+.onboarding-list li{ background:var(--surface-2); border:1px solid var(--border); border-radius:10px; padding:11px 13px; font-size:14px; color:var(--text); }
+.onboarding-btn{ width:100%; }
+
+/* --- "Você sabia?" na Home (Seção 10) --- */
+.voce-sabia{
+  display:block; text-decoration:none; margin-bottom:18px; padding:16px 18px;
+  background:linear-gradient(135deg, rgba(245,197,24,.12), rgba(245,197,24,.03));
+  border:1px solid rgba(245,197,24,.4); border-radius:12px; transition:border-color .15s ease, transform .15s ease;
+}
+.voce-sabia:hover{ border-color:var(--gold); transform:translateY(-1px); }
+.voce-sabia .vs-badge{ display:inline-block; font-size:12px; font-weight:800; letter-spacing:.4px; color:var(--gold); text-transform:uppercase; margin-bottom:6px; }
+.voce-sabia .vs-txt{ display:block; color:var(--text); font-size:15px; line-height:1.5; }
+.voce-sabia .vs-cta{ display:block; margin-top:8px; font-size:13px; font-weight:700; color:var(--gold); }
+
+/* --- Resumo Rápido das edições (Seção 8): 3 colunas --- */
+.resumo-cols{ display:grid; grid-template-columns:repeat(3, 1fr); gap:16px; align-items:start; }
+.resumo-col{ height:100%; }
+.resumo-col-head{ font-family:'Bebas Neue', sans-serif; letter-spacing:.8px; font-size:15px; color:var(--gold); text-transform:uppercase; margin-bottom:12px; padding-bottom:8px; border-bottom:1px solid var(--border); }
+.resumo-curios{ margin:0; padding-left:18px; color:var(--text); font-size:14px; line-height:1.55; }
+.resumo-curios li{ margin-bottom:8px; }
+@media (max-width:860px){ .resumo-cols{ grid-template-columns:1fr; } }
+
+/* --- Perfil em abas (Seção 7) --- */
+.perfil-quick{ display:flex; flex-wrap:wrap; gap:8px; margin:4px 0 14px; }
+.pq-chip{
+  background:var(--surface-2); border:1px solid var(--border); color:var(--text);
+  border-radius:999px; padding:8px 14px; font-size:13px; font-weight:700; cursor:pointer; font-family:inherit;
+  transition:border-color .15s ease, color .15s ease;
+}
+.pq-chip:hover{ border-color:var(--gold); color:var(--gold); }
+.perfil-tabs{
+  display:flex; gap:6px; margin:18px 0 14px; padding-bottom:2px;
+  border-bottom:1px solid var(--border); overflow-x:auto;
+}
+.perfil-tab{
+  background:none; border:none; border-bottom:2px solid transparent; color:var(--text-muted);
+  font-family:inherit; font-size:14px; font-weight:700; padding:10px 14px; cursor:pointer; white-space:nowrap;
+  transition:color .15s ease, border-color .15s ease;
+}
+.perfil-tab:hover{ color:var(--text); }
+.perfil-tab.active{ color:var(--gold); border-bottom-color:var(--gold); }
+.social-sub{ margin-top:4px; margin-bottom:6px; }

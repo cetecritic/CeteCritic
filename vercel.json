@@ -3,6 +3,7 @@
     { "path": "/api/cron-push", "schedule": "0 12 * * *" }
   ],
   "rewrites": [
+    { "source": "/favicon.ico", "destination": "/assets/favicon.png" },
     { "source": "/config.js", "destination": "/api/content?file=config" },
     { "source": "/hall-dados.js", "destination": "/api/content?file=hall" },
     { "source": "/perfil.js", "destination": "/api/content?file=perfil" },

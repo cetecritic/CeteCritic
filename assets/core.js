@@ -881,7 +881,7 @@ function htmlSidebar(){
       <a class="nav-link nav-parent nav-perfil${PAGINA.tipo === 'perfil' ? ' active' : ''}" href="${BASE}perfil.html"><span>👤 ${esc(sess.user)}</span></a>
       <button class="nav-link nav-sair" id="btnSair" type="button" title="Sair da conta">Sair</button>
     </div>
-    <a class="nav-link nav-parent${PAGINA.tipo === 'notif' ? ' active' : ''}" href="${BASE}notificacoes.html">🔔 Notificações<span class="notif-badge" id="notifBadgeNav" style="display:none;"></span></a>`;
+    <a class="nav-link nav-parent${PAGINA.tipo === 'notif' ? ' active' : ''}" href="${BASE}notificacoes.html">Notificações<span class="notif-badge" id="notifBadgeNav" style="display:none;"></span></a>`;
   } else {
     h += `<button class="nav-link nav-parent nav-entrar" id="btnEntrar" type="button">Entrar / Criar conta</button>`;
   }
@@ -889,7 +889,7 @@ function htmlSidebar(){
   h += `
   <a class="nav-link nav-parent${PAGINA.tipo === 'home' ? ' active' : ''}" href="${BASE}index.html">Início</a>
   <button class="nav-link nav-parent" id="navMonte">Monte o Seu</button>
-  <a class="nav-link nav-parent${PAGINA.tipo === 'busca' ? ' active' : ''}" href="${BASE}busca.html">🔎 Buscar</a>
+  <a class="nav-link nav-parent${PAGINA.tipo === 'busca' ? ' active' : ''}" href="${BASE}busca.html">Buscar</a>
   <a class="nav-link nav-parent${PAGINA.tipo === 'hall' ? ' active' : ''}" href="${BASE}hall.html">Hall da Fama</a>`;
 
   /* edição em foco: o ano da página atual ou, na home/hall, a edição em destaque.
@@ -926,8 +926,7 @@ function htmlSidebar(){
       }
 
       let filhos = `
-        <a class="nav-link nav-child${at(aberto && PAGINA.tipo === 'sobre')}" href="${p}sobre.html">Sobre</a>
-        <a class="nav-link nav-child${at(aberto && PAGINA.tipo === 'abertura')}" href="${p}abertura.html">Abertura</a>`;
+        <a class="nav-link nav-child${at(aberto && (PAGINA.tipo === 'sobre' || PAGINA.tipo === 'abertura' || PAGINA.tipo === 'resumo'))}" href="${p}sobre.html">📋 Resumo Rápido</a>`;
       for(let n = 1; n <= e.noites; n++){
         filhos += `<a class="nav-link nav-child${at(aberto && PAGINA.tipo === 'noite' && PAGINA.noite === n)}" href="${p}noite-${n}.html">Noite ${n}</a>`;
       }
@@ -2492,6 +2491,64 @@ function paginaEdicao(){
 /* =====================================================================
    PÁGINA: SOBRE
    ===================================================================== */
+/* =====================================================================
+   PÁGINA: RESUMO RÁPIDO (Seção 8 do Plano de Ação)
+   =====================================================================
+   Unifica Sobre + Abertura + Curiosidades/Contexto numa única página de 3
+   colunas. Reaproveita o conteúdo que já existe (ED.sobre, ED.abertura) e,
+   na 3ª coluna, usa o contexto próprio da edição (ED.sobre.contexto, editável
+   no admin) ou, se vazio, as CURIOSIDADES gerais — nada de conteúdo novo.
+   As rotas /ANO/sobre.html e /ANO/abertura.html caem aqui (ver switch). */
+function paginaResumo(){
+  document.title = `${ED.titulo} - Resumo Rápido`;
+  const s = ED.sobre || {};
+  const a = ED.abertura || {};
+  if(edicaoEmBreve()){
+    montarShell(`<div class="noite-intro"><h1>Resumo Rápido</h1></div>${htmlEmBreveBox()}`);
+    return;
+  }
+  if(!s.texto && !a.texto && !edicaoComecou() && inicioEdicao()){
+    montarShell(`<div class="noite-intro"><h1>Resumo Rápido</h1></div>${htmlCountdownBox(inicioEdicao(), true)}`);
+    fetchVotos();
+    return;
+  }
+  /* 3ª coluna: contexto próprio da edição; se vazio, cai nas curiosidades gerais */
+  const contexto = String(s.contexto || '').trim();
+  let curioHtml;
+  if(contexto){
+    curioHtml = `<div class="noite-card-synopsis" style="margin-bottom:0;">${esc(contexto)}</div>`;
+  } else {
+    const curios = (typeof CURIOSIDADES !== 'undefined' && Array.isArray(CURIOSIDADES)) ? CURIOSIDADES : [];
+    curioHtml = curios.length
+      ? `<ul class="resumo-curios">${curios.slice(0, 5).map(c => `<li>${esc((c && c.texto) || (typeof c === 'string' ? c : ''))}</li>`).join('')}</ul>`
+      : `<div class="empty-note">Contexto histórico em construção. Tem uma curiosidade ou lembrança dessa edição? Escreva pra gente: cetecritic@gmail.com</div>`;
+  }
+  montarShell(`
+    <div class="noite-intro">
+      <h1>Resumo Rápido</h1>
+      <p>Tudo sobre a edição ${ANO} num lugar só: sobre, abertura e o contexto histórico.</p>
+    </div>
+    <div class="resumo-cols">
+      <div class="noite-card resumo-col">
+        <div class="resumo-col-head">📖 Sobre</div>
+        ${s.banner ? `<img class="sobre-banner" src="${esc(s.banner)}" alt="" onerror="this.style.display='none'">` : ''}
+        <div class="noite-card-title" style="margin-bottom:10px; font-size:16px;">${esc(s.titulo || ED.titulo)}</div>
+        <div class="noite-card-synopsis" style="margin-bottom:0;">${esc(s.texto || 'Em breve.')}</div>
+      </div>
+      <div class="noite-card resumo-col">
+        <div class="resumo-col-head">🎼 Abertura</div>
+        <div class="noite-card-synopsis" style="margin-bottom:${a.spotify ? '18px' : '0'};">${esc(a.texto || 'Em breve.')}</div>
+        ${a.spotify ? `<iframe style="border-radius:12px; border:none;" src="${esc(a.spotify)}" width="100%" height="352" allow="autoplay; clipboard-write; encrypted-media; fullscreen; picture-in-picture" loading="lazy"></iframe>` : ''}
+      </div>
+      <div class="noite-card resumo-col">
+        <div class="resumo-col-head">💡 Curiosidades e Contexto</div>
+        ${curioHtml}
+      </div>
+    </div>`);
+}
+
+/* paginaSobre / paginaAbertura: mantidas por compatibilidade; as rotas agora
+   apontam para paginaResumo (unificação do Plano de Ação, Seção 8). */
 function paginaSobre(){
   document.title = `${ED.titulo} - Sobre`;
   const s = ED.sobre || {};
@@ -3106,8 +3163,10 @@ async function paginaHall(){
 
   /* carrega os dados (edicao.js + noites/*.js) de TODAS as edições do config.js */
   async function carregarEdicoes(){
-    const out = [];
-    for(const cfg of EDICOES){
+    /* Carrega TODAS as edições em paralelo (antes era um for serial: cada
+       edição só começava depois da anterior terminar, deixando o Hall lento).
+       Promise.all preserva a ordem do array, então o resultado é idêntico. */
+    const resultados = await Promise.all(EDICOES.map(async cfg => {
       try{
         const textos = await Promise.all([
           fetch(`${BASE}${cfg.ano}/edicao.js`).then(r => r.text()),
@@ -3115,10 +3174,10 @@ async function paginaHall(){
             fetch(`${BASE}${cfg.ano}/noites/noite-${i+1}.js`).then(r => r.text()))
         ]);
         const d = new Function(textos.join('\n') + '\n;return { EDICAO, NOITES };')();
-        out.push({ cfg, ed: d.EDICAO, noites: d.NOITES });
-      }catch(e){ console.warn('Hall: falha ao carregar edição', cfg.ano, e); }
-    }
-    return out;
+        return { cfg, ed: d.EDICAO, noites: d.NOITES };
+      }catch(e){ console.warn('Hall: falha ao carregar edição', cfg.ano, e); return null; }
+    }));
+    return resultados.filter(Boolean);
   }
 
   const edicoes = await carregarEdicoes();
@@ -3834,6 +3893,18 @@ async function paginaHome(){
   const mostrarBannerHome = bannerHomeAtivo() && !(typeof window.pwaEstaInstalado === 'function' && window.pwaEstaInstalado());
   const htmlBannerHome = mostrarBannerHome ? htmlBannerInstalar('homeInstallBanner', true) : '';
 
+  /* "Você sabia?" (Seção 10 do Plano): porta de entrada para o arquivo.
+     Reaproveita as CURIOSIDADES do banco — sorteia uma a cada carregamento. */
+  const _curiosVS = (typeof CURIOSIDADES !== 'undefined' && Array.isArray(CURIOSIDADES)) ? CURIOSIDADES : [];
+  const _vs = _curiosVS.length ? _curiosVS[Math.floor(Math.random() * _curiosVS.length)] : null;
+  const _vsTxt = _vs ? String((_vs.texto) || (typeof _vs === 'string' ? _vs : '')).trim() : '';
+  const htmlVoceSabia = _vsTxt ? `
+    <a class="voce-sabia" href="hall.html">
+      <span class="vs-badge">💡 Você sabia?</span>
+      <span class="vs-txt">${esc(_vsTxt)}</span>
+      <span class="vs-cta">Explorar o Hall da Fama →</span>
+    </a>` : '';
+
   montarShell(`
     ${htmlBannerHome}
     <div class="home-hero">
@@ -3852,6 +3923,8 @@ async function paginaHome(){
         </div>
       </div>
     </div>
+
+    ${htmlVoceSabia}
 
     ${cdTarget ? `<div class="section home-countdown">
       <div class="lbl">${esc(cdLabel)}</div>
@@ -4218,39 +4291,70 @@ async function paginaPerfil(){
       <div class="perfil-actions" id="perfilActions"></div>
     </div>
     <div id="perfilShowcase"></div>
+    <div class="perfil-quick" id="perfilQuick">
+      <button class="pq-chip" type="button" id="pqAmigosBtn"><span id="pqAmigos">👥 Amigos</span></button>
+    </div>
     <div class="section" id="favSection">
       <h2>❤️ Edições preferidas <button class="btn btn-ghost btn-mini" id="btnEditarFavs" style="display:none;">Editar</button></h2>
       <div id="favBox"><div class="empty-note">Carregando...</div></div>
     </div>
     <div class="hall-cards" id="perfilStats"></div>
-    <div class="section" id="compareSection" style="display:none;"><h2>🔗 Comparação</h2><div id="compareBox"></div></div>
-    <div class="section">
-      <h2>🏅 Badges <span class="badge-count" id="badgeCount"></span></h2>
-      <div class="sub">Mostramos 3 de cada vez — trocam a cada reload. As bloqueadas ficam apagadas.</div>
-      <div class="badge-grid" id="badgePreview"><div class="empty-note">Carregando...</div></div>
-      <button class="btn btn-ghost" id="badgeToggle" style="display:none; margin-top:12px;">Ver todas</button>
-      <div class="badge-grid" id="badgeAll" style="display:none; margin-top:12px;"></div>
+
+    <!-- abas do perfil (Plano de Ação, Seção 7): Atividade / Social / Badges.
+         A Página Principal acima (destaques, preferidas, stats) fica sempre visível. -->
+    <div class="perfil-tabs" id="perfilTabs">
+      <button class="perfil-tab active" type="button" data-aba="abaAtividade">📝 Atividade</button>
+      <button class="perfil-tab" type="button" data-aba="abaSocial">👥 Social</button>
+      <button class="perfil-tab" type="button" data-aba="abaBadges">🏅 Badges</button>
     </div>
-    <div class="section"><h2>🔮 Bolão</h2>
-      <div class="sub">Palpites por episódio e como se saiu (o placar aparece depois que a votação daquele ano fecha).</div>
-      <div class="record-list" id="perfilBolao"><div class="empty-note">Carregando...</div></div></div>
-    <div class="section">
-      <h2>🏷️ Carimbos <button class="ajuda-btn" id="carimboAjuda" title="O que são os carimbos?">?</button></h2>
-      <div class="carimbo-legenda" id="carimboLegenda" style="display:none;"></div>
-      <div id="carimbosBox"><div class="empty-note">Carregando...</div></div>
-    </div>
-    <div class="section" id="amigosSection"><h2>👥 Amigos <span class="badge-count" id="amigosCount"></span></h2>
-      <div id="amigosBox"><div class="empty-note">Carregando...</div></div>
-      <div id="amigosAdd"></div></div>
-    <div class="section"><h2>👀 Visitantes <span class="badge-count" id="visitasCount"></span></h2>
-      <div id="visitantesBox"><div class="empty-note">Carregando...</div></div></div>
-    <div class="section"><h2>📝 Avaliações</h2>
-      <div class="rev-tabs">
-        <button class="rev-tab active" id="tabFest">Por festival</button>
-        <button class="rev-tab" id="tabRec">Recentes</button>
+
+    <div class="perfil-aba" id="abaAtividade">
+      <div class="section"><h2>📝 Avaliações</h2>
+        <div class="rev-tabs">
+          <button class="rev-tab active" id="tabFest">Por festival</button>
+          <button class="rev-tab" id="tabRec">Recentes</button>
+        </div>
+        <div id="revPorFestival"><div class="empty-note">Carregando...</div></div>
+        <div id="revRecentes" style="display:none;"></div>
       </div>
-      <div id="revPorFestival"><div class="empty-note">Carregando...</div></div>
-      <div id="revRecentes" style="display:none;"></div>
+      <div class="section"><h2>🔮 Bolão</h2>
+        <div class="sub">Palpites por episódio e como se saiu (o placar aparece depois que a votação daquele ano fecha).</div>
+        <div class="record-list" id="perfilBolao"><div class="empty-note">Carregando...</div></div></div>
+    </div>
+
+    <div class="perfil-aba" id="abaSocial" style="display:none;">
+      <!-- sub-divisão da aba Social: Amigos (rede pessoal) x Geral (comunidade) -->
+      <div class="rev-tabs social-sub">
+        <button class="rev-tab active" type="button" id="socialTabAmigos" data-sub="socialAmigos">👥 Amigos</button>
+        <button class="rev-tab" type="button" id="socialTabGeral" data-sub="socialGeral">🌐 Geral</button>
+      </div>
+
+      <div class="social-sub-pane" id="socialAmigos">
+        <div class="section" id="amigosSection"><h2>👥 Amigos <span class="badge-count" id="amigosCount"></span></h2>
+          <div id="amigosBox"><div class="empty-note">Carregando...</div></div>
+          <div id="amigosAdd"></div></div>
+      </div>
+
+      <div class="social-sub-pane" id="socialGeral" style="display:none;">
+        <div class="section" id="compareSection" style="display:none;"><h2>🔗 Comparação</h2><div id="compareBox"></div></div>
+        <div class="section">
+          <h2>🏷️ Carimbos <button class="ajuda-btn" id="carimboAjuda" title="O que são os carimbos?">?</button></h2>
+          <div class="carimbo-legenda" id="carimboLegenda" style="display:none;"></div>
+          <div id="carimbosBox"><div class="empty-note">Carregando...</div></div>
+        </div>
+        <div class="section"><h2>👀 Visitantes <span class="badge-count" id="visitasCount"></span></h2>
+          <div id="visitantesBox"><div class="empty-note">Carregando...</div></div></div>
+      </div>
+    </div>
+
+    <div class="perfil-aba" id="abaBadges" style="display:none;">
+      <div class="section">
+        <h2>🏅 Badges <span class="badge-count" id="badgeCount"></span></h2>
+        <div class="sub">Mostramos 3 de cada vez — trocam a cada reload. As bloqueadas ficam apagadas.</div>
+        <div class="badge-grid" id="badgePreview"><div class="empty-note">Carregando...</div></div>
+        <button class="btn btn-ghost" id="badgeToggle" style="display:none; margin-top:12px;">Ver todas</button>
+        <div class="badge-grid" id="badgeAll" style="display:none; margin-top:12px;"></div>
+      </div>
     </div>`);
 
   /* ações do topo do perfil */
@@ -4477,7 +4581,7 @@ async function paginaPerfil(){
           return htmlItemSimples({ emoji: medal, titulo: `Bolão ${b.ano} — ${b.pos}º de ${b.total}`,
             texto: `Erro médio ${b.erroMedio.toFixed(2)} em ${b.n} episódio${b.n === 1 ? '' : 's'}` });
         }).join('')
-      : '<div class="empty-note">Sem resultado de bolão ainda.</div>';
+      : `<div class="empty-note">${ehMeu ? 'Você ainda não palpitou. Entre no bolão de uma edição com votação aberta e tente prever as notas — dá badge.' : 'Sem palpites de bolão ainda.'}</div>`;
 
     /* ---- sinais de comportamento (badges) ---- */
     let maratonaNoturna = false, polemicoNoite = false, selopurista = false, revelacao = false, gostoPeculiar = 0, caos = false, dedoPodre = false, noiteOuroAv = false;
@@ -4555,8 +4659,11 @@ async function paginaPerfil(){
     const revFest = document.getElementById('revPorFestival');
     const revRec = document.getElementById('revRecentes');
     if(!alvoSubs.length){
-      if(revFest) revFest.innerHTML = '<div class="empty-note">Nenhuma avaliação ainda.</div>';
-      if(revRec) revRec.innerHTML = '<div class="empty-note">Nenhuma avaliação ainda.</div>';
+      const vazioAval = ehMeu
+        ? '<div class="empty-note">Sua primeira avaliação desbloqueia: 🥇 primeiro badge · ⭐ XP · 📊 estatísticas pessoais. Escolha uma edição no menu e comece.</div>'
+        : '<div class="empty-note">Nenhuma avaliação pública ainda.</div>';
+      if(revFest) revFest.innerHTML = vazioAval;
+      if(revRec) revRec.innerHTML = vazioAval;
     } else {
       if(revFest){
         revFest.innerHTML = anosPart.map(ano => {
@@ -4670,6 +4777,7 @@ async function paginaPerfil(){
   function renderAmigos(lista){
     const arr = (Array.isArray(lista) ? lista : []).filter(Boolean);
     const cnt = document.getElementById('amigosCount'); if(cnt) cnt.textContent = arr.length ? String(arr.length) : '';
+    const pq = document.getElementById('pqAmigos'); if(pq) pq.textContent = arr.length ? `👥 ${arr.length} ${arr.length === 1 ? 'amigo' : 'amigos'}` : '👥 Amigos';
     const box = document.getElementById('amigosBox');
     if(!box) return;
     box.innerHTML = arr.length
@@ -4806,7 +4914,7 @@ async function paginaPerfil(){
           const c = CARIMBOS[t] || { emoji:'🏷️', nome:t };
           return `<div class="carimbo-chip" title="${esc(c.nome)}">${c.emoji} <span>${cont[t]}</span></div>`;
         }).join('')}</div>`
-      : `<div class="empty-note">${ehMeu ? 'Ninguém te carimbou ainda.' : 'Sem carimbos ainda.'}</div>`;
+      : `<div class="empty-note">${ehMeu ? 'Ainda sem carimbos. Avalie 3 apresentações para começar a receber reconhecimento da comunidade.' : 'Sem carimbos ainda — seja o primeiro a deixar um logo abaixo.'}</div>`;
     let dar = '';
     if(!ehMeu && meuSess){
       dar = `<div class="carimbo-dar"><div class="carimbo-dar-lbl">Deixe um carimbo:</div>
@@ -4849,6 +4957,11 @@ async function paginaPerfil(){
   /* botão compare (perfil de outra pessoa) */
   const btnCompare = document.getElementById('btnCompare');
   if(btnCompare) btnCompare.addEventListener('click', () => {
+    /* comparação vive na aba Social › sub-aba Geral: garante que estejam visíveis */
+    document.querySelectorAll('.perfil-tab').forEach(x => x.classList.toggle('active', x.dataset.aba === 'abaSocial'));
+    document.querySelectorAll('.perfil-aba').forEach(p => p.style.display = (p.id === 'abaSocial') ? '' : 'none');
+    document.querySelectorAll('.social-sub .rev-tab').forEach(x => x.classList.toggle('active', x.dataset.sub === 'socialGeral'));
+    document.querySelectorAll('.social-sub-pane').forEach(p => p.style.display = (p.id === 'socialGeral') ? '' : 'none');
     const sec = document.getElementById('compareSection');
     const box = document.getElementById('compareBox');
     const meus = carregar._minhasSubs || [];
@@ -4881,6 +4994,29 @@ async function paginaPerfil(){
     tabF.addEventListener('click', () => { tabF.classList.add('active'); tabR.classList.remove('active'); document.getElementById('revPorFestival').style.display = ''; document.getElementById('revRecentes').style.display = 'none'; });
     tabR.addEventListener('click', () => { tabR.classList.add('active'); tabF.classList.remove('active'); document.getElementById('revRecentes').style.display = ''; document.getElementById('revPorFestival').style.display = 'none'; });
   }
+
+  /* abas do perfil (Atividade / Social / Badges) — Plano de Ação, Seção 7 */
+  function trocarAba(nome){
+    document.querySelectorAll('.perfil-tab').forEach(x => x.classList.toggle('active', x.dataset.aba === nome));
+    document.querySelectorAll('.perfil-aba').forEach(p => p.style.display = (p.id === nome) ? '' : 'none');
+  }
+  document.querySelectorAll('.perfil-tab').forEach(t => t.addEventListener('click', () => trocarAba(t.dataset.aba)));
+
+  /* sub-divisão da aba Social: Amigos (rede pessoal) x Geral (comunidade) */
+  function trocarSubSocial(nome){
+    document.querySelectorAll('.social-sub .rev-tab').forEach(x => x.classList.toggle('active', x.dataset.sub === nome));
+    document.querySelectorAll('.social-sub-pane').forEach(p => p.style.display = (p.id === nome) ? '' : 'none');
+  }
+  document.querySelectorAll('.social-sub .rev-tab').forEach(t => t.addEventListener('click', () => trocarSubSocial(t.dataset.sub)));
+
+  /* chip "Amigos" da Página Principal → abre a aba Social na sub-aba Amigos (CTA da Seção 7.1) */
+  const pqAmigosBtn = document.getElementById('pqAmigosBtn');
+  if(pqAmigosBtn) pqAmigosBtn.addEventListener('click', () => {
+    trocarAba('abaSocial');
+    trocarSubSocial('socialAmigos');
+    const sec = document.getElementById('amigosSection');
+    if(sec) sec.scrollIntoView({ behavior:'smooth', block:'start' });
+  });
 
   carregar();
   setInterval(carregar, 30000);
@@ -5419,8 +5555,9 @@ function paginaRedefinir(){
 /* ---------------------- dispatcher ---------------------- */
 switch(PAGINA.tipo){
   case 'edicao':   paginaEdicao(); break;
-  case 'sobre':    paginaSobre(); break;
-  case 'abertura': paginaAbertura(); break;
+  case 'sobre':    paginaResumo(); break;
+  case 'abertura': paginaResumo(); break;
+  case 'resumo':   paginaResumo(); break;
   case 'noite':    paginaNoite(PAGINA.noite); break;
   case 'monte':    paginaMonte(); break;
   case 'hall':     paginaHall(); break;
@@ -5433,3 +5570,35 @@ switch(PAGINA.tipo){
   case 'redefinir': paginaRedefinir(); break;
   default: console.error('PAGINA.tipo desconhecido:', PAGINA.tipo);
 }
+
+/* =====================================================================
+   ONBOARDING — tela de boas-vindas de primeiro acesso (Plano, Seção 6)
+   =====================================================================
+   O produto precisa explicar a si mesmo: apresenta a missão ANTES dos menus.
+   Aparece uma única vez por dispositivo (localStorage). Não bloqueia nada — é
+   só uma porta de entrada; qualquer clique fora ou em "Começar" a dispensa. */
+function mostrarOnboarding(){
+  if(document.getElementById('ccOnboarding')) return;
+  document.body.insertAdjacentHTML('beforeend', `
+    <div class="onboarding-overlay" id="ccOnboarding" role="dialog" aria-modal="true" aria-label="Boas-vindas ao CeteCritic">
+      <div class="onboarding-card">
+        <img class="onboarding-logo" src="${BASE}assets/logo.png" alt="CETECritic" onerror="this.style.display='none'">
+        <h2>Bem-vindo ao CeteCritic</h2>
+        <p class="onboarding-lead">O arquivo digital do CETEC Festival. Explore mais de 30 anos de história, descubra as apresentações mais marcantes e participe avaliando as próximas edições.</p>
+        <ul class="onboarding-list">
+          <li>⭐ Avalie apresentações</li>
+          <li>🏆 Descubra os maiores festivais da história</li>
+          <li>📚 Explore mais de 30 anos de arquivo</li>
+          <li>🙂 Criar uma conta é totalmente opcional</li>
+        </ul>
+        <button class="btn btn-solid onboarding-btn" id="ccOnboardingStart">Começar</button>
+      </div>
+    </div>`);
+  const ov = document.getElementById('ccOnboarding');
+  requestAnimationFrame(() => ov.classList.add('show'));
+  const fechar = () => { try{ localStorage.setItem('cc_onboarded', '1'); }catch(e){} ov.classList.remove('show'); setTimeout(() => { if(ov && ov.parentNode) ov.remove(); }, 250); };
+  const btn = document.getElementById('ccOnboardingStart');
+  if(btn) btn.addEventListener('click', fechar);
+  ov.addEventListener('click', ev => { if(ev.target === ov) fechar(); });
+}
+try{ if(!localStorage.getItem('cc_onboarded')) mostrarOnboarding(); }catch(e){ /* modo privado sem storage: simplesmente não mostra */ }
