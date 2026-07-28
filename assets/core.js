@@ -650,8 +650,8 @@ function afinidadeGosto(subsA, subsB){
    Coloque no config.js:
      const SUPABASE_URL = 'https://xxxx.supabase.co';
      const SUPABASE_ANON_KEY = 'sb_publishable_...';   // chave PUBLICA, pode ficar no cliente */
-const SB_URL  = (typeof SUPABASE_URL !== 'undefined') ? SUPABASE_URL : '';
-const SB_ANON = (typeof SUPABASE_ANON_KEY !== 'undefined') ? SUPABASE_ANON_KEY : '';
+const SB_URL  = (typeof SUPABASE_URL !== 'undefined') ? SUPABASE_URL : 'https://hytmomrbovixmixgczdq.supabase.co';
+const SB_ANON = (typeof SUPABASE_ANON_KEY !== 'undefined') ? SUPABASE_ANON_KEY : 'sb_publishable_lb_jEyHC7e-A5gD7qf1ZCg_08vWbVQo';
 const OAUTH_ATIVO = !!(SB_URL && SB_ANON);
 
 let _sbCliente = null;
