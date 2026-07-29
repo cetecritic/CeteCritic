@@ -621,7 +621,7 @@ const CARIMBOS = PERFIL_CFG.carimbos || {
   critico:  { emoji:'🧐', nome:'Bom crítico', desc:'Acha que a pessoa avalia com critério.' },
   parceiro: { emoji:'🤝', nome:'Parceiro',    desc:'Um agrado de quem acompanha o festival junto.' },
   concordo: { emoji:'✅', nome:'Concordo',     desc:'Costuma concordar com as notas dessa pessoa.' },
-  discordo: { emoji:'❌', nome:'Discordo',     desc:'Discorda (na boa!) das notas dessa pessoa.' },
+  discordo: { emoji:'❌', nome:'Discordo',     desc:'Discorda das notas dessa pessoa.' },
   polemico: { emoji:'🔥', nome:'Polêmico',     desc:'As opiniões dessa pessoa dão o que falar.' },
   lenda:    { emoji:'👑', nome:'Lenda',        desc:'Respeito máximo pela dedicação ao acervo.' }
 };
@@ -777,22 +777,22 @@ function htmlModalLogin(){
   return `<div class="modal-overlay" id="loginModalOverlay">
     <div class="modal-card">
       <div class="modal-header"><h2 id="loginTitulo">Entrar</h2><button class="modal-close" id="loginModalClose">✕</button></div>
-      <div class="modal-sub">Sua conta guarda suas avaliações no perfil, os badges e o bolão. É um login simples — <b>não use uma senha importante</b>.</div>
+      <div class="modal-sub">Sua conta guarda suas avaliações no perfil, os badges e o bolão.</div>
       <div class="login-form">
         <label for="loginUser">Usuário</label>
-        <input type="text" id="loginUser" maxlength="20" autocomplete="off" placeholder="ex: maria">
+        <input type="text" id="loginUser" maxlength="20" autocomplete="off" placeholder="ex: Maria">
         <label for="loginSenha">Senha</label>
-        <input type="password" id="loginSenha" maxlength="60" placeholder="mínimo 4 caracteres">
+        <input type="password" id="loginSenha" maxlength="60" placeholder="Mínimo 4 caracteres">
         <div id="loginSenha2Wrap" style="display:none;">
           <label for="loginSenha2">Repita a senha</label>
-          <input type="password" id="loginSenha2" maxlength="60" placeholder="digite a senha de novo">
+          <input type="password" id="loginSenha2" maxlength="60" placeholder="Digite a senha de novo">
         </div>
         <div id="loginEmailWrap" style="display:none;">
           <label for="loginEmail">E-mail (opcional)</label>
-          <input type="email" id="loginEmail" maxlength="120" autocomplete="off" placeholder="para recuperar a senha depois">
+          <input type="email" id="loginEmail" maxlength="120" autocomplete="off" placeholder="Para recuperar a senha depois">
           <div class="login-seguranca" style="margin-top:4px;">Sem e-mail, não dá pra recuperar a senha se esquecer. Você pode adicionar ou trocar depois em Configurações.</div>
         </div>
-        <div class="login-seguranca">🔒 Sua senha é criptografada — nem nós conseguimos vê-la. Ainda assim, <b>nunca use uma senha que você usa em outro lugar ou algum dado sensível. </div>
+        <div class="login-seguranca">🔒 Sua senha é criptografada - nem nós conseguimos vê-la.</div>
         <div id="loginTosWrap" style="display:none;">
           <label class="tos-check" id="loginTosLabel">
             <input type="checkbox" id="loginTos">
@@ -818,7 +818,7 @@ function htmlModalLogin(){
       <!-- etapa do login social: quem entra pelo Google sem conta escolhe um nome
            de usuario aqui, porque a identidade do site e o nome, nao o e-mail -->
       <div class="login-form" id="loginOauthWrap" style="display:none;">
-        <div class="modal-sub">Falta so escolher como voce vai aparecer no site. Esse nome fica nas suas avaliacoes, no ranking e no perfil.</div>
+        <div class="modal-sub">Falta so escolher como você vai aparecer no site. Esse nome fica nas suas avaliacoes, no ranking e no perfil.</div>
         <div class="login-seguranca" id="loginOauthEmail" style="margin-bottom:4px;"></div>
         <label for="loginOauthNome">Nome de usuario</label>
         <input type="text" id="loginOauthNome" maxlength="20" autocomplete="off" placeholder="ex: maria">
@@ -831,7 +831,7 @@ function htmlModalLogin(){
       </div>
 
       <div class="login-form" id="login2faWrap" style="display:none;">
-        <div class="modal-sub">Enviamos um código de 6 dígitos pro seu e-mail. Ele vale por 5 minutos.</div>
+        <div class="modal-sub">Enviamos um código de 6 dígitos pro seu e-mail. Ele é válido por 5 minutos.</div>
         <label for="login2faCode">Código de acesso</label>
         <input type="text" id="login2faCode" inputmode="numeric" maxlength="6" autocomplete="one-time-code" placeholder="000000" style="letter-spacing:8px; text-align:center; font-size:20px;">
         <div class="login-erro" id="login2faErro"></div>
@@ -932,7 +932,7 @@ function wireLogin(){
       }catch(e){
         sessionStorage.removeItem('cetec-oauth-pendente');
         btnGoogle.disabled = false;
-        erro.textContent = 'Nao deu pra abrir o login do Google.';
+        erro.textContent = 'Erro ao abrir login do Google.';
       }
     });
   }
@@ -949,10 +949,10 @@ function wireLogin(){
   async function enviar(){
     const user = inpUser.value.trim();
     const senha = inpSenha.value;
-    if(user.length < 2){ erro.textContent = 'Escolha um usuário (mínimo 2 caracteres).'; return; }
+    if(user.length < 2){ erro.textContent = 'Escolha um usuário (mínimo 24 caracteres).'; return; }
     if(senha.length < 4){ erro.textContent = 'A senha precisa de pelo menos 4 caracteres.'; return; }
     if(modo === 'registrar' && senha !== (inpSenha2 ? inpSenha2.value : senha)){
-      erro.textContent = 'As senhas não conferem. Digite a mesma nos dois campos.'; return;
+      erro.textContent = 'As senhas não são diferentes. Digite a mesma nos dois campos.'; return;
     }
     const tosChk = document.getElementById('loginTos');
     const tosLabel = document.getElementById('loginTosLabel');
@@ -1022,7 +1022,7 @@ function wireLogin(){
       iniciarTimerReenvio(document.getElementById('loginReenviarReset'), async () => {
         const rr = await apiPedirReset(conta);
         erro.style.color = 'var(--text-muted)';
-        erro.textContent = (rr && rr.msg) ? rr.msg : 'Reenviado — confira seu e-mail.';
+        erro.textContent = (rr && rr.msg) ? rr.msg : 'Reenviado - confira seu e-mail.';
       });
     }catch(e){ erro.style.color = ''; erro.textContent = 'Falha de conexão. Tente de novo.'; }
   });
@@ -1419,7 +1419,7 @@ function mostrarBannerReativarPush(){
   const b = document.createElement('div');
   b.id = 'reativarPushBanner';
   b.className = 'push-reativar';
-  b.innerHTML = `<span class="pr-txt">🔔 Suas notificações foram desativadas. Quer reativar?</span>
+  b.innerHTML = `<span class="pr-txt">🔔 Suas notificações estão desativadas. Deseja reativar?</span>
     <button class="pr-ok" type="button">Reativar</button>
     <button class="pr-x" type="button" aria-label="Fechar">✕</button>`;
   document.body.appendChild(b);
