@@ -2,21 +2,18 @@
   "crons": [
     { "path": "/api/cron-push", "schedule": "0 12 * * *" }
   ],
-  "rewrites": [
-    { "source": "/favicon.ico", "destination": "/assets/favicon.png" },
-    { "source": "/config.js", "destination": "/api/content?file=config" },
-    { "source": "/hall-dados.js", "destination": "/api/content?file=hall" },
-    { "source": "/perfil.js", "destination": "/api/content?file=perfil" },
-    { "source": "/home-dados.js", "destination": "/api/content?file=home" },
-    { "source": "/:ano(\\d{4})/edicao.js", "destination": "/api/content?file=edicao&ano=:ano" },
-    { "source": "/:ano(\\d{4})/noites/noite-:n(\\d+).js", "destination": "/api/content?file=noites&ano=:ano&noite=:n" },
-
-    { "source": "/:ano(\\d{4})", "destination": "/edicao-template.html" },
-    { "source": "/:ano(\\d{4})/", "destination": "/edicao-template.html" },
-    { "source": "/:ano(\\d{4})/index.html", "destination": "/edicao-template.html" },
-    { "source": "/:ano(\\d{4})/sobre.html", "destination": "/edicao-template.html" },
-    { "source": "/:ano(\\d{4})/abertura.html", "destination": "/edicao-template.html" },
-    { "source": "/:ano(\\d{4})/monte.html", "destination": "/edicao-template.html" },
-    { "source": "/:ano(\\d{4})/noite-:n(\\d+).html", "destination": "/edicao-template.html" }
+  "headers": [
+    {
+      "source": "/sitemap.xml",
+      "headers": [
+        { "key": "Content-Type", "value": "application/xml; charset=utf-8" }
+      ]
+    },
+    {
+      "source": "/robots.txt",
+      "headers": [
+        { "key": "Content-Type", "value": "text/plain; charset=utf-8" }
+      ]
+    }
   ]
 }
