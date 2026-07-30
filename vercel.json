@@ -11,7 +11,10 @@
     { "source": "/:ano(\\d{4})/edicao.js", "destination": "/api/content?file=edicao&ano=:ano" },
 
     { "source": "/:ano(\\d{4})/noites/noite-:noite(\\d+).js", "destination": "/api/content?file=noites&ano=:ano&noite=:noite" },
-    { "source": "/:ano(\\d{4})/noites/:qualquer",             "destination": "/api/content?file=noites&ano=:ano" }
+    { "source": "/:ano(\\d{4})/noites/:qualquer",             "destination": "/api/content?file=noites&ano=:ano" },
+
+    { "source": "/:ano(\\d{4})/:pagina(.+\\.html)", "destination": "/edicao-template.html" },
+    { "source": "/:ano(\\d{4})",                    "destination": "/edicao-template.html" }
   ],
   "headers": [
     {
