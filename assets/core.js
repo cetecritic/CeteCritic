@@ -481,7 +481,13 @@ async function apiVotarReputacao(alvo, valor){
 }
 async function fetchPerfilPublico(user, por){
   try{
-    const extra = por ? '&por=' + encodeURIComponent(por) : '';
+    let extra = por ? '&por=' + encodeURIComponent(por) : '';
+    /* perfil privado agora só volta completo pro DONO: quando o alvo é a
+       própria conta logada, mandamos o token junto pra provar isso. */
+    const s = usuarioLogado();
+    if(s && String(user || '').trim().toLowerCase() === s.user.trim().toLowerCase()){
+      extra = '&por=' + encodeURIComponent(s.user) + '&token=' + encodeURIComponent(s.token);
+    }
     const r = await fetch(API_URL + '?perfil=' + encodeURIComponent(user) + extra + '&_=' + Date.now(), { cache:'no-store' });
     return await r.json();
   }catch(e){ return null; }
@@ -497,6 +503,27 @@ async function fetchRankingReputacao(){
 
 /* ---- APIs novas: perfil próprio, excluir conta, usuários, reset, push ---- */
 async function apiMeuPerfil(){ const s = usuarioLogado(); if(!s) return { ok:false }; return apiPost({ action:'meuPerfil', user:s.user, token:s.token }); }
+/* troca de nome obrigatória (só funciona se o admin marcou nome_bloqueado) */
+/* reações nos posts do feed — mesma tabela de carimbos, com `alvo` = id do post.
+   tipo null tira a reação (o botão liga e desliga). */
+async function apiReagir(postId, tipo, autor){
+  const s = usuarioLogado(); if(!s) return { ok:false, error:'faça login' };
+  return apiPost({ action:'reagir', user:s.user, token:s.token, postId, tipo, autor });
+}
+async function fetchReacoes(ids, por){
+  if(!ids || !ids.length) return {};
+  try{
+    const extra = por ? '&por=' + encodeURIComponent(por) : '';
+    const url = API_URL + '?reacoes=' + encodeURIComponent(ids.join(',')) + extra + '&_=' + Date.now();
+    const r = await fetch(url, { cache:'no-store' });
+    const j = await r.json();
+    return (j && j.reacoes) || {};
+  }catch(e){ return {}; }
+}
+async function apiTrocarNome(novoNome){
+  const s = usuarioLogado(); if(!s) return { ok:false, error:'faça login' };
+  return apiPost({ action:'trocarNome', user:s.user, token:s.token, novoNome, dispositivo: descreverDispositivo() });
+}
 async function apiDeletarConta(){ const s = usuarioLogado(); if(!s) return { ok:false }; return apiPost({ action:'deletarConta', user:s.user, token:s.token }); }
 async function apiPedirReset(conta){ return apiPost({ action:'pedirReset', conta }); }
 async function apiRedefinirSenha(user, token, novaSenha){ return apiPost({ action:'redefinirSenha', user, token, novaSenha, dispositivo: descreverDispositivo() }); }
@@ -615,7 +642,12 @@ function tituloPorReputacao(rep){
 
 /* ---- carimbos pré-definidos (visual + explicação) — editáveis no perfil.js.
    Lembre: o TIPO/chave também precisa existir no CARIMBOS_VALIDOS do Apps Script. */
-const CARIMBOS = PERFIL_CFG.carimbos || {
+/* O ❤️ Curtida é a reação simples e padrão dos posts do feed, e vale também
+   como carimbo de perfil — é um vocabulário só nos dois lugares.
+   Merge (e não `||`) de propósito: se o admin tiver personalizado os carimbos
+   no config, os tipos padrão continuam existindo em vez de sumirem. */
+const CARIMBOS = Object.assign({
+  curtida:  { emoji:'❤️', nome:'Curtida',     desc:'Curtiu — a reação simples.' },
   joia:     { emoji:'💎', nome:'Joia',        desc:'Curtiu o perfil e as avaliações dessa pessoa.' },
   palmas:   { emoji:'👏', nome:'Palmas',      desc:'Reconhecimento pelas boas avaliações.' },
   critico:  { emoji:'🧐', nome:'Bom crítico', desc:'Acha que a pessoa avalia com critério.' },
@@ -624,7 +656,7 @@ const CARIMBOS = PERFIL_CFG.carimbos || {
   discordo: { emoji:'❌', nome:'Discordo',     desc:'Discorda das notas dessa pessoa.' },
   polemico: { emoji:'🔥', nome:'Polêmico',     desc:'As opiniões dessa pessoa dão o que falar.' },
   lenda:    { emoji:'👑', nome:'Lenda',        desc:'Respeito máximo pela dedicação ao acervo.' }
-};
+}, PERFIL_CFG.carimbos || {});
 
 /* ---- afinidade de gosto: baseada nas notas das MESMAS peças ---- */
 function afinidadeGosto(subsA, subsB){
@@ -782,7 +814,7 @@ function htmlModalLogin(){
         <label for="loginUser">Usuário</label>
         <input type="text" id="loginUser" maxlength="20" autocomplete="off" placeholder="ex: Maria">
         <label for="loginSenha">Senha</label>
-        <input type="password" id="loginSenha" maxlength="60" placeholder="Mínimo 4 caracteres">
+        <input type="password" id="loginSenha" maxlength="60" placeholder="Mínimo 8 caracteres">
         <div id="loginSenha2Wrap" style="display:none;">
           <label for="loginSenha2">Repita a senha</label>
           <input type="password" id="loginSenha2" maxlength="60" placeholder="Digite a senha de novo">
@@ -949,8 +981,8 @@ function wireLogin(){
   async function enviar(){
     const user = inpUser.value.trim();
     const senha = inpSenha.value;
-    if(user.length < 2){ erro.textContent = 'Escolha um usuário (mínimo 24 caracteres).'; return; }
-    if(senha.length < 4){ erro.textContent = 'A senha precisa de pelo menos 4 caracteres.'; return; }
+    if(user.length < 2 || user.length > 20){ erro.textContent = 'Escolha um usuário de 2 a 20 caracteres.'; return; }
+    if(senha.length < 8){ erro.textContent = 'A senha precisa de pelo menos 8 caracteres.'; return; }
     if(modo === 'registrar' && senha !== (inpSenha2 ? inpSenha2.value : senha)){
       erro.textContent = 'As senhas não são diferentes. Digite a mesma nos dois campos.'; return;
     }
@@ -4322,9 +4354,12 @@ function htmlItemSimples(r){
 
 /* card de badge (bloqueada = apagada/cinza) */
 function badgeCardHtml(b){
-  return `<div class="badge-card${b.unlocked ? '' : ' locked'}" title="${esc(b.titulo)}${b.texto ? ' — ' + esc(b.texto) : ''}">
+  /* badge concedida à mão pela organização: sinaliza, senão parece que a
+     pessoa cumpriu um requisito que ela não cumpriu */
+  const marca = b.porAdmin === 'forcada' ? ' · concedida pela organização' : '';
+  return `<div class="badge-card${b.unlocked ? '' : ' locked'}" title="${esc(b.titulo)}${b.texto ? ' — ' + esc(b.texto) : ''}${marca}">
     <div class="badge-emoji">${b.emoji}</div>
-    <div class="badge-name">${esc(b.titulo)}</div>
+    <div class="badge-name">${esc(b.titulo)}${b.porAdmin === 'forcada' ? ' <span title="Concedida pela organização">🎗️</span>' : ''}</div>
     <div class="badge-desc">${esc(b.texto || '')}</div>
     ${b.cat ? `<div class="badge-cat">${esc(b.cat)}</div>` : ''}
   </div>`;
@@ -4397,6 +4432,30 @@ function catalogoBadges(ctx){
   const desbloq = cat.filter(b => b.unlocked).length;
   cat.push({ emoji: '🧷', titulo: 'Colecionador', texto: `Ter ${metaPerfil('colecionador',15)}+ badges diferentes`, unlocked: desbloq >= metaPerfil('colecionador',15), cat: 'Comunidade' });
   return cat;
+}
+
+/* ---------------------------------------------------------------------
+   Exceções de badge definidas pelo admin (perfil.admin_badges).
+
+   Elas viajam no perfil PÚBLICO de propósito: uma badge concedida à mão
+   precisa aparecer pra quem visita o perfil, não só pro dono.
+
+   Nota consciente: o "Colecionador" é calculado dentro de catalogoBadges,
+   antes destas exceções, então ele continua contando só o que a pessoa
+   conquistou de verdade. Isso é intencional — badge dada pelo admin não
+   deve destravar outra badge em cascata.
+   --------------------------------------------------------------------- */
+function aplicarBadgesDoAdmin(cat, perfilCfg){
+  const ab = (perfilCfg && perfilCfg.admin_badges && typeof perfilCfg.admin_badges === 'object') ? perfilCfg.admin_badges : null;
+  if(!ab) return cat;
+  const forcadas   = new Set((Array.isArray(ab.forcadas)   ? ab.forcadas   : []).map(String));
+  const bloqueadas = new Set((Array.isArray(ab.bloqueadas) ? ab.bloqueadas : []).map(String));
+  if(!forcadas.size && !bloqueadas.size) return cat;
+  return cat.map(b => {
+    if(forcadas.has(b.titulo))   return Object.assign({}, b, { unlocked: true,  porAdmin: 'forcada' });
+    if(bloqueadas.has(b.titulo)) return Object.assign({}, b, { unlocked: false, porAdmin: 'bloqueada' });
+    return b;
+  });
 }
 
 /* card de avaliação (expansível) para o perfil */
@@ -4658,7 +4717,7 @@ async function paginaPerfil(){
 
       if(elFlags){
         let h = '';
-        if(priv) h += `<span class="perfil-flag priv" title="Perfil privado — você não aparece na busca nem na lista de usuários">🔒</span>`;
+        if(priv) h += `<span class="perfil-flag priv" title="Perfil privado — fora da busca e da lista de usuários, e o conteúdo do perfil só aparece pro dono">🔒</span>`;
         if(anon) h += `<span class="perfil-flag anon" title="Perfil anônimo — seu nome real fica escondido nos feeds e rankings">🕶️</span>`;
         elFlags.innerHTML = h;
       }
@@ -4672,6 +4731,30 @@ async function paginaPerfil(){
       }
     }
 
+    /* ---- perfil privado: o servidor não manda mais nada além do nome pra
+       quem não é o dono. Mostramos o cadeado e paramos aqui — sem isso a
+       página tentaria montar tudo com dados vazios. ---- */
+    if(pub.restrito){
+      ['perfilActions','amigosPanel','perfilShowcase','favSection','perfilStats',
+       'compareSection','carimbosSection','perfilTabs','abaAtividade','abaSocial',
+       'abaBadges','perfilMeta','nivelTxt'].forEach(id => {
+        const el = document.getElementById(id); if(el) el.style.display = 'none';
+      });
+      const barra = document.querySelector('.nivel-bar-wrap'); if(barra) barra.style.display = 'none';
+      const subEl2 = document.getElementById('perfilSub'); if(subEl2) subEl2.textContent = '';
+      const tabs = document.getElementById('perfilTabs');
+      if(tabs && tabs.parentNode){
+        const aviso = document.createElement('div');
+        aviso.className = 'noite-card';
+        aviso.style.textAlign = 'center';
+        aviso.innerHTML = `<div class="perfil-vazio">🔒 Este perfil é privado.<br>
+          <span style="color:var(--text-muted);font-size:13px;">Avaliações, carimbos, badges e visitas de
+          ${esc(String(pub.nomeExib || alvoUser))} só aparecem para a própria pessoa.</span></div>`;
+        tabs.parentNode.insertBefore(aviso, tabs);
+      }
+      return;
+    }
+
     /* dataset global + avaliações do dono do perfil + do visitante (p/ compare) */
     const todosSubs = [];
     const alvoSubs = [];
@@ -4679,7 +4762,9 @@ async function paginaPerfil(){
     const meuLower = meuSess ? meuSess.user.trim().toLowerCase() : null;
     porAno.forEach(o => o.subs.forEach(s => {
       const u = String(s.user || '').trim().toLowerCase();
-      const reg = { grid: s.grid, year: o.ano, user: s.user, ts: s.ts };
+      /* `id` (sub_id) vai junto porque é ele que vira o id do post reagível
+         no feed social — ver idPostSub em montarFeeds */
+      const reg = { id: s.id, grid: s.grid, year: o.ano, user: s.user, ts: s.ts };
       todosSubs.push(reg);
       if(u === alvoMatch) alvoSubs.push({ ...reg, ano: o.ano });
       if(meuLower && u === meuLower) minhasSubs.push({ ...reg, ano: o.ano });
@@ -4727,7 +4812,14 @@ async function paginaPerfil(){
     renderAmigos(perfilCfg.amigos || []);
     montarAmigosAdd();
     renderCarimbos(pub.carimbos || []);
-    if(ehMeu) montarFeeds(todosSubs, perfilCfg, pub);
+    /* o feed social espelha parte da central 🔔 (ver montarFeeds). Buscamos as
+       notificações aqui, junto com o resto — falha na busca não pode derrubar
+       o perfil, então cai numa lista vazia e o feed segue só com as ações. */
+    if(ehMeu){
+      let notifs = [];
+      try{ const rn = await apiListarNotificacoes(); if(rn && rn.ok) notifs = rn.notificacoes || []; }catch(e){ notifs = []; }
+      await montarFeeds(todosSubs, perfilCfg, pub, notifs);
+    }
 
     /* reputação (karma) + título */
     if(typeof pub.reputacao === 'number') repTotal = pub.reputacao; else if(repTotal === null) repTotal = 0;
@@ -4838,7 +4930,13 @@ async function paginaPerfil(){
       participouBolao: bolaoRes.length,
       lenda: (nivel.nivel >= metaPerfil('lendaNivel', 5) && edicoesComVotos.length > 0 && edicoesComVotos.every(y => anosPart.includes(y)))
     };
-    const cat = catalogoBadges(ctx);
+    /* ---- exceções do admin -------------------------------------------
+       As badges são CALCULADAS aqui no navegador a partir dos votos, então
+       não existe "badge salva no banco" pra editar. O painel admin grava
+       uma camada de exceção em perfil.admin_badges e é ela que aplicamos
+       por cima do catálogo. `forcada` ganha de `bloqueada` (o servidor já
+       garante que a mesma badge não aparece nas duas listas). */
+    const cat = aplicarBadgesDoAdmin(catalogoBadges(ctx), perfilCfg);
     const nUnlocked = cat.filter(b => b.unlocked).length;
     if(ehMeu) detectarBadgesNovas(cat);   // avisa badges recém-desbloqueadas (só no seu perfil)
     /* preview: sorteia entre as DESBLOQUEADAS; só completa com bloqueadas se faltar */
@@ -5145,29 +5243,161 @@ async function paginaPerfil(){
   /* ---- FEED SOCIAL (só no meu perfil) ----
      Amigos: ações da minha rede (reviews de amigos, carimbos que recebi).
      Geral: novidades da comunidade (posts do admin/CETECritic + reviews recentes). */
+  /* ---------------------------------------------------------------------
+     Barra de reação de um post. O botão mostra o ❤️ (ou a reação que a
+     pessoa já deu) e, ao ser clicado, ABRE o seletor com os outros emojis —
+     que são os mesmos carimbos do perfil, não um sistema novo.
+     Clicar de novo no emoji que já está marcado tira a reação.
+     --------------------------------------------------------------------- */
+  function barraReacaoHtml(it){
+    if(!it.postId) return '';
+    const r = (montarFeeds._reacoes && montarFeeds._reacoes[it.postId]) || { total:0, tipos:{}, meu:null };
+    const meu = r.meu;
+    const info = meu && CARIMBOS[meu] ? CARIMBOS[meu] : null;
+    /* os 3 emojis mais usados, pra dar noção do tom da reação sem poluir */
+    const topo = Object.keys(r.tipos || {})
+      .sort((a,b) => r.tipos[b] - r.tipos[a]).slice(0,3)
+      .map(t => (CARIMBOS[t] || {}).emoji || '').filter(Boolean).join('');
+    return `<div class="feed-reacoes" data-post="${esc(it.postId)}" data-autor="${esc(it.autorReal || '')}">
+      <button type="button" class="reagir-btn${meu ? ' ativo' : ''}" title="${info ? esc(info.nome) : 'Reagir'}">
+        <span class="reagir-emoji">${info ? info.emoji : '❤️'}</span>
+        <span class="reagir-label">${info ? esc(info.nome) : 'Curtir'}</span>
+      </button>
+      ${r.total ? `<span class="reagir-contagem" title="${r.total} reação(ões)">${topo} ${r.total}</span>` : ''}
+      <div class="reagir-menu" hidden>
+        ${Object.keys(CARIMBOS).map(t => `
+          <button type="button" class="reagir-op${meu === t ? ' ativo' : ''}" data-tipo="${esc(t)}"
+                  title="${esc(CARIMBOS[t].nome)} — ${esc(CARIMBOS[t].desc || '')}">${CARIMBOS[t].emoji}</button>`).join('')}
+      </div>
+    </div>`;
+  }
+
   function feedItemHtml(it){
-    const letra = esc(String(it.nome || '?').slice(0,1).toUpperCase());
+    /* item vindo da central de notificações usa o emoji do tipo no lugar da
+       inicial do nome — fica claro que é um aviso, não a ação de alguém */
+    const letra = it.emojiFeed ? it.emojiFeed : esc(String(it.nome || '?').slice(0,1).toUpperCase());
     const quando = it.ts ? tempoAtras(Number(it.ts)) : '';
     const corpo = `<div class="feed-ava">${letra}</div><div class="feed-body"><div class="feed-text">${it.html || esc(it.texto || '')}</div>${quando ? `<div class="feed-when">${quando}</div>` : ''}</div>`;
+    /* o item vira <a> só quando NÃO tem reação: um <button> dentro de <a>
+       faz o link disparar junto com o clique no emoji */
+    const miolo = it.url
+      ? (it.postId ? `<a class="feed-linha" href="${esc(it.url)}">${corpo}</a>` : null)
+      : null;
+    if(it.postId){
+      return `<div class="feed-item feed-item-post">
+        ${miolo || `<div class="feed-linha">${corpo}</div>`}
+        ${barraReacaoHtml(it)}
+      </div>`;
+    }
     return it.url ? `<a class="feed-item" href="${esc(it.url)}">${corpo}</a>` : `<div class="feed-item">${corpo}</div>`;
   }
-  function montarFeeds(todosSubs, perfilCfg, pub){
+
+  /* delegação de eventos: os feeds são redesenhados inteiros, então ouvir no
+     container evita religar listener a cada render */
+  function ligarReacoes(container){
+    if(!container || container._reacoesLigadas) return;
+    container._reacoesLigadas = true;
+    container.addEventListener('click', async ev => {
+      const barra = ev.target.closest('.feed-reacoes');
+      if(!barra) return;
+      const menu = barra.querySelector('.reagir-menu');
+
+      if(ev.target.closest('.reagir-btn')){
+        ev.preventDefault();
+        /* fecha qualquer outro menu aberto na página */
+        document.querySelectorAll('.reagir-menu').forEach(m => { if(m !== menu) m.hidden = true; });
+        menu.hidden = !menu.hidden;
+        return;
+      }
+
+      const op = ev.target.closest('.reagir-op');
+      if(!op) return;
+      ev.preventDefault();
+      const postId = barra.dataset.post;
+      const autor = barra.dataset.autor || '';
+      const atual = (montarFeeds._reacoes[postId] || {}).meu || null;
+      /* clicar no emoji que já está marcado = tirar a reação */
+      const tipo = (atual === op.dataset.tipo) ? null : op.dataset.tipo;
+
+      menu.hidden = true;
+      barra.querySelectorAll('button').forEach(b => b.disabled = true);
+      const r = await apiReagir(postId, tipo, autor);
+      barra.querySelectorAll('button').forEach(b => b.disabled = false);
+
+      if(r && r.ok){
+        montarFeeds._reacoes[postId] = { total: r.total, tipos: r.tipos, meu: r.meu };
+        /* redesenha só esta barra */
+        const novo = document.createElement('div');
+        novo.innerHTML = barraReacaoHtml({ postId, autorReal: autor });
+        barra.replaceWith(novo.firstElementChild);
+      }else if(r && r.error){
+        const c = barra.querySelector('.reagir-contagem') || barra.querySelector('.reagir-btn');
+        if(c) c.title = r.error;
+        alert(r.error);
+      }
+    });
+  }
+  /* clicar fora fecha o seletor */
+  document.addEventListener('click', ev => {
+    if(ev.target.closest('.feed-reacoes')) return;
+    document.querySelectorAll('.reagir-menu').forEach(m => { m.hidden = true; });
+  });
+  /* ---------------------------------------------------------------------
+     Notificações dentro do feed social.
+
+     A central 🔔 continua sendo a fonte da verdade e não mudou. O que fazemos
+     aqui é ESPELHAR parte dela na aba Social, roteando por tipo:
+
+       AMIGOS  o que aconteceu com VOCÊ e com a sua rede — badge destravada,
+               posição no Hall da Fama, carimbo recebido, novo amigo.
+       GERAL   o que vale pra comunidade inteira — edição nova, noite liberada,
+               abertura de votação, resultado do bolão, recado da organização.
+
+     Só espelhamos os tipos abaixo: visitas de perfil, por exemplo, ficariam
+     repetitivas demais no feed e continuam só na central. --------------- */
+  const NOTIF_FEED_AMIGOS = { badges:1, hall:1, carimbos:1, amigos:1 };
+  const NOTIF_FEED_GERAL  = { edicoes:1, noites:1, votacoes:1, bolao:1, admin:1 };
+  const NOTIF_EMOJI = { badges:'🏅', hall:'🏆', carimbos:'📮', amigos:'🤝', edicoes:'🎬', noites:'🎭', votacoes:'🗳️', bolao:'🔮', admin:'📣' };
+
+  function notifParaFeed(n){
+    const emoji = NOTIF_EMOJI[n.tipo] || '🔔';
+    /* o título das notificações já vem com emoji do servidor (ex.: "🏅 Nova
+       badge!"); tiramos pra não duplicar com o nosso */
+    const titulo = String(n.titulo || '').replace(/^\s*\p{Extended_Pictographic}+\s*/u, '').trim();
+    return {
+      nome: 'CETECritic', ts: Number(n.criadoEm) || 0, url: n.url || '',
+      origem: 'notif',
+      html: `<b>${esc(titulo || 'Aviso')}</b>${n.corpo ? ' ' + esc(n.corpo) : ''}`,
+      emojiFeed: emoji
+    };
+  }
+
+  /* id estável de cada post reagível. Precisa sobreviver a recarregar a
+     página, porque é ele que vai pra coluna `alvo` da tabela de carimbos.
+       feed:<ts>   post publicado pela organização (o ts é fixo na criação)
+       sub:<id>    avaliação de alguém (sub_id vem do banco)
+     Avisos automáticos (badge, hall) NÃO recebem id — não são reagíveis. */
+  const idPostFeed = f => (f && f.ts) ? ('feed:' + f.ts) : null;
+  const idPostSub  = s => (s && s.id) ? ('sub:' + s.id) : null;
+
+  async function montarFeeds(todosSubs, perfilCfg, pub, notifs){
+    const lista = Array.isArray(notifs) ? notifs : [];
     /* ---- GERAL ---- */
     const geral = [];
     const feedAdmin = (typeof FEED !== 'undefined' && Array.isArray(FEED)) ? FEED : [];
     feedAdmin.forEach(f => geral.push({
       nome: f.autor || 'CETECritic', ts: f.ts, url: f.url || '',
+      postId: idPostFeed(f), autorReal: '',   /* post da organização: sem conta por trás */
       html: `<b>${esc(f.autor || 'CETECritic')}</b> ${esc(f.emoji || '')} ${esc(f.texto || '')}`
     }));
+    lista.filter(n => NOTIF_FEED_GERAL[n.tipo]).forEach(n => geral.push(notifParaFeed(n)));
     todosSubs
       .filter(s => { const u = String(s.user || '').trim(); return u && u.toLowerCase() !== alvo; })
       .sort((a,b) => Number(b.ts) - Number(a.ts)).slice(0, 25)
       .forEach(s => geral.push({ nome: s.user, ts: s.ts, url: `${BASE}${s.year}/index.html`,
+        postId: idPostSub(s), autorReal: s.user,
         html: `<b>${esc(s.user)}</b> avaliou o <b>Cetec Festival ${s.year}</b>` }));
     geral.sort((a,b) => Number(b.ts || 0) - Number(a.ts || 0));
-    const bg = document.getElementById('feedGeral');
-    if(bg) bg.innerHTML = geral.length ? geral.slice(0, 40).map(feedItemHtml).join('')
-      : '<div class="empty-note">Sem novidades por enquanto. Volte depois — o feed enche conforme a comunidade se movimenta.</div>';
 
     /* ---- AMIGOS ---- */
     const amigos = new Set((Array.isArray(perfilCfg.amigos) ? perfilCfg.amigos : []).map(a => String(a).trim().toLowerCase()));
@@ -5175,16 +5405,40 @@ async function paginaPerfil(){
     todosSubs
       .filter(s => amigos.has(String(s.user || '').trim().toLowerCase()))
       .forEach(s => amig.push({ nome: s.user, ts: s.ts, url: `${BASE}${s.year}/index.html`,
+        postId: idPostSub(s), autorReal: s.user,
         html: `<b>${esc(s.user)}</b> avaliou o <b>Cetec Festival ${s.year}</b>` }));
     (pub.carimbos || []).forEach(c => {
       const cr = (typeof CARIMBOS !== 'undefined' && CARIMBOS[c.tipo]) ? CARIMBOS[c.tipo] : { emoji:'🏷️', nome:c.tipo };
       amig.push({ nome: c.from, ts: c.ts, url: `${BASE}perfil.html?user=${encodeURIComponent(c.from)}`,
         html: `<b>${esc(c.from)}</b> te deu o carimbo ${cr.emoji} <b>${esc(cr.nome)}</b>` });
     });
+    /* conquistas pessoais: badge nova, subiu no Hall da Fama, etc.
+       `carimbos` já entrou acima pela lista do perfil público — espelhar a
+       notificação também duplicaria o mesmo evento no feed. */
+    lista.filter(n => NOTIF_FEED_AMIGOS[n.tipo] && n.tipo !== 'carimbos').forEach(n => amig.push(notifParaFeed(n)));
     amig.sort((a,b) => Number(b.ts || 0) - Number(a.ts || 0));
+
+    /* ---- reações -------------------------------------------------------
+       Uma requisição só com os ids dos posts que vão aparecer nos dois
+       feeds. Se falhar, `_reacoes` fica vazio e os botões nascem zerados —
+       o feed nunca deixa de ser desenhado por causa disso. */
+    const visiveis = geral.slice(0, 40).concat(amig.slice(0, 40));
+    const ids = [...new Set(visiveis.map(i => i.postId).filter(Boolean))];
+    const sess = usuarioLogado();
+    montarFeeds._reacoes = ids.length ? await fetchReacoes(ids, sess ? sess.user : null) : {};
+
+    const bg = document.getElementById('feedGeral');
+    if(bg){
+      bg.innerHTML = geral.length ? geral.slice(0, 40).map(feedItemHtml).join('')
+        : '<div class="empty-note">Sem novidades por enquanto. Volte depois — o feed enche conforme a comunidade se movimenta.</div>';
+      ligarReacoes(bg);
+    }
     const ba = document.getElementById('feedAmigos');
-    if(ba) ba.innerHTML = amig.length ? amig.slice(0, 40).map(feedItemHtml).join('')
-      : '<div class="empty-note">Sem atividade de amigos ainda. Adicione amigos pelo 👥 do topo ou pelo perfil deles.</div>';
+    if(ba){
+      ba.innerHTML = amig.length ? amig.slice(0, 40).map(feedItemHtml).join('')
+        : '<div class="empty-note">Sem atividade de amigos ainda. Adicione amigos pelo 👥 do topo ou pelo perfil deles.</div>';
+      ligarReacoes(ba);
+    }
   }
 
   /* botão editar destaques (meu perfil) */
@@ -5594,7 +5848,7 @@ async function paginaConfig(){
       </div>
       <div class="cfg-row">
         <div class="cfg-info"><div class="cfg-label">Perfil privado</div>
-          <div class="cfg-desc">Tira você da busca e do "adicionar amigo". Seu perfil ainda abre por link direto. <</div></div>
+          <div class="cfg-desc">Tira você da busca e do "adicionar amigo" — e fecha seu perfil: quem abrir o link direto vê só o seu nome, sem avaliações, carimbos, badges ou visitas.</div></div>
         <div class="cfg-ctrl">${switchHtml('cfgPrivado', !!cfg.privado)}</div>
       </div>
       <div class="cfg-row">
@@ -5777,7 +6031,7 @@ function paginaRedefinir(){
       <div class="cfg-group-sub">Conta: <b>${esc(user)}</b></div>
       <div class="login-form">
         <label for="rsSenha">Nova senha</label>
-        <input type="password" id="rsSenha" maxlength="60" placeholder="mínimo 4 caracteres">
+        <input type="password" id="rsSenha" maxlength="60" placeholder="mínimo 8 caracteres">
         <label for="rsSenha2">Repita a nova senha</label>
         <input type="password" id="rsSenha2" maxlength="60" placeholder="digite de novo">
         <div class="login-erro" id="rsErro"></div>
@@ -5789,7 +6043,7 @@ function paginaRedefinir(){
   async function enviar(){
     const s1 = document.getElementById('rsSenha').value, s2 = document.getElementById('rsSenha2').value;
     const erro = document.getElementById('rsErro');
-    if(s1.length < 4){ erro.textContent = 'A senha precisa de pelo menos 4 caracteres.'; return; }
+    if(s1.length < 8){ erro.textContent = 'A senha precisa de pelo menos 8 caracteres.'; return; }
     if(s1 !== s2){ erro.textContent = 'As senhas não conferem.'; return; }
     bt.disabled = true; bt.innerHTML = '<span class="spinner"></span>Salvando...';
     erro.textContent = '';
@@ -5807,6 +6061,123 @@ function paginaRedefinir(){
 /* volta do redirect do Google? troca o token do Supabase pelo nosso.
    Nao bloqueia a renderizacao: em pagina normal sai na primeira linha. */
 checarRetornoOAuth();
+
+/* =====================================================================
+   MODERAÇÃO DA CONTA — roda em TODA página, logo depois do OAuth
+   =====================================================================
+   Três estados vindos do servidor (apiMeuPerfil → moderacao):
+
+     precisaTrocarNome  o admin escondeu o nome (inapropriado). Abre uma tela
+                        BLOQUEANTE: a pessoa só volta a usar o site depois de
+                        escolher outro nome. O nome antigo já sumiu de todas
+                        as telas públicas porque o servidor devolve o
+                        pseudônimo no lugar dele.
+     banido             a sessão não deveria nem existir (o servidor derruba
+                        as sessões ao suspender), mas se sobrou alguma aba
+                        aberta, limpamos aqui e explicamos o motivo.
+     silenciado         pode navegar e ler; só não interage. Avisa uma vez.
+
+   Só faz a chamada se existe sessão — visitante anônimo não paga esse custo. */
+async function checarModeracaoConta(){
+  const s = usuarioLogado();
+  if(!s) return;
+  let r = null;
+  try{ r = await apiMeuPerfil(); }catch(e){ return; }
+  if(!r || !r.ok || !r.moderacao) return;
+  const m = r.moderacao;
+
+  if(m.banido){
+    sairSessao();
+    mostrarAvisoConta('🚫 Conta suspensa',
+      (m.banidoMotivo ? m.banidoMotivo + '<br><br>' : '') +
+      (m.banidoAte ? 'A suspensão vale até <b>' + new Date(Number(m.banidoAte)).toLocaleString('pt-BR') + '</b>.'
+                   : 'Esta suspensão não tem prazo definido.') +
+      '<br><br>Se você acha que foi um engano, fale com a organização por <b>' +
+      esc(typeof EMAIL_CONTATO !== 'undefined' ? EMAIL_CONTATO : 'cetecritic@gmail.com') + '</b>.',
+      null);
+    return;
+  }
+  if(m.precisaTrocarNome){ abrirTrocaNomeObrigatoria(m); return; }
+  if(m.silenciado){
+    /* uma vez por período de silêncio por aparelho — repetir a cada página
+       seria punição em cima de punição */
+    const chave = 'cetec-silencio-' + s.user + '-' + m.silenciadoAte;
+    try{
+      if(!localStorage.getItem(chave)){
+        localStorage.setItem(chave, '1');
+        mostrarNotifBanner({
+          titulo: '🔇 Interações pausadas',
+          corpo: 'Você pode navegar normalmente, mas não dá pra votar, carimbar ou palpitar até ' +
+                 new Date(Number(m.silenciadoAte)).toLocaleString('pt-BR') + '.',
+          url: ''
+        });
+      }
+    }catch(e){ /* sem storage: não avisa, o servidor barra do mesmo jeito */ }
+  }
+}
+
+/* overlay simples reaproveitando o CSS do onboarding. `formHtml` null = só
+   mensagem (sem saída); com conteúdo = a pessoa precisa resolver algo. */
+function mostrarAvisoConta(titulo, corpoHtml, formHtml){
+  const antigo = document.getElementById('ccAvisoConta'); if(antigo) antigo.remove();
+  document.body.insertAdjacentHTML('beforeend', `
+    <div class="onboarding-overlay" id="ccAvisoConta" role="dialog" aria-modal="true" aria-label="${esc(titulo)}">
+      <div class="onboarding-card">
+        <h2>${esc(titulo)}</h2>
+        <p class="onboarding-lead">${corpoHtml}</p>
+        ${formHtml || ''}
+      </div>
+    </div>`);
+  const ov = document.getElementById('ccAvisoConta');
+  requestAnimationFrame(() => ov.classList.add('show'));
+  return ov;
+}
+
+/* tela obrigatória de escolher um nome novo */
+function abrirTrocaNomeObrigatoria(m){
+  const ov = mostrarAvisoConta(
+    '✏️ Escolha um novo nome de usuário',
+    (m.motivoNome ? esc(m.motivoNome) + '<br><br>' : 'Seu nome de usuário atual foi escondido pela organização.<br><br>') +
+    'Escolha outro para continuar. Suas avaliações, badges, reputação e amigos vão junto — nada se perde.',
+    `<div style="display:grid;gap:10px;text-align:left;">
+       <input type="text" id="tnNome" maxlength="20" placeholder="Novo nome (2 a 20 caracteres)"
+              style="width:100%;padding:11px 12px;border-radius:10px;border:1px solid var(--border);background:var(--surface-2);color:var(--text);font-size:15px;">
+       <div class="cfg-msg" id="tnMsg" style="min-height:18px;"></div>
+       <button class="btn btn-solid onboarding-btn" id="tnSalvar">Salvar nome</button>
+       <button class="btn btn-ghost" id="tnSair" style="width:100%;">Sair da conta</button>
+     </div>`);
+
+  const input = document.getElementById('tnNome');
+  const msg = document.getElementById('tnMsg');
+  const bt = document.getElementById('tnSalvar');
+  if(input) input.focus();
+
+  const salvar = async () => {
+    const nome = (input.value || '').trim();
+    if(nome.length < 2 || nome.length > 20){ msg.textContent = 'O nome deve ter de 2 a 20 caracteres.'; return; }
+    if(!/^[A-Za-z0-9_.\- ]+$/.test(nome)){ msg.textContent = 'Use só letras, números, espaço, ponto, hífen ou _.'; return; }
+    bt.disabled = true; bt.innerHTML = '<span class="spinner"></span>Salvando...';
+    const r = await apiTrocarNome(nome);
+    bt.disabled = false; bt.textContent = 'Salvar nome';
+    if(r && r.ok){
+      /* o servidor emitiu uma sessão nova já no nome novo */
+      salvarSessao(r.user, r.token, r.admin);
+      ov.remove();
+      location.reload();
+    }else{
+      msg.textContent = (r && r.error) ? r.error : 'Não foi possível trocar o nome.';
+    }
+  };
+  if(bt) bt.addEventListener('click', salvar);
+  if(input) input.addEventListener('keydown', ev => { if(ev.key === 'Enter') salvar(); });
+  const btSair = document.getElementById('tnSair');
+  if(btSair) btSair.addEventListener('click', async () => {
+    try{ await apiLogout(); }catch(e){}
+    await limparSessaoSupabase(); sairSessao(); location.reload();
+  });
+}
+
+checarModeracaoConta();
 
 /* ---------------------- dispatcher ---------------------- */
 switch(PAGINA.tipo){

@@ -13,14 +13,20 @@
    No Pro dá pra rodar de hora em hora (ajuste o schedule no vercel.json). */
 
 const { enviarParaTodos } = require('./enviar-push');
+const crypto = require('crypto');
 const { createClient } = require('@supabase/supabase-js');
 const sb = createClient(process.env.SUPABASE_URL, process.env.SUPABASE_SECRET_KEY, { auth: { persistSession: false } });
 
 module.exports = async (req, res) => {
-  const auth = req.headers['authorization'] || '';
-  if (process.env.CRON_SECRET && auth !== 'Bearer ' + process.env.CRON_SECRET) {
-    res.status(401).json({ ok: false, error: 'não autorizado' }); return;
-  }
+  /* ANTES: `if (process.env.CRON_SECRET && ...)` — sem a variável configurada
+     a condição era falsa e a rota ficava ABERTA pra qualquer um disparar os
+     agendamentos. Agora o segredo é obrigatório, e a comparação é em tempo
+     constante. Defina CRON_SECRET nas env vars da Vercel. */
+  const auth = String(req.headers['authorization'] || '');
+  const esperado = 'Bearer ' + String(process.env.CRON_SECRET || '');
+  const ba = Buffer.from(auth, 'utf8'), be = Buffer.from(esperado, 'utf8');
+  const ok = !!process.env.CRON_SECRET && ba.length === be.length && crypto.timingSafeEqual(ba, be);
+  if (!ok) { res.status(401).json({ ok: false, error: 'não autorizado' }); return; }
 
   const agora = Date.now();
   let processados = 0, falhas = 0;

@@ -20,6 +20,7 @@
    ===================================================================== */
 const { createClient } = require('@supabase/supabase-js');
 const webpush = require('web-push');
+const { migrarNomeUsuario, estadoConta, validarNome } = require('./_moderacao');
 const sb = createClient(process.env.SUPABASE_URL, process.env.SUPABASE_SECRET_KEY, { auth: { persistSession: false } });
 
 const norm = u => String(u || '').trim().toLowerCase();
@@ -259,6 +260,21 @@ async function handleGet(req, res) {
 }
 
 /* ---------- POST (admin) ---------- */
+/* Só para o `ping` conseguir dizer o que este build sabe fazer. Não é usado
+   pra rotear nada — o roteamento continua sendo a sequência de `if` abaixo. */
+const ACOES_CONHECIDAS = {
+  ping: 1, listarUsuarios: 1, usuarioDetalhe: 1, salvarUsuarioAdmin: 1,
+  forcarTrocaNome: 1, cancelarTrocaNome: 1, renomearUsuario: 1,
+  definirBanimento: 1, definirSilencio: 1, deslogarTudo: 1, ajustarBadges: 1,
+  notificarUsuario: 1, apagarItemUsuario: 1, editarVoto: 1, parseLink: 1,
+  anonimizarUsuario: 1, removerAnonimato: 1, tornarAdmin: 1, lerReputacao: 1,
+  ajustarReputacao: 1, moderarPerfil: 1, deletarUsuario: 1, salvarConfig: 1,
+  postarFeed: 1, deletarEdicao: 1, salvarEdicaoCompleta: 1, enviarNotif: 1,
+  listarVotos: 1, deletarVotos: 1, uploadImagem: 1, agendar: 1,
+  listarAgendados: 1, cancelarAgendado: 1, listarBanners: 1, criarBanner: 1,
+  deletarBanner: 1
+};
+
 async function handlePost(req, res) {
   let body = req.body;
   if (typeof body === 'string') { try { body = JSON.parse(body); } catch (e) { body = {}; } }
@@ -267,7 +283,14 @@ async function handlePost(req, res) {
   if (!(await ehAdmin(body.user, body.token))) { res.status(403).json({ ok: false, error: 'acesso restrito a administradores' }); return; }
   const action = String(body.action || '');
 
-  if (action === 'ping') return res.status(200).json({ ok: true, admin: true });
+  /* `versao` serve pra conferir, em 2 segundos, se o que está no ar é mesmo o
+     build atual — sem isso a gente fica adivinhando quando uma ação nova
+     responde "ação desconhecida". Ao adicionar ações, suba o número. */
+  if (action === 'ping') return res.status(200).json({
+    ok: true, admin: true,
+    versao: 3,
+    acoes: Object.keys(ACOES_CONHECIDAS)
+  });
 
   // ----- gestão de usuários -----
   if (action === 'listarUsuarios') {
@@ -280,13 +303,316 @@ async function handlePost(req, res) {
       const anonimoEfetivo = !!p.anonimo && !expirou;
       const pseudo = anonimoEfetivo ? (String(p.pseudo || '').trim() || ('Anônimo ' + ((function(s){s=String(s).toLowerCase();let h=0;for(let i=0;i<s.length;i++){h=(h*31+s.charCodeAt(i))>>>0;}return h;})(u.usuario) % 9000 + 1000))) : '';
       // nomeReal: só pro painel admin (essa rota já exige ehAdmin) — mostra quem está por trás do anônimo
-      return { usuario: u.usuario, nomeReal: u.usuario, admin: u.admin === true, criadoEm: u.criado_em || 0, email: String(p.email || ''), anonimo: anonimoEfetivo, privado: !!p.privado, pseudo, anonModo: p.anon_modo || null, anonAte: p.anon_ate || null };
+      const est = estadoConta(p);
+      return {
+        usuario: u.usuario, nomeReal: u.usuario, admin: u.admin === true, criadoEm: u.criado_em || 0,
+        email: String(p.email || ''), emailVerificado: p.email_verificado === true,
+        anonimo: anonimoEfetivo, privado: !!p.privado, pseudo,
+        anonModo: p.anon_modo || null, anonAte: p.anon_ate || null,
+        /* estado de moderação: alimenta as tags coloridas da lista do admin */
+        banido: est.banido, banidoAte: est.banidoAte, banidoMotivo: est.banidoMotivo,
+        silenciado: est.silenciado, silenciadoAte: est.silenciadoAte,
+        precisaTrocarNome: est.precisaTrocarNome
+      };
     });
     // busca casa também pelo pseudônimo (nº do anônimo) — perfis privados TAMBÉM aparecem aqui
     if (busca) lista = lista.filter(u => norm(u.usuario).includes(busca) || norm(u.email).includes(busca) || norm(u.pseudo).includes(busca));
     lista.sort((a, b) => (b.criadoEm || 0) - (a.criadoEm || 0));
     return res.status(200).json({ ok: true, usuarios: lista.slice(0, 200) });
   }
+  /* ===================================================================
+     PAINEL DO USUÁRIO (modal do admin) — leitura e escrita completas
+     ===================================================================
+     Todas as ações abaixo já passaram pelo `ehAdmin` lá em cima. Elas
+     existem para o admin abrir UM usuário e mexer em qualquer parâmetro
+     dele sem precisar de SQL no painel do Supabase. */
+
+  /* acha a linha exata do usuário (o nome é case-insensitive no site, mas a
+     chave no banco é o texto original — sempre resolver antes de escrever) */
+  async function acharLinhaUsuario(nome) {
+    const { data } = await sb.from('usuarios').select('*').ilike('usuario', String(nome || '')).limit(10);
+    return (data || []).find(r => norm(r.usuario) === norm(nome)) || null;
+  }
+  /* mescla um patch no perfil preservando o resto. O admin PODE escrever os
+     campos que o usuário não pode (banido, admin_badges…) — é justamente o
+     ponto deste painel. */
+  async function patchPerfil(linha, patch) {
+    const p = (linha.perfil && typeof linha.perfil === 'object') ? Object.assign({}, linha.perfil) : {};
+    Object.keys(patch).forEach(k => {
+      if (patch[k] === undefined || patch[k] === null) delete p[k];
+      else p[k] = patch[k];
+    });
+    const { error } = await sb.from('usuarios').update({ perfil: p }).eq('usuario', linha.usuario);
+    return { erro: error ? (error.message || String(error)) : null, perfil: p };
+  }
+
+  const ADMIN_REP = '__admin__';
+
+  /* ---- 1) tudo sobre um usuário, para montar o modal ---- */
+  if (action === 'usuarioDetalhe') {
+    const alvo = String(body.alvo || '');
+    const linha = await acharLinhaUsuario(alvo);
+    if (!linha) return res.status(404).json({ ok: false, error: 'usuário não encontrado' });
+    const nome = linha.usuario;
+    const p = (linha.perfil && typeof linha.perfil === 'object') ? linha.perfil : {};
+
+    const meu = (rows, col) => (rows || []).filter(r => norm(r[col]) === norm(nome));
+
+    const [subsQ, palpQ, carRecQ, carDadosQ, visRecQ, visFeitasQ, repQ, notifQ, sessQ, reacQ] = await Promise.all([
+      sb.from('submissions').select('row_id,sub_id,usuario,year,grid,ts').ilike('usuario', nome),
+      sb.from('palpites').select('*').ilike('usuario', nome),
+      /* `alvo IS NULL` = carimbo de perfil; com alvo é reação a post do feed,
+         listada à parte logo abaixo */
+      sb.from('carimbos').select('*').ilike('profile_user', nome).is('alvo', null),
+      sb.from('carimbos').select('*').ilike('from_user', nome).is('alvo', null),
+      sb.from('visitas').select('*').ilike('profile_user', nome),
+      sb.from('visitas').select('*').ilike('visitor_user', nome),
+      sb.from('reputacao').select('*').ilike('profile_user', nome),
+      sb.from('notificacoes').select('*').ilike('usuario', nome).order('ts', { ascending: false }).limit(50),
+      sb.from('sessoes').select('id,dispositivo,criado_em,ultimo_uso').ilike('usuario', nome),
+      sb.from('carimbos').select('*').ilike('from_user', nome).not('alvo', 'is', null)
+    ]);
+
+    const repRows = meu(repQ.data, 'profile_user');
+    const repReal = repRows.filter(r => r.from_user !== ADMIN_REP).reduce((s, r) => s + (Number(r.valor) || 0), 0);
+    const repAjuste = Number((repRows.find(r => r.from_user === ADMIN_REP) || {}).valor || 0);
+
+    const subs = meu(subsQ.data, 'usuario').map(r => ({
+      row_id: r.row_id, sub_id: r.sub_id, year: Number(r.year),
+      ts: Number(r.ts) || 0, grid: (r.grid && typeof r.grid === 'object') ? r.grid : {}
+    })).sort((a, b) => b.ts - a.ts);
+
+    return res.status(200).json({
+      ok: true,
+      usuario: nome,
+      admin: linha.admin === true,
+      criadoEm: linha.criado_em || 0,
+      temSenha: !((p.oauth || {}).semSenha),
+      perfil: p,
+      moderacao: estadoConta(p),
+      reputacao: { real: repReal, ajuste: repAjuste, total: repReal + repAjuste },
+      carimbosRecebidos: meu(carRecQ.data, 'profile_user').map(r => ({ id: r.id, de: r.from_user, tipo: r.tipo, ts: Number(r.ts) || 0 })),
+      carimbosDados: meu(carDadosQ.data, 'from_user').map(r => ({ id: r.id, para: r.profile_user, tipo: r.tipo, ts: Number(r.ts) || 0 })),
+      /* reações que ele deu em posts do feed — mesma tabela, com `alvo` */
+      reacoes: meu(reacQ.data, 'from_user').map(r => ({ id: r.id, post: r.alvo, autor: r.profile_user, tipo: r.tipo, ts: Number(r.ts) || 0 })),
+      visitasRecebidas: meu(visRecQ.data, 'profile_user').map(r => ({ id: r.id, de: r.visitor_user, ts: Number(r.ts) || 0, count: Number(r.count) || 1 })),
+      visitasFeitas: meu(visFeitasQ.data, 'visitor_user').length,
+      votos: subs,
+      palpites: meu(palpQ.data, 'usuario').map(r => ({ id: r.id, year: Number(r.year), palpites: r.palpites || {}, ts: Number(r.ts) || 0 })),
+      notificacoes: meu(notifQ.data, 'usuario').map(r => ({ notif_id: r.notif_id, tipo: r.tipo, titulo: r.titulo, corpo: r.corpo, ts: Number(r.ts) || 0, lida: r.lida === true })),
+      sessoes: (sessQ.data || []).map(r => ({ id: r.id, dispositivo: r.dispositivo || '', criadoEm: Number(r.criado_em) || 0, ultimoUso: Number(r.ultimo_uso) || 0 }))
+    });
+  }
+
+  /* ---- 2) salvar campos do perfil (identidade, flags, showcase, favoritas, amigos…) ---- */
+  if (action === 'salvarUsuarioAdmin') {
+    const alvo = String(body.alvo || '');
+    const linha = await acharLinhaUsuario(alvo);
+    if (!linha) return res.status(404).json({ ok: false, error: 'usuário não encontrado' });
+
+    const c = (body.campos && typeof body.campos === 'object') ? body.campos : {};
+    const patch = {};
+    /* lista explícita do que o modal pode gravar — evita que um campo digitado
+       errado no front vire lixo permanente dentro do JSON do perfil */
+    const TEXTO = ['email', 'pseudo', 'bio', 'nota_admin'];
+    const BOOL = ['anonimo', 'privado', 'twofa', 'email_verificado'];
+    const OBJ = ['showcase', 'notif', 'admin_badges'];
+    /* `edicoesFav` é o nome que o core.js lê (renderFavs) — não renomear */
+    const LISTA = ['amigos', 'edicoesFav', 'destaques'];
+
+    TEXTO.forEach(k => { if (c[k] !== undefined) patch[k] = String(c[k] || '').slice(0, 300).trim() || null; });
+    BOOL.forEach(k => { if (c[k] !== undefined) patch[k] = !!c[k]; });
+    OBJ.forEach(k => { if (c[k] !== undefined) patch[k] = (c[k] && typeof c[k] === 'object') ? c[k] : null; });
+    LISTA.forEach(k => { if (c[k] !== undefined) patch[k] = Array.isArray(c[k]) ? c[k].slice(0, 500) : null; });
+
+    if (patch.email && !/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(patch.email)) {
+      return res.status(400).json({ ok: false, error: 'e-mail inválido' });
+    }
+    /* ligar o anonimato pelo painel sem pseudônimo geraria "Anônimo ####"
+       aleatório a cada leitura — fixa um aqui, igual faz o site */
+    if (patch.anonimo === true) {
+      const atual = String((linha.perfil || {}).pseudo || '').trim();
+      if (!atual && !patch.pseudo) patch.pseudo = 'Anônimo ' + (1000 + Math.floor(Math.random() * 9000));
+    }
+
+    if (c.admin !== undefined) {
+      const { error } = await sb.from('usuarios').update({ admin: !!c.admin }).eq('usuario', linha.usuario);
+      if (error) return res.status(500).json({ ok: false, error: error.message });
+    }
+    const r = await patchPerfil(linha, patch);
+    if (r.erro) return res.status(500).json({ ok: false, error: r.erro });
+    return res.status(200).json({ ok: true, perfil: r.perfil });
+  }
+
+  /* ---- 3) esconder o nome e obrigar a pessoa a escolher outro ----
+     Faz as duas coisas de uma vez: liga o anonimato (o nome some na hora de
+     todo lugar público, porque lerPerfisMap passa a devolver o pseudônimo) e
+     marca `nome_bloqueado`, que o site lê para abrir a tela obrigatória de
+     escolher um nome novo no próximo carregamento. */
+  if (action === 'forcarTrocaNome') {
+    const alvo = String(body.alvo || '');
+    const linha = await acharLinhaUsuario(alvo);
+    if (!linha) return res.status(404).json({ ok: false, error: 'usuário não encontrado' });
+    const motivo = String(body.motivo || '').slice(0, 200).trim();
+    const p = (linha.perfil && typeof linha.perfil === 'object') ? linha.perfil : {};
+    const r = await patchPerfil(linha, {
+      anonimo: true,
+      anon_modo: 'sempre',
+      pseudo: String(p.pseudo || '').trim() || ('Usuário ' + (1000 + Math.floor(Math.random() * 9000))),
+      nome_bloqueado: { ts: Date.now(), motivo, nomeAntigo: linha.usuario, por: String(body.user || '') }
+    });
+    if (r.erro) return res.status(500).json({ ok: false, error: r.erro });
+    await sb.from('notificacoes').insert({
+      usuario: linha.usuario, notif_id: 'nome:' + Date.now(), tipo: 'admin',
+      titulo: '✏️ Escolha um novo nome de usuário',
+      corpo: motivo || 'Seu nome atual não está de acordo com as regras. Ele foi escondido até você escolher outro.',
+      url: '/perfil.html', ts: Date.now(), lida: false
+    });
+    return res.status(200).json({ ok: true });
+  }
+  if (action === 'cancelarTrocaNome') {
+    const linha = await acharLinhaUsuario(String(body.alvo || ''));
+    if (!linha) return res.status(404).json({ ok: false, error: 'usuário não encontrado' });
+    const r = await patchPerfil(linha, { nome_bloqueado: null, anonimo: false, anon_modo: null, anon_ate: null });
+    if (r.erro) return res.status(500).json({ ok: false, error: r.erro });
+    return res.status(200).json({ ok: true });
+  }
+
+  /* ---- 4) renomear direto pelo painel (sem esperar o usuário) ---- */
+  if (action === 'renomearUsuario') {
+    const alvo = String(body.alvo || '');
+    const novo = String(body.novoNome || '').trim();
+    const erro = validarNome(novo);
+    if (erro) return res.status(400).json({ ok: false, error: erro });
+    const r = await migrarNomeUsuario(sb, alvo, novo, { limparAnonimato: !!body.limparAnonimato, motivo: 'renomeado pelo admin' });
+    return res.status(r.ok ? 200 : 400).json(r);
+  }
+
+  /* ---- 5) suspender / silenciar ----
+     dias = 0 (ou ausente) significa permanente no banimento e "sem efeito" no
+     silêncio; `ativo:false` remove a punição. */
+  if (action === 'definirBanimento') {
+    const linha = await acharLinhaUsuario(String(body.alvo || ''));
+    if (!linha) return res.status(404).json({ ok: false, error: 'usuário não encontrado' });
+    if (linha.admin === true && body.ativo) {
+      return res.status(400).json({ ok: false, error: 'remova o admin dessa conta antes de suspender' });
+    }
+    let valor = null;
+    if (body.ativo) {
+      const dias = Number(body.dias) || 0;
+      valor = { ts: Date.now(), motivo: String(body.motivo || '').slice(0, 200).trim(), por: String(body.user || '') };
+      if (dias > 0) valor.ate = Date.now() + dias * 24 * 60 * 60 * 1000;
+    }
+    const r = await patchPerfil(linha, { banido: valor });
+    if (r.erro) return res.status(500).json({ ok: false, error: r.erro });
+    /* suspender sem derrubar as sessões abertas não adiantaria nada */
+    if (valor) { try { await sb.from('sessoes').delete().ilike('usuario', linha.usuario); } catch (e) { /* segue */ } }
+    return res.status(200).json({ ok: true });
+  }
+  if (action === 'definirSilencio') {
+    const linha = await acharLinhaUsuario(String(body.alvo || ''));
+    if (!linha) return res.status(404).json({ ok: false, error: 'usuário não encontrado' });
+    const horas = Number(body.horas) || 0;
+    const ate = (body.ativo && horas > 0) ? (Date.now() + horas * 60 * 60 * 1000) : null;
+    const r = await patchPerfil(linha, { silenciado_ate: ate });
+    if (r.erro) return res.status(500).json({ ok: false, error: r.erro });
+    return res.status(200).json({ ok: true, ate });
+  }
+
+  /* ---- 6) derrubar todas as sessões (sem suspender) ---- */
+  if (action === 'deslogarTudo') {
+    const linha = await acharLinhaUsuario(String(body.alvo || ''));
+    if (!linha) return res.status(404).json({ ok: false, error: 'usuário não encontrado' });
+    const { error } = await sb.from('sessoes').delete().ilike('usuario', linha.usuario);
+    /* o token legado mora em usuarios.token — zerar também, senão a sessão
+       antiga de quem nunca relogou continua valendo */
+    await sb.from('usuarios').update({ token: null }).eq('usuario', linha.usuario);
+    if (error) return res.status(500).json({ ok: false, error: error.message });
+    return res.status(200).json({ ok: true });
+  }
+
+  /* ---- 7) badges: forçar ou bloquear ----
+     As badges do perfil são CALCULADAS no navegador a partir dos votos, então
+     não há o que "editar" no banco. O que guardamos é uma camada de exceção
+     — { forcadas:[titulo], bloqueadas:[titulo] } — que o core.js aplica por
+     cima do catálogo na hora de renderizar. */
+  if (action === 'ajustarBadges') {
+    const linha = await acharLinhaUsuario(String(body.alvo || ''));
+    if (!linha) return res.status(404).json({ ok: false, error: 'usuário não encontrado' });
+    const lista = v => Array.isArray(v) ? [...new Set(v.map(x => String(x).slice(0, 80).trim()).filter(Boolean))].slice(0, 200) : [];
+    const forcadas = lista(body.forcadas);
+    const bloqueadas = lista(body.bloqueadas).filter(t => forcadas.indexOf(t) < 0);  // forçar ganha do bloquear
+    const vazio = !forcadas.length && !bloqueadas.length;
+    const r = await patchPerfil(linha, { admin_badges: vazio ? null : { forcadas, bloqueadas } });
+    if (r.erro) return res.status(500).json({ ok: false, error: r.erro });
+    return res.status(200).json({ ok: true, forcadas, bloqueadas });
+  }
+
+  /* ---- 8) atalho: mensagem direta pra UMA pessoa ---- */
+  if (action === 'notificarUsuario') {
+    const linha = await acharLinhaUsuario(String(body.alvo || ''));
+    if (!linha) return res.status(404).json({ ok: false, error: 'usuário não encontrado' });
+    const titulo = String(body.titulo || '').trim().slice(0, 120);
+    const corpo = String(body.corpo || '').trim().slice(0, 500);
+    if (!titulo && !corpo) return res.status(400).json({ ok: false, error: 'mensagem vazia' });
+    const url = String(body.url || '/notificacoes.html').slice(0, 300);
+    await sb.from('notificacoes').insert({
+      usuario: linha.usuario, notif_id: 'admin:' + Date.now(), tipo: 'admin',
+      titulo: titulo || '📣 CETECritic', corpo, url, ts: Date.now(), lida: false
+    });
+    let push = 0;
+    if (body.push) push = await enviarPushPara([linha.usuario], { title: titulo || 'CETECritic', body: corpo, url });
+    return res.status(200).json({ ok: true, push });
+  }
+
+  /* ---- 9) apagar conteúdo pontual do usuário ---- */
+  if (action === 'apagarItemUsuario') {
+    const tipo = String(body.tipo || '');
+    const id = body.id;
+    if (id === undefined || id === null || id === '') return res.status(400).json({ ok: false, error: 'id ausente' });
+    const mapa = {
+      voto: ['submissions', 'row_id'],
+      carimbo: ['carimbos', 'id'],
+      visita: ['visitas', 'id'],
+      palpite: ['palpites', 'id'],
+      notificacao: ['notificacoes', 'notif_id'],
+      sessao: ['sessoes', 'id']
+    };
+    const par = mapa[tipo];
+    if (!par) return res.status(400).json({ ok: false, error: 'tipo inválido: ' + tipo });
+
+    let q = sb.from(par[0]).delete().eq(par[1], id);
+    /* ATENÇÃO: notif_id NÃO é único. Um aviso enviado "para todos" grava a
+       MESMA notif_id em uma linha por usuário — apagar só por notif_id
+       removeria o aviso da caixa de todo mundo. Por isso, aqui, o alvo entra
+       no filtro. As outras tabelas usam chave própria (id/row_id/endpoint) e
+       não têm esse problema. */
+    if (tipo === 'notificacao') {
+      const alvo = String(body.alvo || '');
+      if (!alvo) return res.status(400).json({ ok: false, error: 'alvo obrigatório para apagar notificação' });
+      q = q.ilike('usuario', alvo);
+    }
+    const { error } = await q;
+    if (error) return res.status(500).json({ ok: false, error: error.message });
+    return res.status(200).json({ ok: true });
+  }
+
+  /* ---- 10) editar as notas de UMA avaliação ---- */
+  if (action === 'editarVoto') {
+    const rowId = body.row_id;
+    const grid = (body.grid && typeof body.grid === 'object') ? body.grid : null;
+    if (!rowId || !grid) return res.status(400).json({ ok: false, error: 'dados inválidos' });
+    const limpo = {};
+    Object.keys(grid).forEach(k => {
+      if (!/^s\d+e\d+$/.test(k)) return;                 // só chaves no formato sNeM
+      const v = Number(grid[k]);
+      if (Number.isFinite(v) && v >= 0 && v <= 10) limpo[k] = v;
+    });
+    const { error } = await sb.from('submissions').update({ grid: limpo }).eq('row_id', rowId);
+    if (error) return res.status(500).json({ ok: false, error: error.message });
+    return res.status(200).json({ ok: true, grid: limpo });
+  }
+
   // ----- item 4: testar/normalizar link do Spotify/YouTube (usado no import de CSV também) -----
   if (action === 'parseLink') {
     return res.status(200).json({ ok: true, resultado: parseLinkMusica(body.link) });
@@ -363,21 +689,65 @@ async function handlePost(req, res) {
   }
 
   if (action === 'moderarPerfil') {
-    const nu = norm(body.alvo || ''); const op = body.opcoes || {};
-    const limpar = async (table) => {
-      const { data } = await sb.from(table).select('id,profile_user');
-      const ids = (data || []).filter(r => norm(r.profile_user) === nu).map(r => r.id);
-      if (ids.length) await sb.from(table).delete().in('id', ids);
+    const alvo = String(body.alvo || '');
+    const nu = norm(alvo); const op = body.opcoes || {};
+    const avisos = [];
+    /* filtro NO SERVIDOR (ilike) e não select('*') solto: o PostgREST corta em
+       1000 linhas, e em tabelas grandes as linhas do usuário nem apareciam —
+       mesma armadilha já documentada no apiDeletarConta do db.js. */
+    /* Apagamos pela PRÓPRIA coluna, usando os valores exatos observados na
+       leitura. Não usamos a chave primária de propósito: em `notificacoes` o
+       notif_id se repete entre usuários (aviso enviado pra todos), então
+       deletar por ele limparia a caixa de terceiros. E não dá pra usar ilike
+       direto no delete porque `_` é curinga em LIKE e nomes aceitam `_`. */
+    /* `ajustar` aplica o mesmo filtro extra na leitura e no delete — usado pra
+       separar carimbo de perfil (alvo IS NULL) de reação a post (alvo NOT NULL),
+       que dividem a tabela `carimbos`. */
+    const limpar = async (table, col, ajustar) => {
+      let sel = sb.from(table).select('*').ilike(col, alvo);
+      if (ajustar) sel = ajustar(sel);
+      const { data, error } = await sel;
+      if (error) { avisos.push('ler ' + table + ': ' + error.message); return; }
+      const exatos = [...new Set((data || []).filter(r => norm(r[col]) === nu).map(r => r[col]))];
+      if (!exatos.length) return;
+      let del = sb.from(table).delete().in(col, exatos);
+      if (ajustar) del = ajustar(del);
+      const { error: e2 } = await del;
+      if (e2) avisos.push('apagar ' + table + ': ' + e2.message);
     };
-    if (op.carimbos) await limpar('carimbos');
-    if (op.visitas) await limpar('visitas');
-    if (op.reputacao) await limpar('reputacao');
-    if (op.showcase) {
-      const { data } = await sb.from('usuarios').select('usuario,perfil').ilike('usuario', body.alvo);
-      const real = (data || []).find(r => norm(r.usuario) === nu);
-      if (real) { const p = (real.perfil && typeof real.perfil === 'object') ? Object.assign({}, real.perfil) : {}; delete p.destaques; delete p.favoritas; delete p.showcase; await sb.from('usuarios').update({ perfil: p }).eq('usuario', real.usuario); }
+    const soPerfil = q => q.is('alvo', null);
+    const soReacao = q => q.not('alvo', 'is', null);
+    if (op.carimbos)     await limpar('carimbos', 'profile_user', soPerfil);
+    if (op.carimbosDados)await limpar('carimbos', 'from_user', soPerfil);
+    if (op.reacoes)      await limpar('carimbos', 'from_user', soReacao);
+    if (op.visitas)      await limpar('visitas', 'profile_user');
+    if (op.reputacao)    await limpar('reputacao', 'profile_user');
+    if (op.palpites)     await limpar('palpites', 'usuario');
+    if (op.notificacoes) await limpar('notificacoes', 'usuario');
+    if (op.push)         await limpar('push', 'usuario');
+    /* votos: anonimizamos em vez de apagar, senão as médias das peças mudam
+       retroativamente e o histórico do festival fica errado */
+    if (op.votos) {
+      const { data, error } = await sb.from('submissions').select('row_id,usuario').ilike('usuario', alvo);
+      if (error) avisos.push('ler submissions: ' + error.message);
+      const ids = (data || []).filter(r => norm(r.usuario) === nu).map(r => r.row_id);
+      for (let i = 0; i < ids.length; i += 200) {
+        const { error: e2 } = await sb.from('submissions').update({ usuario: null }).in('row_id', ids.slice(i, i + 200));
+        if (e2) avisos.push('anonimizar votos: ' + e2.message);
+      }
     }
-    return res.status(200).json({ ok: true });
+    if (op.showcase || op.amigos) {
+      const { data } = await sb.from('usuarios').select('usuario,perfil').ilike('usuario', alvo);
+      const real = (data || []).find(r => norm(r.usuario) === nu);
+      if (real) {
+        const p = (real.perfil && typeof real.perfil === 'object') ? Object.assign({}, real.perfil) : {};
+        if (op.showcase) { delete p.destaques; delete p.favoritas; delete p.showcase; }
+        if (op.amigos) delete p.amigos;
+        const { error } = await sb.from('usuarios').update({ perfil: p }).eq('usuario', real.usuario);
+        if (error) avisos.push('perfil: ' + error.message);
+      }
+    }
+    return res.status(200).json({ ok: avisos.length === 0, avisos });
   }
   /* mesmo tratamento do apiDeletarConta do db.js: filtro no servidor (o select('*')
      sem filtro só traz 1000 linhas e deixava rastro pra FK barrar) + checagem de erro */

@@ -12,6 +12,7 @@
      SUPABASE_URL, SUPABASE_SECRET_KEY  (lê/limpa inscrições e grava broadcast) */
 
 const webpush = require('web-push');
+const crypto = require('crypto');
 const { createClient } = require('@supabase/supabase-js');
 
 const sb = createClient(process.env.SUPABASE_URL, process.env.SUPABASE_SECRET_KEY, {
@@ -79,10 +80,13 @@ module.exports = async (req, res) => {
   if (typeof body === 'string') { try { body = JSON.parse(body); } catch (e) { body = {}; } }
   body = body || {};
 
-  const secret = req.headers['x-secret'] || body.secret;
-  if (!process.env.PUSH_SEND_SECRET || secret !== process.env.PUSH_SEND_SECRET) {
-    res.status(401).json({ ok: false, error: 'não autorizado' }); return;
-  }
+  /* comparação em tempo constante (o `!==` vaza o prefixo correto byte a byte
+     pra quem cronometrar as respostas) */
+  const secret = String(req.headers['x-secret'] || body.secret || '');
+  const esperado = String(process.env.PUSH_SEND_SECRET || '');
+  const bs = Buffer.from(secret, 'utf8'), be = Buffer.from(esperado, 'utf8');
+  const autorizado = !!esperado && bs.length === be.length && crypto.timingSafeEqual(bs, be);
+  if (!autorizado) { res.status(401).json({ ok: false, error: 'não autorizado' }); return; }
   try {
     const r = await enviarParaTodos({ title: body.title, body: body.body, url: body.url, dur: body.dur });
     res.status(200).json({ ok: true, ...r });

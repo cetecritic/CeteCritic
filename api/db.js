@@ -15,6 +15,7 @@
    ===================================================================== */
 const { createClient } = require('@supabase/supabase-js');
 const crypto = require('crypto');
+const { migrarNomeUsuario, estadoConta, mensagemBloqueio, validarNome } = require('./_moderacao');
 
 const sb = createClient(process.env.SUPABASE_URL, process.env.SUPABASE_SECRET_KEY, {
   auth: { persistSession: false }
@@ -24,9 +25,15 @@ const sb = createClient(process.env.SUPABASE_URL, process.env.SUPABASE_SECRET_KE
 const MAX_RATING = 10;
 const CURRENT_EDITION_YEAR = 2026;
 const MAX_TENTATIVAS = 5;
+/* uma mensagem só pra "não existe" e "senha errada" — ver apiLogin */
+const ERRO_LOGIN = 'usuário ou senha incorretos';
 const LOCK_MS = 10 * 60 * 1000;
 const CARIMBO_COOLDOWN_MS = 5 * 60 * 1000;
-const CARIMBOS_VALIDOS = { joia:1, critico:1, parceiro:1, lenda:1, concordo:1, discordo:1, palmas:1, polemico:1 };
+/* `curtida` é o ❤️ — a reação simples e padrão dos posts do feed. Vale também
+   como carimbo de perfil: é o mesmo vocabulário nos dois lugares, de propósito. */
+const CARIMBOS_VALIDOS = { curtida:1, joia:1, critico:1, parceiro:1, lenda:1, concordo:1, discordo:1, palmas:1, polemico:1 };
+/* tamanho máximo do id de post guardado em carimbos.alvo ('feed:<ts>' / 'sub:<id>') */
+const ALVO_MAX = 120;
 const RESET_TTL_MS = 60 * 60 * 1000;
 const SITE_URL = process.env.RESET_SITE_URL || 'https://cetecritic.xyz';
 const PUSH_SECRET = process.env.PUSH_SECRET || '';
@@ -66,7 +73,59 @@ async function votingClosed(year){
 
 /* ---------------- helpers ---------------- */
 const norm = u => String(u || '').trim().toLowerCase();
-function hash(senha, salt){ return crypto.createHash('sha256').update(String(salt) + '|' + String(senha)).digest('hex'); }
+
+/* ---------------- senhas ----------------------------------------------
+   Antes: sha256(salt|senha), UMA rodada. É rápido demais de propósito —
+   se o banco vazar, uma GPU testa bilhões de tentativas por segundo e as
+   senhas caem em minutos.
+
+   Agora: scrypt (memory-hard, vem no core do Node — sem dependência nova).
+   O hash novo é gravado no formato  s2$N$r$p$<hex>  pra dar pra mudar os
+   parâmetros depois sem quebrar nada.
+
+   COMPATIBILIDADE: contas antigas continuam com o hash sha256 e são
+   migradas pra scrypt sozinhas no próximo login correto (ver apiLogin).
+   Ninguém precisa trocar de senha. ---------------------------------- */
+const SCRYPT = { N: 16384, r: 8, p: 1, keylen: 64 };
+
+function igualSeguro(a, b){
+  const ba = Buffer.from(String(a), 'utf8'), bb = Buffer.from(String(b), 'utf8');
+  if(ba.length !== bb.length) return false;               // length já vaza pouco e é inevitável
+  try{ return crypto.timingSafeEqual(ba, bb); }catch(e){ return false; }
+}
+function hashLegado(senha, salt){ return crypto.createHash('sha256').update(String(salt) + '|' + String(senha)).digest('hex'); }
+function hashSenha(senha, salt){
+  const dk = crypto.scryptSync(String(senha), String(salt), SCRYPT.keylen, { N: SCRYPT.N, r: SCRYPT.r, p: SCRYPT.p });
+  return 's2$' + SCRYPT.N + '$' + SCRYPT.r + '$' + SCRYPT.p + '$' + dk.toString('hex');
+}
+/* devolve { ok, migrar } — migrar=true quer dizer "a senha está certa, mas o
+   hash guardado ainda é do formato antigo; regrave em scrypt" */
+function conferirSenha(senha, salt, guardado){
+  const g = String(guardado || '');
+  if(g.indexOf('s2$') === 0){
+    const partes = g.split('$');            // ['s2', N, r, p, hex]
+    const hex = partes[4] || '';
+    try{
+      const dk = crypto.scryptSync(String(senha), String(salt), Buffer.from(hex, 'hex').length,
+        { N: Number(partes[1]), r: Number(partes[2]), p: Number(partes[3]) });
+      return { ok: igualSeguro(dk.toString('hex'), hex), migrar: false };
+    }catch(e){ return { ok: false, migrar: false }; }
+  }
+  return { ok: igualSeguro(hashLegado(senha, salt), g), migrar: true };
+}
+/* usuário inexistente tem que custar o mesmo tempo de um scrypt real, senão
+   dá pra descobrir quem existe cronometrando a resposta */
+function gastarTempoSenha(){ try{ hashSenha('tempo-constante', 'tempo-constante'); }catch(e){} }
+
+/* confere um segredo de servidor. Exige que ele EXISTA — antes, se a variável
+   de ambiente não estivesse configurada, `String(body.secret||'') !== ''` dava
+   verdadeiro pra quem mandasse a string vazia e a rota abria sozinha. */
+function segredoOk(recebido, esperado){
+  const e = String(esperado || '');
+  if(!e) return false;
+  return igualSeguro(String(recebido || ''), e);
+}
+
 function novoToken(){ return crypto.randomUUID().replace(/-/g, ''); }
 function hashNum(s){ s = String(s).toLowerCase(); let h = 0; for(let i=0;i<s.length;i++){ h = (h*31 + s.charCodeAt(i)) >>> 0; } return h; }
 function asObj(v){ if(!v) return {}; if(typeof v === 'object') return v; try{ return JSON.parse(v); }catch(e){ return {}; } }
@@ -102,6 +161,26 @@ async function criarSessao(usuario, dispositivo){
   if(error){ try{ await sb.from('usuarios').update({ token }).eq('usuario', usuario); }catch(e){} }
   return token;
 }
+/* ---------------------------------------------------------------------
+   Barreira de moderação. Dois níveis, porque as regras são diferentes:
+     'login'     -> só bloqueia conta SUSPENSA (banida)
+     'interagir' -> bloqueia suspensa E silenciada (votar, carimbar, palpitar,
+                    dar reputação — qualquer coisa que afete outras pessoas)
+   Editar o próprio perfil e ler notificações continuam liberados para quem
+   está só silenciado: a punição é sobre interação, não sobre a própria conta.
+   --------------------------------------------------------------------- */
+function bloqueioDe(u, nivel){
+  if(!u) return null;
+  const est = estadoConta(u.perfil);
+  if(est.banido) return mensagemBloqueio(est);
+  if(nivel === 'interagir' && est.silenciado) return mensagemBloqueio(est);
+  return null;
+}
+async function barreiraModeracao(usuario, nivel){
+  const u = await acharUsuario(usuario);
+  return bloqueioDe(u, nivel);
+}
+
 // mapa normUser -> { user, display, anonimo, privado, email }
 async function lerPerfisMap(){
   const { data } = await sb.from('usuarios').select('usuario,perfil');
@@ -112,14 +191,78 @@ async function lerPerfisMap(){
     // anonimato "por período": se anon_ate passou, volta a ser não-anônimo
     // (expira sozinho na leitura, sem precisar de job). "sempre" = anon_ate null/ausente.
     const expirou = !!(p.anon_ate && Date.now() > Number(p.anon_ate));
-    const anon = !!p.anonimo && !expirou;
+    /* nome_bloqueado força anonimato aqui, no ponto que TODAS as telas
+       públicas usam. Sem isso a pessoa desligaria o "modo anônimo" nas
+       configurações e o nome escondido voltaria a aparecer. */
+    const anon = (!!p.anonimo && !expirou) || !!p.nome_bloqueado;
     const display = anon ? (String(p.pseudo || '').trim() || ('Anônimo ' + (hashNum(usuario) % 9000 + 1000))) : usuario;
-    map[norm(usuario)] = { user: usuario, display, anonimo: anon, privado: !!p.privado, email: String(p.email || '').trim() };
+    map[norm(usuario)] = { user: usuario, display, anonimo: anon, privado: !!p.privado, email: String(p.email || '').trim(), verificado: p.email_verificado === true };
   });
   return map;
 }
 function displayFeed(usuario, map){ const m = map[norm(usuario)]; return (m && m.anonimo) ? m.display : String(usuario || ''); }
-function perfilPublico(cfg){ const c = {}; for(const k in cfg){ if(k==='email'||k==='notif') continue; c[k] = cfg[k]; } return c; }
+/* campos que NUNCA saem numa resposta pública (GET ?perfil=) — o `oauth`
+   carrega o supabase_uid e o `email_verificado` é sinal interno */
+const PERFIL_PRIVADO = [
+  'email', 'notif', 'oauth', 'email_verificado', 'anon_modo', 'anon_ate',
+  /* moderação: `nomes_antigos` guarda justamente o nome que foi escondido —
+     vazar isso no perfil público anularia o motivo de ter escondido. E o
+     estado de punição não é da conta de quem visita. */
+  'banido', 'silenciado_ate', 'nome_bloqueado', 'nomes_antigos', 'nota_admin'
+];
+function perfilPublico(cfg){ const c = {}; for(const k in cfg){ if(PERFIL_PRIVADO.indexOf(k) >= 0) continue; c[k] = cfg[k]; } return c; }
+
+/* ---------------------------------------------------------------------
+   Campos do `perfil` que só o SERVIDOR (ou o admin) escreve. Antes o objeto
+   `perfil` inteiro vinha do body do cliente e era gravado como veio, então
+   dava pra qualquer usuário logado sobrescrever o próprio vínculo `oauth`
+   ou apagar o `anon_ate` que o admin tinha posto. Agora esses campos são
+   sempre recopiados do que já estava no banco. ------------------------ */
+const PERFIL_SO_SERVIDOR = [
+  'oauth', 'anon_modo', 'anon_ate', 'email_verificado',
+  /* moderação: só o painel admin escreve estes. Se o cliente pudesse mandá-los
+     no `perfil`, qualquer usuário logado se desbaniria sozinho. */
+  'banido', 'silenciado_ate', 'nome_bloqueado', 'nomes_antigos', 'admin_badges', 'nota_admin'
+];
+
+function sanitizarPerfil(cfg, antigo){
+  const limpo = {};
+  for(const k in cfg){ if(PERFIL_SO_SERVIDOR.indexOf(k) < 0) limpo[k] = cfg[k]; }
+
+  const emailNovo = String(limpo.email || '').trim().toLowerCase();
+  if(emailNovo && !/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(emailNovo)) return { erro: 'e-mail inválido' };
+  if(emailNovo) limpo.email = emailNovo; else delete limpo.email;
+
+  /* limites de tamanho: sem isso dá pra enfiar megabytes de JSON na linha */
+  if(limpo.pseudo != null){ limpo.pseudo = String(limpo.pseudo).slice(0, 40).trim(); if(!limpo.pseudo) delete limpo.pseudo; }
+  if(Array.isArray(limpo.amigos)) limpo.amigos = limpo.amigos.slice(0, 500).map(a => String(a).slice(0, 20));
+
+  /* devolve os campos protegidos exatamente como estavam */
+  PERFIL_SO_SERVIDOR.forEach(k => { if(antigo[k] !== undefined) limpo[k] = antigo[k]; });
+  /* com o nome bloqueado, o anonimato não é opcional: a pessoa não pode
+     desligá-lo nas configurações e trazer o nome escondido de volta */
+  if(antigo.nome_bloqueado){
+    limpo.anonimo = true;
+    if(!String(limpo.pseudo || '').trim()) limpo.pseudo = String(antigo.pseudo || '').trim() || 'Usuário';
+  }
+  /* trocou de e-mail? a verificação do anterior não vale mais */
+  if(String(antigo.email || '').trim().toLowerCase() !== emailNovo) delete limpo.email_verificado;
+
+  if(JSON.stringify(limpo).length > 20000) return { erro: 'perfil grande demais' };
+  return { perfil: limpo };
+}
+
+/* marca o e-mail do perfil como PROVADO (a pessoa demonstrou ter acesso à
+   caixa de entrada). Só um e-mail provado pode ser usado pra ligar uma conta
+   antiga ao login do Google — ver apiLoginOAuth. */
+async function marcarEmailVerificado(u){
+  try{
+    const p = asObj(u.perfil);
+    if(!String(p.email || '').trim() || p.email_verificado === true) return;
+    p.email_verificado = true;
+    await sb.from('usuarios').update({ perfil: p }).eq('usuario', u.usuario);
+  }catch(e){ /* não é motivo pra derrubar o login */ }
+}
 
 // preferências de notificação do alvo (default ligado)
 async function prefNotifAtiva(usuario, tipo){
@@ -205,12 +348,30 @@ async function handleGet(req, res){
     const cfg = u ? asObj(u.perfil) : {};
     const pmap = await lerPerfisMap();
     const meMap = pmap[norm(alvo)] || null;
+
+    /* ---- PERFIL PRIVADO -------------------------------------------------
+       Antes o `privado` só tirava a pessoa da busca e do "adicionar amigo":
+       quem soubesse o nome abria /perfil.html?user=NOME e via visitas,
+       carimbos e reputação inteiros. Agora, se o perfil é privado, só o DONO
+       recebe os dados — e ele prova isso mandando o token da sessão. */
+    const ehDono = !!(q.por && q.token && norm(q.por) === norm(alvo) && await verificarToken(String(q.por), String(q.token)));
+    if(u && cfg.privado === true && !ehDono){
+      return res.json({
+        user: u.usuario, nomeExib: meMap ? meMap.display : alvo,
+        anonimo: !!(meMap && meMap.anonimo), existe: true,
+        privado: true, restrito: true,
+        perfil: { privado: true }, totalVisitas: 0, visitas: [], carimbos: [], reputacao: 0, meuVoto: 0
+      });
+    }
+
     const disp = who => { const m = pmap[norm(who)]; return (m && m.anonimo) ? m.display : String(who || ''); };
     const { data: vRows } = await sb.from('visitas').select('*').ilike('profile_user', alvo);
     const visitas = (vRows||[]).filter(r => norm(r.profile_user)===norm(alvo))
       .map(r => ({ visitor: disp(r.visitor_user), ts: Number(r.ts), count: Number(r.count)||1 }));
     const totalVisitas = visitas.reduce((a,b)=>a+b.count, 0);
-    const { data: cRows } = await sb.from('carimbos').select('*').ilike('profile_user', alvo);
+    /* `alvo IS NULL` = carimbo de PERFIL. As linhas com alvo preenchido são
+       reações a posts do feed e não entram na lista do perfil. */
+    const { data: cRows } = await sb.from('carimbos').select('*').ilike('profile_user', alvo).is('alvo', null);
     const carimbos = (cRows||[]).filter(r => norm(r.profile_user)===norm(alvo))
       .map(r => ({ from: disp(r.from_user), tipo: String(r.tipo), ts: Number(r.ts) }));
     const { data: rRows } = await sb.from('reputacao').select('*').ilike('profile_user', alvo);
@@ -223,6 +384,27 @@ async function handleGet(req, res){
       existe: !!u, perfil: perfilPublico(cfg), totalVisitas, visitas, carimbos, reputacao, meuVoto });
   }
 
+  /* ---- reações dos posts do feed (público) ----------------------------
+     O feed pede as contagens de VÁRIOS posts numa tacada só: ?reacoes=a,b,c
+     `por` é opcional e serve pra devolver qual foi a reação daquela pessoa,
+     pro botão já nascer marcado. Não exige token: reação é informação
+     pública, igual ao `meuVoto` do ?perfil=. */
+  if(q.reacoes){
+    const ids = String(q.reacoes).split(',').map(s => s.trim()).filter(Boolean).slice(0, 120);
+    if(!ids.length) return res.json({ ok:true, reacoes:{} });
+    const { data } = await sb.from('carimbos').select('alvo,tipo,from_user').in('alvo', ids);
+    const por = q.por ? norm(q.por) : null;
+    const out = {};
+    ids.forEach(id => { out[id] = { total:0, tipos:{}, meu:null }; });
+    (data||[]).forEach(r => {
+      const o = out[r.alvo]; if(!o) return;
+      o.total++;
+      o.tipos[r.tipo] = (o.tipos[r.tipo] || 0) + 1;
+      if(por && norm(r.from_user) === por) o.meu = String(r.tipo);
+    });
+    return res.json({ ok:true, reacoes: out });
+  }
+
   // lista de usuários (busca / adicionar amigo)
   if(q.usuarios){
     const map = await lerPerfisMap();
@@ -232,7 +414,9 @@ async function handleGet(req, res){
 
   // lista de inscrições push (protegida) — mantida por compat
   if(q.listaPush){
-    if(String(q.listaPush) !== PUSH_SECRET) return res.json({ ok:false, error:'não autorizado' });
+    /* se PUSH_SECRET não estiver configurado, o `!==` de antes deixava passar
+       quem mandasse a string vazia — agora sem segredo ninguém entra */
+    if(!segredoOk(q.listaPush, PUSH_SECRET)) return res.json({ ok:false, error:'não autorizado' });
     const { data } = await sb.from('push').select('endpoint,p256dh,auth');
     const subs = (data||[]).filter(r => r.endpoint).map(r => ({ endpoint:r.endpoint, keys:{ p256dh:r.p256dh, auth:r.auth } }));
     return res.json({ ok:true, subs });
@@ -294,12 +478,14 @@ async function apiRegistrar(body){
   const senha = String(body.senha||'');
   if(usuario.length<2||usuario.length>20) return { ok:false, error:'usuário deve ter de 2 a 20 caracteres' };
   if(!/^[A-Za-z0-9_.\- ]+$/.test(usuario)) return { ok:false, error:'usuário tem caracteres inválidos' };
-  if(senha.length<4) return { ok:false, error:'a senha precisa de pelo menos 4 caracteres' };
+  if(senha.length<8) return { ok:false, error:'a senha precisa de pelo menos 8 caracteres' };
   if(await acharUsuario(usuario)) return { ok:false, error:'esse usuário já existe' };
   const salt = novoToken().slice(0,8);
-  const email = String(body.email||'').trim();
+  const email = String(body.email||'').trim().toLowerCase();
+  /* e-mail cadastrado aqui ainda NÃO está provado: só vira email_verificado
+     depois que a pessoa abrir um link de redefinição ou usar um código 2FA */
   const perfil = (email && /^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(email)) ? { email } : {};
-  const { error } = await sb.from('usuarios').insert({ usuario, senha_hash: hash(senha,salt), salt, token: null, criado_em: Date.now(), tentativas:0, lock_until:0, perfil });
+  const { error } = await sb.from('usuarios').insert({ usuario, senha_hash: hashSenha(senha,salt), salt, token: null, criado_em: Date.now(), tentativas:0, lock_until:0, perfil });
   if(error) return { ok:false, error:'esse usuário já existe' };
   const token = await criarSessao(usuario, body.dispositivo);
   return { ok:true, user:usuario, token };
@@ -309,17 +495,30 @@ async function apiLogin(body){
   const usuario = String(body.user||'').trim();
   const senha = String(body.senha||'');
   const u = await acharUsuario(usuario);
-  if(!u) return { ok:false, error:'usuário não encontrado' };
+  /* mensagem GENÉRICA e mesmo custo de CPU: antes "usuário não encontrado" vs
+     "senha incorreta" entregava quem tem conta no site (enumeração), e sem o
+     scrypt falso dava pra descobrir o mesmo cronometrando a resposta. */
+  if(!u){ gastarTempoSenha(); return { ok:false, error: ERRO_LOGIN }; }
   /* conta criada pelo Google nunca teve senha: dizer isso em vez de "senha incorreta" */
   { const p = asObj(u.perfil); if(p.oauth && p.oauth.semSenha) return { ok:false, error:'essa conta entra pelo Google — use o botão "Entrar com Google"' }; }
   const agora = Date.now();
   if((u.lock_until||0) > agora){ const min = Math.ceil((u.lock_until-agora)/60000); return { ok:false, error:'muitas tentativas — espere '+min+' min e tente de novo' }; }
-  if(hash(senha, u.salt) !== u.senha_hash){
+  const conf = conferirSenha(senha, u.salt, u.senha_hash);
+  if(!conf.ok){
     const tent = (u.tentativas||0)+1;
     if(tent >= MAX_TENTATIVAS){ await sb.from('usuarios').update({ tentativas:0, lock_until: agora+LOCK_MS }).eq('usuario', u.usuario); return { ok:false, error:'muitas tentativas — bloqueado por 10 minutos' }; }
     await sb.from('usuarios').update({ tentativas: tent }).eq('usuario', u.usuario);
-    return { ok:false, error:'senha incorreta ('+(MAX_TENTATIVAS-tent)+' tentativa(s) restante(s))' };
+    return { ok:false, error: ERRO_LOGIN };
   }
+  /* senha certa e hash ainda no formato antigo: regrava em scrypt agora,
+     de forma transparente (a pessoa não percebe nada) */
+  if(conf.migrar){
+    try{ await sb.from('usuarios').update({ senha_hash: hashSenha(senha, u.salt) }).eq('usuario', u.usuario); }catch(e){}
+  }
+  /* conta suspensa: a senha até está certa, mas não emitimos sessão. A checagem
+     vem DEPOIS da senha de propósito — antes, virava um jeito de descobrir
+     quem está banido sem saber a senha. */
+  { const bloq = bloqueioDe(u, 'login'); if(bloq) return { ok:false, error: bloq, banido:true }; }
   // senha certa: se a conta tem 2FA ligado e e-mail, manda o código e NÃO emite token ainda
   const perfil = asObj(u.perfil);
   if(perfil.twofa === true && String(perfil.email || '').trim()){
@@ -345,9 +544,13 @@ async function apiLogin2fa(body){
   if(!row) return { ok:false, error:'peça um novo código (entre de novo)' };
   if((row.tentativas||0) >= 5){ await sb.from('login_codes').delete().eq('usuario', row.usuario); return { ok:false, error:'muitas tentativas — entre de novo' }; }
   if(Date.now() > Number(row.exp)){ await sb.from('login_codes').delete().eq('usuario', row.usuario); return { ok:false, error:'código expirado — entre de novo' }; }
-  if(String(row.code) !== code){ await sb.from('login_codes').update({ tentativas:(row.tentativas||0)+1 }).eq('usuario', row.usuario); return { ok:false, error:'código incorreto' }; }
+  if(!igualSeguro(String(row.code), code)){ await sb.from('login_codes').update({ tentativas:(row.tentativas||0)+1 }).eq('usuario', row.usuario); return { ok:false, error:'código incorreto' }; }
+  { const bloq = bloqueioDe(u, 'login'); if(bloq){ await sb.from('login_codes').delete().eq('usuario', row.usuario); return { ok:false, error: bloq, banido:true }; } }
   await sb.from('login_codes').delete().eq('usuario', row.usuario);
   await sb.from('usuarios').update({ tentativas:0, lock_until:0 }).eq('usuario', u.usuario);
+  /* a pessoa leu um código que só chegou naquela caixa de entrada: o e-mail
+     do perfil está PROVADO. É isso que libera o vínculo com o Google depois. */
+  await marcarEmailVerificado(u);
   const token = await criarSessao(u.usuario, body.dispositivo);
   return { ok:true, user:u.usuario, token, admin: u.admin === true };
 }
@@ -358,7 +561,11 @@ async function apiVoto(body){
   if(await votingClosed(year)) return { ok:false, error:'votação encerrada' };
   if(hasInvalidRating(body.grid)) return { ok:true };
   let usuario = null;
-  if(body.user && await verificarToken(body.user, body.token)) usuario = String(body.user);
+  if(body.user && await verificarToken(body.user, body.token)){
+    const bloq = await barreiraModeracao(body.user, 'interagir');
+    if(bloq) return { ok:false, error: bloq };
+    usuario = String(body.user);
+  }
   await sb.from('submissions').insert({ sub_id:String(body.id), ts:Number(body.ts)||Date.now(), name:String(body.name||'').slice(0,40), grid:body.grid, year, usuario });
   return { ok:true };
 }
@@ -366,6 +573,7 @@ async function apiVoto(body){
 async function apiPalpite(body){
   const usuario = String(body.user||'');
   if(!(await verificarToken(usuario, body.token))) return { ok:false, error:'faça login para palpitar' };
+  { const bloq = await barreiraModeracao(usuario, 'interagir'); if(bloq) return { ok:false, error: bloq }; }
   const year = body.year ? Number(body.year) : CURRENT_EDITION_YEAR;
   if(await votingClosed(year)) return { ok:false, error:'o bolão desse ano já fechou' };
   const entrada = (body.palpites && typeof body.palpites==='object') ? body.palpites : null;
@@ -385,11 +593,14 @@ async function apiPerfil(body){
   if(!(await verificarToken(usuario, body.token))) return { ok:false, error:'faça login' };
   const u = await acharUsuario(usuario);
   if(!u) return { ok:false, error:'usuário não encontrado' };
-  const cfg = (body.perfil && typeof body.perfil==='object') ? body.perfil : {};
+  const cfg = (body.perfil && typeof body.perfil==='object' && !Array.isArray(body.perfil)) ? body.perfil : {};
   const antigo = asObj(u.perfil);
+  const san = sanitizarPerfil(cfg, antigo);
+  if(san.erro) return { ok:false, error: san.erro };
+  const novo = san.perfil;
   const antes = Array.isArray(antigo.amigos) ? antigo.amigos.map(norm) : [];
-  const depois = Array.isArray(cfg.amigos) ? cfg.amigos : [];
-  await sb.from('usuarios').update({ perfil: cfg }).eq('usuario', u.usuario);
+  const depois = Array.isArray(novo.amigos) ? novo.amigos : [];
+  await sb.from('usuarios').update({ perfil: novo }).eq('usuario', u.usuario);
   const pmap = await lerPerfisMap();
   const dispU = (pmap[norm(usuario)] && pmap[norm(usuario)].display) || usuario;
   for(const a of depois){
@@ -420,26 +631,86 @@ async function apiVisita(body){
 async function apiCarimbo(body){
   const usuario = String(body.user||'');
   if(!(await verificarToken(usuario, body.token))) return { ok:false, error:'faça login' };
+  { const bloq = await barreiraModeracao(usuario, 'interagir'); if(bloq) return { ok:false, error: bloq }; }
   const alvo = String(body.alvo||''), tipo = String(body.tipo||'');
   if(!alvo || norm(alvo)===norm(usuario)) return { ok:false, error:'não dá pra carimbar seu próprio perfil' };
   if(!CARIMBOS_VALIDOS[tipo]) return { ok:false, error:'carimbo inválido' };
   if(!(await acharUsuario(alvo))) return { ok:false, error:'perfil não encontrado' };
-  const { data } = await sb.from('carimbos').select('*').ilike('profile_user', alvo);
+  /* só carimbos de PERFIL entram no cooldown — reagir a posts do feed grava
+     na mesma tabela (com `alvo` preenchido) e não deve travar isto aqui */
+  const { data } = await sb.from('carimbos').select('*').ilike('profile_user', alvo).is('alvo', null);
   let ultima = 0;
   (data||[]).forEach(r => { if(norm(r.profile_user)===norm(alvo) && norm(r.from_user)===norm(usuario)) ultima = Math.max(ultima, Number(r.ts)||0); });
   const restante = CARIMBO_COOLDOWN_MS - (Date.now() - ultima);
   if(restante > 0) return { ok:false, error:'espere '+Math.ceil(restante/60000)+' min para carimbar este perfil de novo' };
   const agoraTs = Date.now();
-  await sb.from('carimbos').insert({ profile_user: alvo, from_user: usuario, tipo, ts: agoraTs });
+  await sb.from('carimbos').insert({ profile_user: alvo, from_user: usuario, tipo, ts: agoraTs, alvo: null });
   const pmap = await lerPerfisMap();
   const dispF = (pmap[norm(usuario)] && pmap[norm(usuario)].display) || usuario;
   await criarNotif(alvo, 'carimbos', 'carimbo:'+norm(usuario)+':'+tipo+':'+agoraTs, '📮 Novo carimbo', dispF + ' te deu o carimbo "'+tipo+'".', '/perfil.html');
   return { ok:true };
 }
 
+/* ---------------------------------------------------------------------
+   Reação a um post do feed. Grava na MESMA tabela `carimbos`, com a coluna
+   `alvo` preenchida — é o mesmo vocabulário de emojis, não um sistema novo.
+
+   Diferenças de regra em relação ao carimbo de perfil, todas propositais:
+     - sem cooldown: reagir é gesto leve, não elogio formal
+     - UMA reação por pessoa por post (trocar de emoji faz UPDATE)
+     - tipo null = tirar a reação (o mesmo botão liga e desliga)
+     - dá pra reagir ao próprio post (curtir a própria avaliação é inofensivo,
+       diferente de carimbar o próprio perfil, que inflaria a vitrine)
+   --------------------------------------------------------------------- */
+async function apiReagir(body){
+  const usuario = String(body.user||'');
+  if(!(await verificarToken(usuario, body.token))) return { ok:false, error:'faça login para reagir' };
+  { const bloq = await barreiraModeracao(usuario, 'interagir'); if(bloq) return { ok:false, error: bloq }; }
+
+  const alvo = String(body.postId||'').trim().slice(0, ALVO_MAX);
+  if(!alvo) return { ok:false, error:'post inválido' };
+  const tipo = body.tipo ? String(body.tipo) : null;
+  if(tipo && !CARIMBOS_VALIDOS[tipo]) return { ok:false, error:'reação inválida' };
+
+  /* o autor só é gravado quando é uma conta de verdade — post da organização
+     tem autor livre ("CETECritic"), que não existe em `usuarios` */
+  const autorInformado = String(body.autor||'').trim();
+  const autorReal = autorInformado ? await acharUsuario(autorInformado) : null;
+
+  const { data } = await sb.from('carimbos').select('id,from_user,tipo').eq('alvo', alvo);
+  const minha = (data||[]).find(r => norm(r.from_user) === norm(usuario));
+
+  if(!tipo){
+    if(minha) await sb.from('carimbos').delete().eq('id', minha.id);
+  }else if(minha){
+    await sb.from('carimbos').update({ tipo, ts: Date.now() }).eq('id', minha.id);
+  }else{
+    await sb.from('carimbos').insert({
+      profile_user: autorReal ? autorReal.usuario : null,
+      from_user: usuario, tipo, ts: Date.now(), alvo
+    });
+    /* avisa o autor — mas só quando ele é outra pessoa */
+    if(autorReal && norm(autorReal.usuario) !== norm(usuario)){
+      const pmap = await lerPerfisMap();
+      const dispF = (pmap[norm(usuario)] && pmap[norm(usuario)].display) || usuario;
+      await criarNotif(autorReal.usuario, 'carimbos', 'reacao:'+alvo+':'+norm(usuario),
+        '❤️ Reação no seu post', dispF + ' reagiu a uma publicação sua.', '/perfil.html');
+    }
+  }
+
+  const { data: d2 } = await sb.from('carimbos').select('tipo,from_user').eq('alvo', alvo);
+  const tipos = {}; let meu = null;
+  (d2||[]).forEach(r => {
+    tipos[r.tipo] = (tipos[r.tipo] || 0) + 1;
+    if(norm(r.from_user) === norm(usuario)) meu = String(r.tipo);
+  });
+  return { ok:true, total: (d2||[]).length, tipos, meu };
+}
+
 async function apiReputacao(body){
   const usuario = String(body.user||'');
   if(!(await verificarToken(usuario, body.token))) return { ok:false, error:'faça login' };
+  { const bloq = await barreiraModeracao(usuario, 'interagir'); if(bloq) return { ok:false, error: bloq }; }
   const alvo = String(body.alvo||'');
   if(!alvo || norm(alvo)===norm(usuario)) return { ok:false, error:'não dá pra votar no seu próprio perfil' };
   if(!(await acharUsuario(alvo))) return { ok:false, error:'perfil não encontrado' };
@@ -575,12 +846,19 @@ async function acharUsuarioPorOAuth(uid){
   const { data } = await sb.from('usuarios').select('*').eq('perfil->oauth->>supabase_uid', String(uid)).limit(1);
   return (data || [])[0] || null;
 }
-/* acha a conta pelo e-mail salvo no perfil (para LIGAR uma conta antiga ao Google) */
+/* acha a conta pelo e-mail salvo no perfil (para LIGAR uma conta antiga ao
+   Google). Devolve { linha, verificado } porque quem CHAMA precisa saber se
+   aquele e-mail foi provado — um e-mail que a própria pessoa digitou nas
+   configurações não prova nada (ver apiLoginOAuth). */
 async function acharUsuarioPorEmail(email){
   const alvo = String(email || '').trim().toLowerCase();
   if(!alvo) return null;
-  const { data } = await sb.from('usuarios').select('*').ilike('perfil->>email', alvo).limit(10);
-  return (data || []).find(r => String(asObj(r.perfil).email || '').trim().toLowerCase() === alvo) || null;
+  const { data } = await sb.from('usuarios').select('*').ilike('perfil->>email', alvo).limit(20);
+  const iguais = (data || []).filter(r => String(asObj(r.perfil).email || '').trim().toLowerCase() === alvo);
+  if(!iguais.length) return null;
+  /* se houver mais de uma conta com o mesmo e-mail, a verificada ganha */
+  const verificada = iguais.find(r => asObj(r.perfil).email_verificado === true);
+  return verificada ? { linha: verificada, verificado: true } : { linha: iguais[0], verificado: false };
 }
 
 /* transforma um nome qualquer (vindo do Google) numa sugestão válida pro site */
@@ -597,14 +875,26 @@ async function apiLoginOAuth(body){
   /* 1) já entrou pelo Google antes: só emite a sessão */
   let u = await acharUsuarioPorOAuth(info.uid);
 
-  /* 2) tem conta antiga com esse e-mail: liga as duas (e-mail já verificado acima) */
+  /* 2) tem conta antiga com esse e-mail: liga as duas — MAS só se aquele
+     e-mail já tiver sido provado do nosso lado (link de redefinição aberto,
+     código de 2FA usado, ou conta nascida do próprio Google).
+
+     Sem essa checagem existe um ataque de "pré-sequestro": eu crio uma conta
+     aqui, ponho o SEU e-mail nas configurações (ninguém confere) e espero.
+     Quando você entra pelo Google pela primeira vez, o e-mail bate, o sistema
+     liga o seu Google à MINHA conta e te entrega uma sessão dentro dela — e
+     eu, que sei a senha, passo a ver tudo o que você faz. */
   if(!u){
-    const antigo = await acharUsuarioPorEmail(info.email);
-    if(antigo){
+    const achado = await acharUsuarioPorEmail(info.email);
+    if(achado && achado.verificado){
+      const antigo = achado.linha;
       const p = asObj(antigo.perfil);
       p.oauth = Object.assign({}, p.oauth, { supabase_uid: info.uid, provider: info.provider });
+      p.email_verificado = true;
       await sb.from('usuarios').update({ perfil: p }).eq('usuario', antigo.usuario);
       u = antigo;
+    }else if(achado){
+      return { ok:false, error:'já existe uma conta usando esse e-mail. Entre com usuário e senha e confirme o e-mail (é só pedir "Esqueci minha senha" e abrir o link) — depois disso o botão do Google liga nessa conta.' };
     }
   }
 
@@ -615,6 +905,7 @@ async function apiLoginOAuth(body){
     return { ok:false, precisaNome:true, email: info.email, sugestao: sug };
   }
 
+  { const bloq = bloqueioDe(u, 'login'); if(bloq) return { ok:false, error: bloq, banido:true }; }
   const token = await criarSessao(u.usuario, body.dispositivo);
   return { ok:true, user: u.usuario, token, admin: u.admin === true };
 }
@@ -627,6 +918,7 @@ async function apiFinalizarOAuth(body){
   /* corrida/duplicata: se nesse meio-tempo já ligou, só devolve a sessão */
   const jaLigado = await acharUsuarioPorOAuth(info.uid);
   if(jaLigado){
+    const bloq = bloqueioDe(jaLigado, 'login'); if(bloq) return { ok:false, error: bloq, banido:true };
     const token = await criarSessao(jaLigado.usuario, body.dispositivo);
     return { ok:true, user: jaLigado.usuario, token, admin: jaLigado.admin === true };
   }
@@ -640,10 +932,12 @@ async function apiFinalizarOAuth(body){
      marcamos semSenha, para o login por senha recusar com uma mensagem útil */
   const salt = novoToken().slice(0, 8);
   const senhaImpossivel = novoToken() + novoToken();
-  const perfil = { email: info.email, oauth: { supabase_uid: info.uid, provider: info.provider, semSenha: true } };
+  /* email_verificado: o e-mail veio do provedor e já foi conferido em
+     validarTokenOAuth (email_confirmed_at / email_verified) */
+  const perfil = { email: info.email, email_verificado: true, oauth: { supabase_uid: info.uid, provider: info.provider, semSenha: true } };
 
   const { error } = await sb.from('usuarios').insert({
-    usuario, senha_hash: hash(senhaImpossivel, salt), salt, token: null,
+    usuario, senha_hash: hashSenha(senhaImpossivel, salt), salt, token: null,
     criado_em: Date.now(), tentativas: 0, lock_until: 0, perfil
   });
   if(error) return { ok:false, error:'esse usuário já existe — escolha outro' };
@@ -656,7 +950,55 @@ async function apiMeuPerfil(body){
   const usuario = String(body.user||'');
   if(!(await verificarToken(usuario, body.token))) return { ok:false, error:'faça login' };
   const u = await acharUsuario(usuario);
-  return { ok:true, user: u?u.usuario:usuario, perfil: u?asObj(u.perfil):{}, admin: !!(u && u.admin === true) };
+  /* `moderacao` é o que o front usa pra decidir se abre a tela obrigatória de
+     troca de nome ou o aviso de conta silenciada. Vai só pro DONO da conta —
+     esta rota já exige token — e nunca pro perfil público. */
+  const est = u ? estadoConta(u.perfil) : null;
+  return {
+    ok:true, user: u?u.usuario:usuario, perfil: u?asObj(u.perfil):{},
+    admin: !!(u && u.admin === true),
+    moderacao: est ? {
+      precisaTrocarNome: est.precisaTrocarNome,
+      motivoNome: est.nomeBloqueadoMotivo,
+      banido: est.banido, banidoAte: est.banidoAte, banidoMotivo: est.banidoMotivo,
+      silenciado: est.silenciado, silenciadoAte: est.silenciadoAte
+    } : null
+  };
+}
+
+/* ---------------------------------------------------------------------
+   Troca de nome pedida pelo PRÓPRIO usuário. Hoje só é liberada quando o
+   admin marcou `nome_bloqueado` no perfil (nome inapropriado): a pessoa é
+   obrigada a escolher outro antes de continuar usando o site.
+
+   A renomeação em si mora em _moderacao.js porque o painel admin também a
+   usa — a regra de "quem pode renomear" é que muda entre os dois.
+   --------------------------------------------------------------------- */
+async function apiTrocarNome(body){
+  const usuario = String(body.user||'');
+  if(!(await verificarToken(usuario, body.token))) return { ok:false, error:'faça login' };
+  const u = await acharUsuario(usuario);
+  if(!u) return { ok:false, error:'usuário não encontrado' };
+
+  const est = estadoConta(u.perfil);
+  if(est.banido) return { ok:false, error: mensagemBloqueio(est) };
+  if(!est.precisaTrocarNome) return { ok:false, error:'sua conta não precisa trocar de nome' };
+
+  const novo = String(body.novoNome||'').trim();
+  const erro = validarNome(novo);
+  if(erro) return { ok:false, error: erro };
+
+  const r = await migrarNomeUsuario(sb, u.usuario, novo, { limparAnonimato: true, motivo: est.nomeBloqueadoMotivo });
+  if(!r.ok) return r;
+
+  /* todas as sessões antigas migraram junto com a linha de `sessoes`, mas o
+     token do aparelho atual agora aponta pro nome novo — devolvemos um token
+     novo mesmo assim, para o localStorage do cliente ficar coerente */
+  await sb.from('sessoes').delete().ilike('usuario', novo);
+  const token = await criarSessao(novo, body.dispositivo);
+  await criarNotif(novo, 'admin', 'nome:'+Date.now(), '✏️ Nome atualizado',
+    'Seu nome de usuário agora é ' + novo + '.', '/perfil.html');
+  return { ok:true, user: novo, token, admin: u.admin === true, avisos: r.avisos || [] };
 }
 
 async function apiSalvarPush(body){
@@ -677,7 +1019,7 @@ async function apiRemoverPush(body){
   return { ok:true };
 }
 async function apiRemoverPushMorto(body){
-  if(String(body.secret||'') !== PUSH_SECRET) return { ok:false, error:'não autorizado' };
+  if(!segredoOk(body.secret, PUSH_SECRET)) return { ok:false, error:'não autorizado' };
   const eps = Array.isArray(body.endpoints) ? body.endpoints.map(String) : [];
   if(!eps.length) return { ok:true, removidos:0 };
   await sb.from('push').delete().in('endpoint', eps);
@@ -690,7 +1032,14 @@ async function apiPedirReset(body){
   if(!conta) return { ok:false, error:'informe seu usuário ou e-mail' };
   const map = await lerPerfisMap();
   let alvo = null;
-  if(conta.indexOf('@') >= 0){ const el = conta.toLowerCase(); for(const k in map){ if(map[k].email && map[k].email.toLowerCase()===el){ alvo = map[k]; break; } } }
+  if(conta.indexOf('@') >= 0){
+    /* pode haver mais de uma conta com o mesmo e-mail digitado (ninguém
+       conferia até aqui). A VERIFICADA tem prioridade — senão alguém que
+       cadastrasse o seu e-mail te deixava sem conseguir recuperar a sua. */
+    const el = conta.toLowerCase();
+    const candidatos = Object.keys(map).map(k => map[k]).filter(m => m.email && m.email.toLowerCase() === el);
+    alvo = candidatos.find(m => m.verificado) || candidatos[0] || null;
+  }
   else alvo = map[norm(conta)] || null;
   if(!alvo || !alvo.email) return generico;
   const token = novoToken();
@@ -701,7 +1050,8 @@ async function apiPedirReset(body){
 }
 async function apiRedefinirSenha(body){
   const usuario = String(body.user||''), token = String(body.token||''), nova = String(body.novaSenha||'');
-  if(nova.length < 4) return { ok:false, error:'a senha precisa de pelo menos 4 caracteres' };
+  if(nova.length < 8) return { ok:false, error:'a senha precisa de pelo menos 8 caracteres' };
+  if(!token || !usuario) return { ok:false, error:'link inválido' };
   const { data } = await sb.from('resets').select('*').eq('token', token);
   const linha = (data||[]).find(r => norm(r.usuario)===norm(usuario));
   if(!linha) return { ok:false, error:'link inválido' };
@@ -710,7 +1060,9 @@ async function apiRedefinirSenha(body){
   const u = await acharUsuario(usuario);
   if(!u) return { ok:false, error:'usuário não encontrado' };
   const salt = novoToken().slice(0,8);
-  await sb.from('usuarios').update({ senha_hash: hash(nova,salt), salt, token: null, tentativas:0, lock_until:0 }).eq('usuario', u.usuario);
+  await sb.from('usuarios').update({ senha_hash: hashSenha(nova,salt), salt, token: null, tentativas:0, lock_until:0 }).eq('usuario', u.usuario);
+  /* abriu o link que só chegou naquela caixa de entrada => e-mail provado */
+  await marcarEmailVerificado(u);
   try{ await sb.from('sessoes').delete().ilike('usuario', u.usuario); }catch(e){}   // desloga todos os dispositivos
   await sb.from('resets').update({ usado:true }).eq('id', linha.id);
   const novoTok = await criarSessao(u.usuario, body.dispositivo);
@@ -793,7 +1145,7 @@ async function apiConsumirAnonUmaVez(body){
 }
 
 async function apiCriarBroadcast(body){
-  if(String(body.secret||'') !== PUSH_SECRET) return { ok:false, error:'não autorizado' };
+  if(!segredoOk(body.secret, PUSH_SECRET)) return { ok:false, error:'não autorizado' };
   const titulo = String(body.titulo||'').trim(), corpo = String(body.corpo||'').trim();
   if(!titulo && !corpo) return { ok:false, error:'aviso vazio' };
   const id = String(body.id || ('bc:'+Date.now()));
@@ -817,7 +1169,8 @@ async function handlePost(req, res){
     marcarNotifLidas: apiMarcarNotifLidas, criarNotif: apiCriarNotif,
     removerPushMorto: apiRemoverPushMorto, criarBroadcast: apiCriarBroadcast, voto: apiVoto,
     listarSessoes: apiListarSessoes, revogarSessao: apiRevogarSessao, logout: apiLogout,
-    consumirAnonUmaVez: apiConsumirAnonUmaVez
+    consumirAnonUmaVez: apiConsumirAnonUmaVez, trocarNome: apiTrocarNome,
+    reagir: apiReagir
   };
   const fn = rotas[action] || apiVoto;
   return res.json(await fn(body));
