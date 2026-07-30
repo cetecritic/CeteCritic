@@ -585,6 +585,28 @@ async function apiVoto(body){
   return { ok:true };
 }
 
+/* Apagar a PRÓPRIA avaliação.
+
+   Confere a posse no servidor comparando o dono da linha com o usuário do
+   token — mandar o id de outra pessoa não adianta. Continua permitido depois
+   da votação fechar: o voto é da pessoa, e recusar aqui só faria ela pedir
+   pro admin apagar. */
+async function apiApagarAvaliacao(body){
+  const usuario = String(body.user||'');
+  if(!(await verificarToken(usuario, body.token))) return { ok:false, error:'faça login' };
+  const subId = String(body.id||'').trim();
+  if(!subId) return { ok:false, error:'avaliação inválida' };
+
+  const { data, error } = await sb.from('submissions').select('row_id,sub_id,usuario').eq('sub_id', subId).limit(10);
+  if(error) return { ok:false, error: error.message };
+  const minha = (data||[]).find(r => norm(r.usuario) === norm(usuario));
+  if(!minha) return { ok:false, error:'essa avaliação não é sua' };
+
+  const { error: e2 } = await sb.from('submissions').delete().eq('row_id', minha.row_id);
+  if(e2) return { ok:false, error: e2.message };
+  return { ok:true };
+}
+
 async function apiPalpite(body){
   const usuario = String(body.user||'');
   if(!(await verificarToken(usuario, body.token))) return { ok:false, error:'faça login para palpitar' };
@@ -1185,7 +1207,7 @@ async function handlePost(req, res){
     removerPushMorto: apiRemoverPushMorto, criarBroadcast: apiCriarBroadcast, voto: apiVoto,
     listarSessoes: apiListarSessoes, revogarSessao: apiRevogarSessao, logout: apiLogout,
     consumirAnonUmaVez: apiConsumirAnonUmaVez, trocarNome: apiTrocarNome,
-    reagir: apiReagir
+    reagir: apiReagir, apagarAvaliacao: apiApagarAvaliacao
   };
   const fn = rotas[action] || apiVoto;
   return res.json(await fn(body));

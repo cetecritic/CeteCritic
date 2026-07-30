@@ -947,9 +947,42 @@ a.showcase-card:hover{ border-color: var(--gold); }
 }
 .share-modal{ display:flex; flex-direction:column; align-items:center; gap: 14px; max-height: 92vh; }
 
+/* ---- palco: o fundo colorido atrás do card (formato de story) ----
+   Exportar o palco em vez do card resolve as "pontas pretas" no Instagram:
+   sem canto transparente, não há o que o app achatar em preto. */
+.share-palco{
+  width: 320px; padding: 26px 22px; border-radius: 22px;
+  display:flex; align-items:center; justify-content:center;
+  transition: background .25s ease;
+}
+/* "sem fundo": o palco some visualmente e a exportação pega só o card */
+.share-palco.sem-fundo{ padding:0; border-radius:0; }
+.share-palco.sem-fundo .share-card{ box-shadow:none; }
+.share-palco .share-card{ width:100%; height:auto; aspect-ratio: 9 / 16; box-shadow: 0 14px 40px rgba(0,0,0,.45); }
+
+/* ---- seletor de fundo ---- */
+.share-fundos{ display:flex; gap:10px; align-items:center; justify-content:center; }
+.fundo-opt{
+  width:34px; height:34px; border-radius:50%; cursor:pointer;
+  border:2px solid transparent; box-shadow: inset 0 0 0 1px rgba(255,255,255,.16);
+  padding:0; transition: transform .15s ease, border-color .15s ease;
+}
+.fundo-opt:hover{ transform: scale(1.1); }
+.fundo-opt.ativo{ border-color: #fff; }
+/* xadrez = transparência, mesma convenção de editor de imagem */
+.fundo-nenhum{
+  background:
+    linear-gradient(45deg, #4a4d55 25%, transparent 25%, transparent 75%, #4a4d55 75%) 0 0/12px 12px,
+    linear-gradient(45deg, #4a4d55 25%, #2a2c31 25%, #2a2c31 75%, #4a4d55 75%) 6px 6px/12px 12px;
+}
+
+@media (max-width:560px){
+  .share-palco{ width: min(300px, 82vw); padding: 20px 16px; }
+}
+
 /* o cartão em si (proporção 9:16 de story) */
 .share-card{
-  width: 320px; height: 569px; border-radius: 18px; overflow:hidden;
+  width: 320px; height: 569px; border-radius: 18px; overflow:hidden; flex:none;
   background: linear-gradient(180deg, #17181c 0%, #0e0f12 100%);
   border: 1px solid var(--border); display:flex; flex-direction:column;
 }
@@ -1316,6 +1349,13 @@ a.feed-item:hover{ background:rgba(245,197,24,.05); }
 .feed-body{ flex:1 1 auto; min-width:0; }
 .feed-text{ font-size:14px; line-height:1.45; color:var(--text); }
 .feed-when{ font-size:11px; color:var(--text-muted); margin-top:3px; }
+
+/* edição preferida sem poster cadastrado: card com as máscaras, em vez de um
+   background apontando para imagem que não existe */
+.fav-poster-vazio{
+  display:flex; align-items:center; justify-content:center;
+  font-size:34px; opacity:.35; background:var(--surface-2);
+}
 
 /* ---- posts com reação ----
    O item reagível vira uma coluna (conteúdo + barra) em vez de uma linha só.

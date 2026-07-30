@@ -183,6 +183,28 @@ function urlRecurso(v, base){
   if(/^https?:\/\//i.test(v) || v.charAt(0) === '/') return v;
   return (base || '') + v;
 }
+/* Poster de uma edição, resolvido de um jeito só para o site inteiro.
+
+   O valor vem do banco (via EDICOES, do config gerado pela API) e pode ser:
+     - URL absoluta (Supabase Storage) -> usada como está
+     - nome de arquivo solto ("poster.jpg", legado) -> vira /ANO/arquivo
+     - vazio -> devolve '' e quem chama mostra o placeholder
+
+   Existe porque perfil, busca e home montavam "ANO/poster.jpg" na mão. Isso
+   funcionava enquanto a imagem morava na pasta do ano; quando os posters
+   foram para o bucket, essas telas passaram a apontar para arquivo que não
+   existe mais — e, pior, prefixavam "/2026/" numa URL https:// completa. */
+function posterDaEdicao(ano, valorConhecido){
+  let p = String(valorConhecido || '').trim();
+  if(!p){
+    const e = (typeof EDICOES !== 'undefined' && Array.isArray(EDICOES))
+      ? EDICOES.find(x => Number(x.ano) === Number(ano)) : null;
+    p = (e && e.poster) ? String(e.poster).trim() : '';
+  }
+  if(!p) return '';
+  return urlRecurso(p, `${BASE}${ano}/`);
+}
+
 function media(arr){ return (!arr || !arr.length) ? null : arr.reduce((a,b)=>a+b,0)/arr.length; }
 
 function corDaNota(r){
@@ -506,6 +528,11 @@ async function apiMeuPerfil(){ const s = usuarioLogado(); if(!s) return { ok:fal
 /* troca de nome obrigatória (só funciona se o admin marcou nome_bloqueado) */
 /* reações nos posts do feed — mesma tabela de carimbos, com `alvo` = id do post.
    tipo null tira a reação (o botão liga e desliga). */
+/* apaga a própria avaliação (o servidor confere a posse pelo token) */
+async function apiApagarAvaliacao(id){
+  const s = usuarioLogado(); if(!s) return { ok:false, error:'faça login' };
+  return apiPost({ action:'apagarAvaliacao', user:s.user, token:s.token, id });
+}
 async function apiReagir(postId, tipo, autor){
   const s = usuarioLogado(); if(!s) return { ok:false, error:'faça login' };
   return apiPost({ action:'reagir', user:s.user, token:s.token, postId, tipo, autor });
@@ -2002,16 +2029,124 @@ function aguardarImagens(container){
   }));
 }
 
+/* =====================================================================
+   EXPORTAÇÃO DE IMAGEM — dois problemas do html2canvas resolvidos aqui
+   ===================================================================== */
+
+/* 1) object-fit não é implementado pelo html2canvas: a imagem aparece
+   recortada na tela e ESTICADA no PNG. A saída é trocar cada <img> por um
+   <div> do mesmo tamanho usando background-size, que ele suporta.
+
+   Fazemos a troca no DOM real logo antes de capturar e desfazemos no
+   finally. Como o substituto renderiza igualzinho, não pisca. */
+async function comImagensRecortadas(area, tarefa){
+  const trocas = [];
+  if(area) area.querySelectorAll('img').forEach(img => {
+    let cs; try{ cs = getComputedStyle(img); }catch(e){ return; }
+    const fit = cs.objectFit;
+    if(fit !== 'cover' && fit !== 'contain') return;
+    const src = img.currentSrc || img.src;
+    if(!src) return;
+    const r = img.getBoundingClientRect();
+    if(!r.width || !r.height) return;
+
+    const div = document.createElement('div');
+    div.style.cssText =
+      `width:${r.width}px;height:${r.height}px;flex:none;display:block;` +
+      `border-radius:${cs.borderRadius};` +
+      `background-image:url("${src.replace(/"/g, '\\"')}");background-size:${fit};` +
+      `background-position:center;background-repeat:no-repeat;`;
+    img.parentNode.insertBefore(div, img);
+    trocas.push({ img, div, displayAntes: img.style.display });
+    img.style.display = 'none';
+  });
+  try{ return await tarefa(); }
+  finally{ trocas.forEach(t => { t.div.remove(); t.img.style.display = t.displayAntes; }); }
+}
+
+/* 2) Cores dominantes da capa, pro fundo do compartilhamento (a ideia é a
+   mesma do Spotify: o cartão nasce com a cara do pôster).
+
+   Se a imagem for de outra origem sem CORS liberado, o canvas fica "tainted"
+   e getImageData lança — daí caímos na paleta do site em vez de quebrar. */
+const _coresCache = {};
+async function coresDaImagem(url){
+  const chave = String(url || '');
+  if(!chave) return null;
+  if(_coresCache[chave] !== undefined) return _coresCache[chave];
+
+  const resultado = await new Promise(resolve => {
+    const img = new Image();
+    img.crossOrigin = 'anonymous';
+    img.onload = () => {
+      try{
+        const N = 40;
+        const cv = document.createElement('canvas');
+        cv.width = N; cv.height = N;
+        const ctx = cv.getContext('2d');
+        ctx.drawImage(img, 0, 0, N, N);
+        const px = ctx.getImageData(0, 0, N, N).data;
+
+        /* agrupa por faixa grossa de cor e guarda a média real de cada grupo,
+           pra não devolver uma cor "quantizada" feia */
+        const baldes = {};
+        for(let i = 0; i < px.length; i += 4){
+          const a = px[i+3]; if(a < 128) continue;
+          const r = px[i], g = px[i+1], b = px[i+2];
+          const max = Math.max(r,g,b), min = Math.min(r,g,b);
+          if(max < 28 || min > 232) continue;            // quase preto ou quase branco
+          const k = `${r>>5}|${g>>5}|${b>>5}`;
+          const o = baldes[k] || (baldes[k] = { n:0, r:0, g:0, b:0, sat:0 });
+          o.n++; o.r += r; o.g += g; o.b += b;
+          o.sat += max === 0 ? 0 : (max - min) / max;
+        }
+        const lista = Object.keys(baldes).map(k => {
+          const o = baldes[k];
+          return { n:o.n, sat:o.sat/o.n, r:Math.round(o.r/o.n), g:Math.round(o.g/o.n), b:Math.round(o.b/o.n) };
+        });
+        if(!lista.length) return resolve(null);
+
+        /* pontua frequência E saturação: a cor mais comum costuma ser um
+           cinza de fundo, que daria um cartão sem graça */
+        lista.sort((x, y) => (y.n * (0.35 + y.sat)) - (x.n * (0.35 + x.sat)));
+        const hex = c => '#' + [c.r,c.g,c.b].map(v => v.toString(16).padStart(2,'0')).join('');
+        const principal = lista[0];
+        const dist = c => Math.abs(c.r-principal.r) + Math.abs(c.g-principal.g) + Math.abs(c.b-principal.b);
+        const secundaria = lista.slice(1).find(c => dist(c) > 90) || lista[1] || principal;
+        resolve({ principal: hex(principal), secundaria: hex(secundaria) });
+      }catch(e){ resolve(null); }   // canvas tainted (sem CORS)
+    };
+    img.onerror = () => resolve(null);
+    img.src = chave;
+  });
+
+  _coresCache[chave] = resultado;
+  return resultado;
+}
+
+/* escurece/clareia um hex — usado pra derivar um degradê legível */
+function ajustarCor(hex, fator){
+  const m = /^#?([0-9a-f]{6})$/i.exec(String(hex || ''));
+  if(!m) return hex;
+  const n = parseInt(m[1], 16);
+  const ch = [(n>>16)&255, (n>>8)&255, n&255].map(v => {
+    const x = fator >= 0 ? v + (255 - v) * fator : v * (1 + fator);
+    return Math.max(0, Math.min(255, Math.round(x)));
+  });
+  return '#' + ch.map(v => v.toString(16).padStart(2,'0')).join('');
+}
+
 async function baixarImagem(areaId, nomeArquivo, btn){
   const original = btn.textContent;
   btn.textContent = 'Gerando...';
   try{
     const area = document.getElementById(areaId);
     await aguardarImagens(area);
-    const canvas = await html2canvas(area, {
+    /* sem isto, o pôster sai esticado no PNG do "Monte o Seu" */
+    const canvas = await comImagensRecortadas(area, () => html2canvas(area, {
       backgroundColor: '#17181c', scale: 2, useCORS: true, imageTimeout: 15000,
       onclone: doc => neutralizarAnimacoes(doc, areaId)
-    });
+    }));
     const link = document.createElement('a');
     link.download = nomeArquivo;
     link.href = canvas.toDataURL('image/png');
@@ -2116,8 +2251,9 @@ function abrirCompartilhamento(opts){
   overlay.className = 'share-overlay';
   overlay.innerHTML = `
     <div class="share-modal">
+      <div class="share-palco" id="sharePalco">
       <div class="share-card" id="shareCard">
-        <div class="sc-poster-wrap"><img class="sc-poster-img" src="${esc(opts.poster)}" alt="" onerror="this.closest('.sc-poster-wrap').classList.add('sem-poster'); this.remove();"></div>
+        <div class="sc-poster-wrap${opts.poster ? '' : ' sem-poster'}">${opts.poster ? `<img class="sc-poster-img" src="${esc(opts.poster)}" alt="" onerror="this.closest('.sc-poster-wrap').classList.add('sem-poster'); this.remove();">` : ''}</div>
         <div class="sc-body">
           <div class="sc-title">${esc(opts.titulo)}</div>
           ${opts.sub ? `<div class="sc-sub">${esc(opts.sub)}</div>` : ''}
@@ -2128,6 +2264,13 @@ function abrirCompartilhamento(opts){
           ${opts.legenda ? `<div class="sc-legenda">${esc(opts.legenda)}</div>` : ''}
           <div class="sc-brand"><img src="${BASE}assets/logo.png" alt="" onerror="this.remove()"><span>CETECritic</span></div>
         </div>
+      </div>
+      </div>
+      <div class="share-fundos" id="shareFundos" role="group" aria-label="Fundo do card">
+        <button class="fundo-opt ativo" data-fundo="principal"  title="Cor principal"></button>
+        <button class="fundo-opt"       data-fundo="degrade"    title="Degradê"></button>
+        <button class="fundo-opt"       data-fundo="secundaria" title="Cor secundária"></button>
+        <button class="fundo-opt fundo-nenhum" data-fundo="nenhum" title="Sem fundo (PNG transparente)"></button>
       </div>
       <div class="share-actions">
         <button class="btn btn-solid" id="shareBaixar">📥 Baixar</button>
@@ -2142,18 +2285,68 @@ function abrirCompartilhamento(opts){
   overlay.querySelector('#shareFechar').addEventListener('click', fechar);
 
   const card = overlay.querySelector('#shareCard');
+  const palco = overlay.querySelector('#sharePalco');
   const hint = overlay.querySelector('#shareHint');
   const bBaixar = overlay.querySelector('#shareBaixar');
   const bEnviar = overlay.querySelector('#shareEnviar');
 
+  /* ---- fundo do card (estilo Spotify) --------------------------------
+     As cores saem da própria capa. O fundo resolve, de quebra, o problema
+     das "pontas pretas" no story: exportando o palco inteiro não existe
+     canto transparente para o Instagram achatar em preto. Quem quiser o
+     PNG recortado escolhe "sem fundo" — aí exportamos só o card, e a
+     transparência é intencional. */
+  let FUNDOS = {
+    principal: '#1f2126',
+    secundaria: '#3a3d44',
+    degrade: 'linear-gradient(160deg, #1f2126 0%, #3a3d44 100%)'
+  };
+  let fundoAtual = 'principal';
+
+  function pintarFundo(){
+    palco.classList.toggle('sem-fundo', fundoAtual === 'nenhum');
+    palco.style.background = fundoAtual === 'nenhum' ? 'transparent' : FUNDOS[fundoAtual];
+  }
+  function pintarAmostras(){
+    const b = overlay.querySelectorAll('.fundo-opt');
+    b[0].style.background = FUNDOS.principal;
+    b[1].style.background = FUNDOS.degrade;
+    b[2].style.background = FUNDOS.secundaria;
+  }
+  pintarAmostras(); pintarFundo();
+
+  /* extrai as cores da capa em segundo plano: se falhar (imagem de outra
+     origem sem CORS), fica a paleta neutra acima e nada quebra */
+  if(opts.poster) coresDaImagem(opts.poster).then(c => {
+    if(!c) return;
+    FUNDOS = {
+      principal: c.principal,
+      secundaria: c.secundaria,
+      degrade: `linear-gradient(160deg, ${c.principal} 0%, ${ajustarCor(c.secundaria, -0.15)} 100%)`
+    };
+    pintarAmostras(); pintarFundo();
+  });
+
+  overlay.querySelector('#shareFundos').addEventListener('click', ev => {
+    const b = ev.target.closest('.fundo-opt'); if(!b) return;
+    overlay.querySelectorAll('.fundo-opt').forEach(x => x.classList.remove('ativo'));
+    b.classList.add('ativo');
+    fundoAtual = b.dataset.fundo;
+    pintarFundo();
+    hint.textContent = fundoAtual === 'nenhum'
+      ? 'Sem fundo: baixa só o card, com as bordas transparentes.'
+      : 'Dica: no celular, "Compartilhar" abre direto o Instagram, WhatsApp etc.';
+  });
+
   async function gerarBlob(){
     await garantirHtml2Canvas();
-    await aguardarImagens(card);
-    /* backgroundColor: null deixa o canto de fora do card (fora do border-radius)
-       transparente na imagem exportada — com uma cor sólida aqui, o html2canvas
-       pinta o retângulo inteiro e as bordas arredondadas do card "somem" no PNG
-       baixado/compartilhado, mesmo aparecendo certinho na tela. */
-    const canvas = await html2canvas(card, { backgroundColor: null, scale: 3, useCORS: true, imageTimeout: 15000 });
+    /* "sem fundo" exporta só o card (transparente, de propósito).
+       Com fundo, exporta o palco inteiro — sem canto transparente sobrando. */
+    const alvo = fundoAtual === 'nenhum' ? card : palco;
+    await aguardarImagens(alvo);
+    const canvas = await comImagensRecortadas(alvo, () => html2canvas(alvo, {
+      backgroundColor: null, scale: 3, useCORS: true, imageTimeout: 15000
+    }));
     return await new Promise(res => canvas.toBlob(res, 'image/png'));
   }
   bBaixar.addEventListener('click', async () => {
@@ -2359,9 +2552,9 @@ function paginaEdicao(){
 
     <div id="capture-area">
       <div class="left-panel">
-        <div class="poster-box has-image" id="posterBox">
-          <img src="${esc(ED.poster || 'poster.jpg')}" alt="" onerror="this.closest('.poster-box').classList.remove('has-image')">
-          <div class="poster-hint"><b>${esc(ED.poster || 'poster.jpg')}</b>Coloque a imagem de capa na pasta do ano</div>
+        <div class="poster-box${posterDaEdicao(ANO, ED.poster) ? ' has-image' : ''}" id="posterBox">
+          ${posterDaEdicao(ANO, ED.poster) ? `<img src="${esc(posterDaEdicao(ANO, ED.poster))}" alt="" onerror="this.closest('.poster-box').classList.remove('has-image')">` : ''}
+          <div class="poster-hint"><b>Sem capa</b>Suba o poster desta edição pelo painel admin</div>
         </div>
         <div class="title-section">
           <h1>${esc(ED.titulo)}</h1>
@@ -2443,7 +2636,7 @@ function paginaEdicao(){
     const notas = [];
     submissions.forEach(s => Object.values(s.grid).forEach(v => { const x = Number(v); if(!isNaN(x)) notas.push(x); }));
     abrirCompartilhamento({
-      poster: (ED && ED.poster) || 'poster.jpg',
+      poster: posterDaEdicao(ANO, ED && ED.poster),
       titulo: (ED && ED.titulo) || `Cetec Festival ${ANO}`,
       sub: `Cetec Festival ${ANO}`,
       nota: media(notas),
@@ -2890,7 +3083,7 @@ function paginaNoite(n){
       const vals = [];
       pecas.forEach((info, idx) => valoresDaChave(`s${n}e${idx + 1}`).forEach(v => vals.push(v)));
       abrirCompartilhamento({
-        poster: (typeof ED !== 'undefined' && ED && ED.poster) || 'poster.jpg',
+        poster: posterDaEdicao(ANO, (typeof ED !== 'undefined' && ED) ? ED.poster : ''),
         titulo: `Noite ${n} — Cetec Festival ${ANO}`,
         sub: nd.subtitulo || `${pecas.length} peça${pecas.length === 1 ? '' : 's'}`,
         nota: media(vals),
@@ -2907,7 +3100,7 @@ function paginaNoite(n){
       const b = ev.target.closest('.peca-share'); if(!b) return;
       const avg = media(valoresDaChave(b.dataset.key));
       abrirCompartilhamento({
-        poster: (typeof ED !== 'undefined' && ED && ED.poster) || 'poster.jpg',
+        poster: posterDaEdicao(ANO, (typeof ED !== 'undefined' && ED) ? ED.poster : ''),
         titulo: b.dataset.titulo,
         sub: `Turma ${b.dataset.turma} · Cetec Festival ${ANO}`,
         nota: avg,
@@ -3031,7 +3224,7 @@ function paginaMonte(){
   const descEl = document.getElementById('customDescription');
 
   /* poster padrão do ano, se existir na pasta */
-  const posterPadrao = ED.poster || 'poster.jpg';
+  const posterPadrao = posterDaEdicao(ANO, ED.poster);
   const posterIdbKey = 'monte-' + ANO;
   posterImg.addEventListener('load', () => posterBox.classList.add('has-image'));
 
@@ -4113,9 +4306,9 @@ async function paginaHome(){
   montarShell(`
     ${htmlBannerHome}
     <div class="home-hero">
-      <div class="poster-box has-image home-poster">
-        <img src="${esc(urlRecurso((ED && ED.poster) || 'poster.jpg', pastaDest))}" alt="Poster da edição" onerror="this.closest('.poster-box').classList.remove('has-image')">
-        <div class="poster-hint"><b>poster.jpg</b>Capa da edição em destaque</div>
+      <div class="poster-box${posterDaEdicao(EDICAO_EM_DESTAQUE, ED && ED.poster) ? ' has-image' : ''} home-poster">
+        ${posterDaEdicao(EDICAO_EM_DESTAQUE, ED && ED.poster) ? `<img src="${esc(posterDaEdicao(EDICAO_EM_DESTAQUE, ED && ED.poster))}" alt="Poster da edição" onerror="this.closest('.poster-box').classList.remove('has-image')">` : ''}
+        <div class="poster-hint"><b>Sem capa</b>Capa da edição em destaque</div>
       </div>
       <div class="home-info">
         <h1 class="home-title">CETEC<span>Critic</span></h1>
@@ -4458,13 +4651,49 @@ function aplicarBadgesDoAdmin(cat, perfilCfg){
   });
 }
 
-/* card de avaliação (expansível) para o perfil */
-function reviewCardHtml(s){
+/* ---------------------------------------------------------------------
+   Tela de confirmação para ações destrutivas. Devolve uma Promise<boolean>,
+   então quem chama escreve `if(!await confirmarAcao({...})) return;`.
+
+   Existe em vez do confirm() do navegador porque ele não dá pra estilizar,
+   fica fora do visual do site e, no celular, aparece com o domínio no topo
+   parecendo alerta de golpe. Reaproveita o CSS do overlay de onboarding. */
+function confirmarAcao(opts){
+  const o = opts || {};
+  return new Promise(resolve => {
+    const antigo = document.getElementById('ccConfirm'); if(antigo) antigo.remove();
+    document.body.insertAdjacentHTML('beforeend', `
+      <div class="onboarding-overlay" id="ccConfirm" role="dialog" aria-modal="true">
+        <div class="onboarding-card">
+          <h2>${esc(o.titulo || 'Tem certeza?')}</h2>
+          <p class="onboarding-lead">${o.textoHtml || esc(o.texto || '')}</p>
+          <div style="display:grid;gap:8px;">
+            <button class="btn ${o.perigo ? 'btn-danger' : 'btn-solid'} onboarding-btn" id="ccConfirmSim">${esc(o.confirmar || 'Confirmar')}</button>
+            <button class="btn btn-ghost" id="ccConfirmNao" style="width:100%;">${esc(o.cancelar || 'Cancelar')}</button>
+          </div>
+        </div>
+      </div>`);
+    const ov = document.getElementById('ccConfirm');
+    requestAnimationFrame(() => ov.classList.add('show'));
+    const fim = v => { ov.remove(); resolve(v); };
+    ov.querySelector('#ccConfirmSim').addEventListener('click', () => fim(true));
+    ov.querySelector('#ccConfirmNao').addEventListener('click', () => fim(false));
+    ov.addEventListener('click', ev => { if(ev.target === ov) fim(false); });
+    document.addEventListener('keydown', function esc(ev){
+      if(ev.key === 'Escape'){ document.removeEventListener('keydown', esc); fim(false); }
+    });
+  });
+}
+
+/* card de avaliação (expansível) para o perfil.
+   `podeApagar` só vem true no próprio perfil — e o servidor confere a posse
+   de novo, então esconder o botão é conveniência, não segurança. */
+function reviewCardHtml(s, podeApagar){
   const vals = Object.values(s.grid).map(Number).filter(v => !isNaN(v));
   const avg = media(vals);
   const chips = Object.keys(s.grid).sort().map(k =>
     `<div class="mini-chip" style="background:${corDaNota(s.grid[k])}" title="${esc(k.toUpperCase())}: ${Number(s.grid[k]).toFixed(1)}"></div>`).join('');
-  return `<div class="submission-item">
+  return `<div class="submission-item" data-sub="${esc(String(s.id || ''))}">
     <div class="submission-head">
       <div class="submission-avg" style="background:${corDaNota(avg)}">${avg === null ? '–' : avg.toFixed(1)}</div>
       <div class="submission-meta">
@@ -4473,6 +4702,7 @@ function reviewCardHtml(s){
       </div>
       <div class="submission-mini">${chips}</div>
       <button class="rev-share" data-ano="${s.ano}" data-avg="${avg === null ? '' : avg.toFixed(1)}" title="Compartilhar esta avaliação (story)" style="background:transparent;border:0;color:#9aa0aa;cursor:pointer;font-size:16px;padding:2px 6px;line-height:1">📤</button>
+      ${(podeApagar && s.id) ? `<button class="rev-apagar" data-sub="${esc(String(s.id))}" data-ano="${s.ano}" title="Apagar esta avaliação" style="background:transparent;border:0;color:#9aa0aa;cursor:pointer;font-size:15px;padding:2px 6px;line-height:1">🗑️</button>` : ''}
       <div class="chevron">▾</div>
     </div>
     <div class="submission-detail"><div class="submission-detail-inner">
@@ -4484,7 +4714,7 @@ function ligarExpansao(container){
   container.querySelectorAll('.submission-item').forEach(item => {
     const head = item.querySelector('.submission-head');
     if(head) head.addEventListener('click', (ev) => {
-      if(ev.target.closest('.rev-share')) return;   // clique no compartilhar não expande
+      if(ev.target.closest('.rev-share') || ev.target.closest('.rev-apagar')) return;   // botões de ação não expandem
       const aberto = item.classList.contains('expanded');
       container.querySelectorAll('.submission-item.expanded').forEach(el => { if(el !== item) el.classList.remove('expanded'); });
       item.classList.toggle('expanded', !aberto);
@@ -4975,32 +5205,64 @@ async function paginaPerfil(){
         revFest.innerHTML = anosPart.map(ano => {
           const desse = alvoSubs.filter(s => s.ano === ano).sort((a,b) => Number(b.ts) - Number(a.ts));
           return `<div class="rev-fest-grupo"><div class="rev-fest-titulo">Cetec Festival ${ano} <span>(${desse.length})</span></div>
-            <div class="submission-list">${desse.map(reviewCardHtml).join('')}</div></div>`;
+            <div class="submission-list">${desse.map(s => reviewCardHtml(s, ehMeu)).join('')}</div></div>`;
         }).join('');
         ligarExpansao(revFest);
       }
       if(revRec){
-        revRec.innerHTML = `<div class="submission-list">${[...alvoSubs].sort((a,b) => Number(b.ts) - Number(a.ts)).map(reviewCardHtml).join('')}</div>`;
+        revRec.innerHTML = `<div class="submission-list">${[...alvoSubs].sort((a,b) => Number(b.ts) - Number(a.ts)).map(s => reviewCardHtml(s, ehMeu)).join('')}</div>`;
         ligarExpansao(revRec);
       }
     }
 
-    /* compartilhar cada avaliação (delegação única — sobrevive ao refresh de 30s) */
+    /* compartilhar e apagar (delegação única — sobrevive ao refresh de 30s) */
     [revFest, revRec].forEach(cont => {
       if(!cont || cont._shareWired) return;
       cont._shareWired = true;
-      cont.addEventListener('click', ev => {
-        const b = ev.target.closest('.rev-share'); if(!b) return;
+      cont.addEventListener('click', async ev => {
+        const b = ev.target.closest('.rev-share');
+        if(b){
+          ev.stopPropagation();
+          const ano = Number(b.dataset.ano);
+          abrirCompartilhamento({
+            poster: posterDaEdicao(ano),
+            titulo: `Cetec Festival ${ano}`,
+            sub: alvoUser,
+            nota: b.dataset.avg === '' ? null : Number(b.dataset.avg),
+            legenda: 'minha avaliação no CETECritic',
+            arquivo: `CETECritic_${alvoUser}_${ano}.png`
+          });
+          return;
+        }
+
+        const del = ev.target.closest('.rev-apagar');
+        if(!del) return;
         ev.stopPropagation();
-        const ano = Number(b.dataset.ano);
-        abrirCompartilhamento({
-          poster: `${BASE}${ano}/poster.jpg`,
-          titulo: `Cetec Festival ${ano}`,
-          sub: alvoUser,
-          nota: b.dataset.avg === '' ? null : Number(b.dataset.avg),
-          legenda: 'minha avaliação no CETECritic',
-          arquivo: `CETECritic_${alvoUser}_${ano}.png`
+        const subId = del.dataset.sub;
+        const ano = del.dataset.ano;
+        const ok = await confirmarAcao({
+          titulo: '🗑️ Apagar esta avaliação?',
+          textoHtml: `Suas notas do <b>Cetec Festival ${esc(String(ano))}</b> serão apagadas de vez.<br><br>
+            As médias das peças daquela edição vão ser recalculadas sem elas. Não dá pra desfazer —
+            você teria que avaliar tudo de novo.`,
+          confirmar: 'Apagar avaliação',
+          perigo: true
         });
+        if(!ok) return;
+
+        del.disabled = true;
+        const r = await apiApagarAvaliacao(subId);
+        if(r && r.ok){
+          /* tira do DOM nas duas abas: o mesmo id aparece em "por festival"
+             e em "recentes" */
+          document.querySelectorAll(`.submission-item[data-sub="${CSS.escape(subId)}"]`).forEach(el => el.remove());
+          /* o feed daquele ano fica em cache local; sem limpar, a avaliação
+             apagada reapareceria no próximo carregamento */
+          try{ localStorage.removeItem(cacheVotosKey(ano)); }catch(e){}
+        }else{
+          del.disabled = false;
+          alert((r && r.error) || 'Não foi possível apagar.');
+        }
       });
     });
 
@@ -5035,9 +5297,14 @@ async function paginaPerfil(){
       return;
     }
     box.innerHTML = `<div class="fav-grid">${arr.map(ano => {
-      const poster = `${BASE}${ano}/poster.jpg`;
+      const poster = posterDaEdicao(ano);
+      /* sem poster cadastrado, mostra o card vazio com as máscaras em vez de
+         um background apontando para arquivo inexistente */
+      const capa = poster
+        ? `<div class="fav-poster" style="background-image:url('${esc(poster)}')"></div>`
+        : `<div class="fav-poster fav-poster-vazio">🎭</div>`;
       return `<a class="fav-card" href="${BASE}${ano}/index.html" title="Cetec Festival ${ano}">
-        <div class="fav-poster" style="background-image:url('${esc(poster)}')"></div>
+        ${capa}
         <div class="fav-ano">${ano}</div></a>`;
     }).join('')}</div>`;
   }
@@ -5549,7 +5816,9 @@ async function paginaBusca(){
       ]);
       const d = new Function(textos.join('\n') + '\n;return { EDICAO, NOITES };')();
       const ed = d.EDICAO || {};
-      const poster = `${BASE}${cfg.ano}/${ed.poster || 'poster.jpg'}`;
+      /* ed.poster hoje costuma ser URL absoluta do bucket — concatenar com a
+         pasta do ano geraria "/2026/https://..." */
+      const poster = posterDaEdicao(cfg.ano, ed.poster);
       const tema = (ed.sobre && ed.sobre.titulo) || '';   // a "mostra"/tema da edição
       /* texto pesquisável do festival: nome + tema + descrição + texto do sobre */
       const buscaFest = [ed.titulo, tema, ed.descricao, ed.sobre && ed.sobre.texto].filter(Boolean).join(' ').toLowerCase();

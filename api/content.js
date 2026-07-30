@@ -160,6 +160,11 @@ function edicoesParaMenu(rows) {
     if (e.abre_em) o.abreEm = e.abre_em;
     if (e.monte_abre_em) o.monteAbreEm = e.monte_abre_em;
     if (e.em_breve) o.emBreve = true;
+    /* O poster viaja junto do menu porque paginas fora da pasta do ano
+       (perfil, busca, home) precisam dele e nao carregam o edicao.js daquela
+       edicao. Antes elas montavam "ANO/poster.jpg" na mao — o que quebrou
+       quando os posters passaram a morar no Supabase Storage. */
+    if (e.poster) o.poster = e.poster;
     return o;
   });
 }
