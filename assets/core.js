@@ -621,7 +621,7 @@ const CARIMBOS = PERFIL_CFG.carimbos || {
   critico:  { emoji:'🧐', nome:'Bom crítico', desc:'Acha que a pessoa avalia com critério.' },
   parceiro: { emoji:'🤝', nome:'Parceiro',    desc:'Um agrado de quem acompanha o festival junto.' },
   concordo: { emoji:'✅', nome:'Concordo',     desc:'Costuma concordar com as notas dessa pessoa.' },
-  discordo: { emoji:'❌', nome:'Discordo',     desc:'Discorda (na boa!) das notas dessa pessoa.' },
+  discordo: { emoji:'❌', nome:'Discordo',     desc:'Discorda das notas dessa pessoa.' },
   polemico: { emoji:'🔥', nome:'Polêmico',     desc:'As opiniões dessa pessoa dão o que falar.' },
   lenda:    { emoji:'👑', nome:'Lenda',        desc:'Respeito máximo pela dedicação ao acervo.' }
 };
@@ -640,26 +640,159 @@ function afinidadeGosto(subsA, subsB){
   return { pct: Math.max(0, 100 * (1 - (soma / n) / NOTA_MAXIMA)), shared: n, meanDiff: soma / n };
 }
 
+/* =====================================================================
+   LOGIN COM GOOGLE (Supabase Auth como provador de identidade)
+   =====================================================================
+   O supabase-js entra por import dinamico SO quando alguem clica no botao —
+   assim nenhum dos ~60 HTMLs precisa de <script> novo e quem nao usa Google
+   nao baixa a biblioteca.
+
+   Coloque no config.js:
+     const SUPABASE_URL = 'https://xxxx.supabase.co';
+     const SUPABASE_ANON_KEY = 'sb_publishable_...';   // chave PUBLICA, pode ficar no cliente */
+const SB_URL  = (typeof SUPABASE_URL !== 'undefined') ? SUPABASE_URL : 'https://hytmomrbovixmixgczdq.supabase.co';
+const SB_ANON = (typeof SUPABASE_ANON_KEY !== 'undefined') ? SUPABASE_ANON_KEY : 'sb_publishable_lb_jEyHC7e-A5gD7qf1ZCg_08vWbVQo';
+const OAUTH_ATIVO = !!(SB_URL && SB_ANON);
+
+let _sbCliente = null;
+async function sbAuth(){
+  if(_sbCliente) return _sbCliente;
+  if(!OAUTH_ATIVO) return null;
+  const mod = await import('https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/+esm');
+  _sbCliente = mod.createClient(SB_URL, SB_ANON, {
+    auth: { persistSession: true, detectSessionInUrl: true, flowType: 'pkce' }
+  });
+  return _sbCliente;
+}
+
+async function apiLoginOAuth(accessToken){ return apiPost({ action:'loginOAuth', accessToken, dispositivo: descreverDispositivo() }); }
+async function apiFinalizarOAuth(accessToken, user){ return apiPost({ action:'finalizarOAuth', accessToken, user, dispositivo: descreverDispositivo() }); }
+
+/* dispara o fluxo: sai do site, volta em /index.html com a sessao do Supabase */
+async function entrarComGoogle(){
+  const sbc = await sbAuth();
+  if(!sbc) throw new Error('login social nao configurado');
+  const { error } = await sbc.auth.signInWithOAuth({
+    provider: 'google',
+    options: { redirectTo: location.origin + BASE + 'index.html' }
+  });
+  if(error) throw error;
+}
+
+/* limpa a sessao do Supabase — a nossa sessao (localStorage) e outra coisa */
+async function limparSessaoSupabase(){
+  try{ const sbc = await sbAuth(); if(sbc) await sbc.auth.signOut(); }catch(e){}
+}
+
+/* Roda em TODA pagina: se voltamos de um redirect do Google, troca o token do
+   Supabase por um token NOSSO. Se a pessoa ainda nao tem conta aqui, abre o
+   modal na etapa de escolher nome de usuario. */
+async function checarRetornoOAuth(){
+  if(!OAUTH_ATIVO) return;
+  if(usuarioLogado()) return;                                  /* ja logado aqui: nao mexe */
+  const temCallback = /[?&]code=|access_token=/.test(location.search + location.hash);
+  const pendente = sessionStorage.getItem('cetec-oauth-pendente') === '1';
+  if(!temCallback && !pendente) return;                        /* pagina normal: nem carrega a lib */
+
+  try{
+    const sbc = await sbAuth();
+    if(!sbc) return;
+    const { data } = await sbc.auth.getSession();
+    const tok = data && data.session && data.session.access_token;
+    if(!tok){ sessionStorage.removeItem('cetec-oauth-pendente'); return; }
+
+    const r = await apiLoginOAuth(tok);
+    if(r && r.ok){
+      sessionStorage.removeItem('cetec-oauth-pendente');
+      salvarSessao(r.user, r.token, r.admin);
+      await limparSessaoSupabase();
+      history.replaceState(null, '', location.pathname);       /* tira o ?code= da barra */
+      location.reload();
+      return;
+    }
+    if(r && r.precisaNome){
+      sessionStorage.setItem('cetec-oauth-pendente', '1');
+      history.replaceState(null, '', location.pathname);
+      abrirEscolhaNomeOAuth(tok, r.sugestao || '', r.email || '');
+      return;
+    }
+    sessionStorage.removeItem('cetec-oauth-pendente');
+    await limparSessaoSupabase();
+    if(r && r.error) alert('Nao deu pra entrar com o Google:\n\n' + r.error);
+  }catch(e){
+    sessionStorage.removeItem('cetec-oauth-pendente');
+  }
+}
+
+/* abre o modal de login ja na etapa "escolha seu nome de usuario" */
+function abrirEscolhaNomeOAuth(accessToken, sugestao, email){
+  const overlay = document.getElementById('loginModalOverlay');
+  if(!overlay) return;
+  const form = overlay.querySelector('.login-form');
+  const w2fa = document.getElementById('login2faWrap');
+  const wNome = document.getElementById('loginOauthWrap');
+  if(!wNome) return;
+  const titulo = document.getElementById('loginTitulo');
+  if(titulo) titulo.textContent = 'Escolha seu nome';
+  if(form) form.style.display = 'none';
+  if(w2fa) w2fa.style.display = 'none';
+  wNome.style.display = '';
+  const cxEmail = document.getElementById('loginOauthEmail');
+  if(cxEmail) cxEmail.textContent = email ? ('Conectado como ' + email) : '';
+  const inp = document.getElementById('loginOauthNome');
+  if(inp) inp.value = sugestao || '';
+  overlay.classList.add('open');
+  requestAnimationFrame(() => overlay.classList.add('show'));
+  setTimeout(() => inp && inp.focus(), 60);
+
+  const bt = document.getElementById('loginOauthSubmit');
+  const err = document.getElementById('loginOauthErro');
+  const tos = document.getElementById('loginOauthTos');
+  if(!bt) return;
+  bt.onclick = async () => {
+    const nome = (inp && inp.value || '').trim();
+    if(nome.length < 2){ err.textContent = 'Escolha um nome com pelo menos 2 caracteres.'; return; }
+    if(!/^[A-Za-z0-9_.\- ]+$/.test(nome)){ err.textContent = 'Use so letras, numeros, espaco, ponto, hifen ou _.'; return; }
+    if(tos && !tos.checked){ err.textContent = 'Marque a caixa dos Termos de Servico.'; return; }
+    bt.disabled = true; err.textContent = '';
+    const original = bt.textContent;
+    bt.innerHTML = '<span class="spinner"></span>Criando...';
+    try{
+      const r = await apiFinalizarOAuth(accessToken, nome);
+      if(r && r.ok){
+        sessionStorage.removeItem('cetec-oauth-pendente');
+        salvarSessao(r.user, r.token, r.admin);
+        await limparSessaoSupabase();
+        location.reload();
+        return;
+      }
+      err.textContent = (r && r.error) ? r.error : 'Nao foi possivel criar a conta.';
+    }catch(e){ err.textContent = 'Falha de conexao. Tente de novo.'; }
+    bt.disabled = false; bt.textContent = original;
+  };
+  if(inp) inp.onkeydown = ev => { if(ev.key === 'Enter') bt.click(); };
+}
+
 function htmlModalLogin(){
   return `<div class="modal-overlay" id="loginModalOverlay">
     <div class="modal-card">
       <div class="modal-header"><h2 id="loginTitulo">Entrar</h2><button class="modal-close" id="loginModalClose">✕</button></div>
-      <div class="modal-sub">Sua conta guarda suas avaliações no perfil, os badges e o bolão. É um login simples — <b>não use uma senha importante</b>.</div>
+      <div class="modal-sub">Sua conta guarda suas avaliações no perfil, os badges e o bolão.</div>
       <div class="login-form">
         <label for="loginUser">Usuário</label>
-        <input type="text" id="loginUser" maxlength="20" autocomplete="off" placeholder="ex: maria">
+        <input type="text" id="loginUser" maxlength="20" autocomplete="off" placeholder="ex: Maria">
         <label for="loginSenha">Senha</label>
-        <input type="password" id="loginSenha" maxlength="60" placeholder="mínimo 4 caracteres">
+        <input type="password" id="loginSenha" maxlength="60" placeholder="Mínimo 4 caracteres">
         <div id="loginSenha2Wrap" style="display:none;">
           <label for="loginSenha2">Repita a senha</label>
-          <input type="password" id="loginSenha2" maxlength="60" placeholder="digite a senha de novo">
+          <input type="password" id="loginSenha2" maxlength="60" placeholder="Digite a senha de novo">
         </div>
         <div id="loginEmailWrap" style="display:none;">
           <label for="loginEmail">E-mail (opcional)</label>
-          <input type="email" id="loginEmail" maxlength="120" autocomplete="off" placeholder="para recuperar a senha depois">
+          <input type="email" id="loginEmail" maxlength="120" autocomplete="off" placeholder="Para recuperar a senha depois">
           <div class="login-seguranca" style="margin-top:4px;">Sem e-mail, não dá pra recuperar a senha se esquecer. Você pode adicionar ou trocar depois em Configurações.</div>
         </div>
-        <div class="login-seguranca">🔒 Sua senha é criptografada — nem nós conseguimos vê-la. Ainda assim, <b>nunca use uma senha que você usa em outro lugar ou algum dado sensível. </div>
+        <div class="login-seguranca">🔒 Sua senha é criptografada - nem nós conseguimos vê-la.</div>
         <div id="loginTosWrap" style="display:none;">
           <label class="tos-check" id="loginTosLabel">
             <input type="checkbox" id="loginTos">
@@ -668,6 +801,11 @@ function htmlModalLogin(){
         </div>
         <div class="login-erro" id="loginErro"></div>
         <button class="submit-btn" id="loginSubmit">Entrar</button>
+        <div class="login-ou" id="loginOuWrap" style="display:none;"><span>ou</span></div>
+        <button type="button" class="btn-google" id="loginGoogle" style="display:none;">
+          <svg viewBox="0 0 18 18" width="17" height="17" aria-hidden="true"><path fill="#4285F4" d="M17.64 9.2c0-.64-.06-1.25-.16-1.84H9v3.48h4.84a4.14 4.14 0 0 1-1.8 2.72v2.26h2.92c1.7-1.57 2.68-3.88 2.68-6.62z"/><path fill="#34A853" d="M9 18c2.43 0 4.47-.8 5.96-2.18l-2.92-2.26c-.81.54-1.84.86-3.04.86-2.34 0-4.32-1.58-5.03-3.7H.96v2.33A9 9 0 0 0 9 18z"/><path fill="#FBBC05" d="M3.97 10.72a5.4 5.4 0 0 1 0-3.44V4.95H.96a9 9 0 0 0 0 8.1l3.01-2.33z"/><path fill="#EA4335" d="M9 3.58c1.32 0 2.5.45 3.44 1.35l2.58-2.58C13.46.9 11.43 0 9 0A9 9 0 0 0 .96 4.95l3.01 2.33C4.68 5.16 6.66 3.58 9 3.58z"/></svg>
+          Entrar com Google
+        </button>
         <div class="login-toggle">
           <span id="loginToggleTxt">Ainda não tem conta?</span>
           <button type="button" id="loginToggleBtn">Criar conta</button>
@@ -677,8 +815,23 @@ function htmlModalLogin(){
           <button type="button" id="loginReenviarReset" style="display:none;">Reenviar link</button>
         </div>
       </div>
+      <!-- etapa do login social: quem entra pelo Google sem conta escolhe um nome
+           de usuario aqui, porque a identidade do site e o nome, nao o e-mail -->
+      <div class="login-form" id="loginOauthWrap" style="display:none;">
+        <div class="modal-sub">Falta so escolher como você vai aparecer no site. Esse nome fica nas suas avaliacoes, no ranking e no perfil.</div>
+        <div class="login-seguranca" id="loginOauthEmail" style="margin-bottom:4px;"></div>
+        <label for="loginOauthNome">Nome de usuario</label>
+        <input type="text" id="loginOauthNome" maxlength="20" autocomplete="off" placeholder="ex: maria">
+        <label class="tos-check">
+          <input type="checkbox" id="loginOauthTos">
+          <span>Declaro que concordo com os <a href="${BASE}termos.pdf" target="_blank" rel="noopener">Termos de Servico</a> e sou maior de 13 anos.</span>
+        </label>
+        <div class="login-erro" id="loginOauthErro"></div>
+        <button class="submit-btn" id="loginOauthSubmit">Criar minha conta</button>
+      </div>
+
       <div class="login-form" id="login2faWrap" style="display:none;">
-        <div class="modal-sub">Enviamos um código de 6 dígitos pro seu e-mail. Ele vale por 5 minutos.</div>
+        <div class="modal-sub">Enviamos um código de 6 dígitos pro seu e-mail. Ele é válido por 5 minutos.</div>
         <label for="login2faCode">Código de acesso</label>
         <input type="text" id="login2faCode" inputmode="numeric" maxlength="6" autocomplete="one-time-code" placeholder="000000" style="letter-spacing:8px; text-align:center; font-size:20px;">
         <div class="login-erro" id="login2faErro"></div>
@@ -764,10 +917,30 @@ function wireLogin(){
   }
   function fechar(){ fecharOverlay(overlay); }
 
+  /* botao do Google: so aparece se o config.js tiver as chaves do Supabase */
+  const btnGoogle = document.getElementById('loginGoogle');
+  const ouWrap = document.getElementById('loginOuWrap');
+  if(btnGoogle && OAUTH_ATIVO){
+    btnGoogle.style.display = '';
+    if(ouWrap) ouWrap.style.display = '';
+    btnGoogle.addEventListener('click', async () => {
+      btnGoogle.disabled = true;
+      erro.textContent = '';
+      try{
+        sessionStorage.setItem('cetec-oauth-pendente', '1');
+        await entrarComGoogle();                       /* redireciona pro Google */
+      }catch(e){
+        sessionStorage.removeItem('cetec-oauth-pendente');
+        btnGoogle.disabled = false;
+        erro.textContent = 'Erro ao abrir login do Google.';
+      }
+    });
+  }
+
   const btnEntrar = document.getElementById('btnEntrar');
   if(btnEntrar) btnEntrar.addEventListener('click', abrir);
   const btnSair = document.getElementById('btnSair');
-  if(btnSair) btnSair.addEventListener('click', async () => { try{ await apiLogout(); }catch(e){} sairSessao(); location.reload(); });
+  if(btnSair) btnSair.addEventListener('click', async () => { try{ await apiLogout(); }catch(e){} await limparSessaoSupabase(); sairSessao(); location.reload(); });
 
   document.getElementById('loginModalClose').addEventListener('click', fechar);
   overlay.addEventListener('click', ev => { if(ev.target === overlay) fechar(); });
@@ -776,10 +949,10 @@ function wireLogin(){
   async function enviar(){
     const user = inpUser.value.trim();
     const senha = inpSenha.value;
-    if(user.length < 2){ erro.textContent = 'Escolha um usuário (mínimo 2 caracteres).'; return; }
+    if(user.length < 2){ erro.textContent = 'Escolha um usuário (mínimo 24 caracteres).'; return; }
     if(senha.length < 4){ erro.textContent = 'A senha precisa de pelo menos 4 caracteres.'; return; }
     if(modo === 'registrar' && senha !== (inpSenha2 ? inpSenha2.value : senha)){
-      erro.textContent = 'As senhas não conferem. Digite a mesma nos dois campos.'; return;
+      erro.textContent = 'As senhas não são diferentes. Digite a mesma nos dois campos.'; return;
     }
     const tosChk = document.getElementById('loginTos');
     const tosLabel = document.getElementById('loginTosLabel');
@@ -849,7 +1022,7 @@ function wireLogin(){
       iniciarTimerReenvio(document.getElementById('loginReenviarReset'), async () => {
         const rr = await apiPedirReset(conta);
         erro.style.color = 'var(--text-muted)';
-        erro.textContent = (rr && rr.msg) ? rr.msg : 'Reenviado — confira seu e-mail.';
+        erro.textContent = (rr && rr.msg) ? rr.msg : 'Reenviado - confira seu e-mail.';
       });
     }catch(e){ erro.style.color = ''; erro.textContent = 'Falha de conexão. Tente de novo.'; }
   });
@@ -1246,7 +1419,7 @@ function mostrarBannerReativarPush(){
   const b = document.createElement('div');
   b.id = 'reativarPushBanner';
   b.className = 'push-reativar';
-  b.innerHTML = `<span class="pr-txt">🔔 Suas notificações foram desativadas. Quer reativar?</span>
+  b.innerHTML = `<span class="pr-txt">🔔 Suas notificações estão desativadas. Deseja reativar?</span>
     <button class="pr-ok" type="button">Reativar</button>
     <button class="pr-x" type="button" aria-label="Fechar">✕</button>`;
   document.body.appendChild(b);
@@ -4283,7 +4456,7 @@ async function paginaPerfil(){
     <div class="perfil-head">
       <div class="perfil-avatar" id="perfilAvatar">${esc(alvoUser.slice(0,1).toUpperCase())}</div>
       <div class="perfil-head-info">
-        <h1>${esc(alvoUser)} <span class="nivel-chip" id="nivelChip"></span> <span class="titulo-chip" id="tituloChip" style="display:none;"></span></h1>
+        <h1><span id="perfilNome">${esc(alvoUser)}</span><span class="perfil-flags" id="perfilFlags"></span><span class="perfil-nome-real" id="perfilNomeReal" style="display:none;"></span> <span class="nivel-chip" id="nivelChip"></span> <span class="titulo-chip" id="tituloChip" style="display:none;"></span></h1>
         <div class="perfil-sub" id="perfilSub">Carregando...</div>
         <div class="perfil-meta" id="perfilMeta">
           <button class="perfil-meta-chip" type="button" id="chipAmigos" title="Ver amigos">👥 <b id="amigosCount">0</b> amigos</button>
@@ -4469,6 +4642,35 @@ async function paginaPerfil(){
        pessoa for anônima) para casar as avaliações dela no feed já anonimizado */
     const pub = await fetchPerfilPublico(alvoUser, meuSess ? meuSess.user : null) || {};
     const alvoMatch = (pub.anonimo && pub.nomeExib) ? String(pub.nomeExib).trim().toLowerCase() : alvo;
+
+    /* ---- selos: 🔒 privado / 🕶️ anonimo + pseudonimo no lugar do nome ---- */
+    {
+      const anon = !!pub.anonimo;                                  /* ja vem do servidor respeitando o anon_ate */
+      const priv = !!(pub.perfil && pub.perfil.privado);
+      const nomeExib = String(pub.nomeExib || alvoUser);
+      const elNome  = document.getElementById('perfilNome');
+      const elFlags = document.getElementById('perfilFlags');
+      const elReal  = document.getElementById('perfilNomeReal');
+      const elAv    = document.getElementById('perfilAvatar');
+
+      if(elNome) elNome.textContent = anon ? nomeExib : alvoUser;
+      if(elAv)   elAv.textContent   = (anon ? nomeExib : alvoUser).slice(0,1).toUpperCase();
+
+      if(elFlags){
+        let h = '';
+        if(priv) h += `<span class="perfil-flag priv" title="Perfil privado — você não aparece na busca nem na lista de usuários">🔒</span>`;
+        if(anon) h += `<span class="perfil-flag anon" title="Perfil anônimo — seu nome real fica escondido nos feeds e rankings">🕶️</span>`;
+        elFlags.innerHTML = h;
+      }
+
+      /* o nome real SÓ aparece pra você — se aparecesse pros visitantes,
+         o modo anônimo não serviria pra nada */
+      if(elReal && anon && ehMeu){
+        elReal.style.display = '';
+        elReal.textContent = alvoUser;
+        elReal.title = 'Seu nome real — só você enxerga isto aqui';
+      }
+    }
 
     /* dataset global + avaliações do dono do perfil + do visitante (p/ compare) */
     const todosSubs = [];
@@ -5541,12 +5743,22 @@ async function paginaConfig(){
   document.getElementById('cfgExcluir').addEventListener('click', async () => {
     const msg = document.getElementById('cfgExcluirMsg');
     if(!confirm('Tem certeza que quer EXCLUIR sua conta? Isso é permanente.')) return;
-    const nome = prompt('Para confirmar, digite seu usuário (' + sess.user + '):');
-    if(!nome || nome.trim().toLowerCase() !== sess.user.toLowerCase()){ msg.textContent = 'Nome não confere — cancelado.'; return; }
+    const nome = prompt('Para confirmar, digite seu NOME DE USUÁRIO (não a senha):\n\n' + sess.user);
+    if(!nome || nome.trim().toLowerCase() !== sess.user.toLowerCase()){
+      msg.textContent = 'Nome não confere — cancelado.';
+      alert('O que pedimos aqui é o seu NOME DE USUÁRIO (' + sess.user + '), não a senha. Nada foi excluído.');
+      return;
+    }
     msg.textContent = 'Excluindo…';
     const r = await apiPost({ action:'deletarConta', user:sess.user, token:sess.token });
     if(r && r.ok){ sairSessao(); alert('Conta excluída.'); location.href = BASE + 'index.html'; }
-    else msg.textContent = (r && r.error) ? r.error : 'Ainda não disponível';
+    else {
+      /* nunca mais deslogar sem ter certeza que apagou: mostra o motivo real */
+      const motivo = (r && r.error) ? r.error : 'não foi possível excluir';
+      const det = (r && Array.isArray(r.detalhes) && r.detalhes.length) ? '\n\n' + r.detalhes.join('\n') : '';
+      msg.textContent = motivo;
+      alert('A conta NÃO foi excluída.\n\n' + motivo + det);
+    }
   });
 }
 
@@ -5591,6 +5803,10 @@ function paginaRedefinir(){
   bt.addEventListener('click', enviar);
   document.getElementById('rsSenha2').addEventListener('keydown', ev => { if(ev.key === 'Enter') enviar(); });
 }
+
+/* volta do redirect do Google? troca o token do Supabase pelo nosso.
+   Nao bloqueia a renderizacao: em pagina normal sai na primeira linha. */
+checarRetornoOAuth();
 
 /* ---------------------- dispatcher ---------------------- */
 switch(PAGINA.tipo){

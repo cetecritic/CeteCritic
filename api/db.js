@@ -310,6 +310,8 @@ async function apiLogin(body){
   const senha = String(body.senha||'');
   const u = await acharUsuario(usuario);
   if(!u) return { ok:false, error:'usuário não encontrado' };
+  /* conta criada pelo Google nunca teve senha: dizer isso em vez de "senha incorreta" */
+  { const p = asObj(u.perfil); if(p.oauth && p.oauth.semSenha) return { ok:false, error:'essa conta entra pelo Google — use o botão "Entrar com Google"' }; }
   const agora = Date.now();
   if((u.lock_until||0) > agora){ const min = Math.ceil((u.lock_until-agora)/60000); return { ok:false, error:'muitas tentativas — espere '+min+' min e tente de novo' }; }
   if(hash(senha, u.salt) !== u.senha_hash){
@@ -456,35 +458,198 @@ async function apiReputacao(body){
   return { ok:true, total, meu };
 }
 
+/* Apaga a conta de vez.
+   ATENÇÃO ao histórico deste trecho: a versão antiga fazia select('*') SEM filtro,
+   e o PostgREST corta em 1000 linhas — em tabelas grandes (visitas, notificacoes)
+   as linhas do usuário nem apareciam, a FK bloqueava o delete final em `usuarios`,
+   o erro era ignorado e a função devolvia ok:true com a conta ainda no banco.
+   Agora: filtro no servidor + checagem de erro em cada passo + confirmação no fim. */
 async function apiDeletarConta(body){
   const usuario = String(body.user||'');
   if(!(await verificarToken(usuario, body.token))) return { ok:false, error:'faça login' };
-  const nu = norm(usuario);
-  // anonimiza votos (zera usuario)
-  const { data: subs } = await sb.from('submissions').select('row_id,usuario');
-  const meus = (subs||[]).filter(r => norm(r.usuario)===nu).map(r => r.row_id);
-  if(meus.length) await sb.from('submissions').update({ usuario: null }).in('row_id', meus);
-  // remove rastros nas tabelas com PK 'id'
-  const delWhere = async (table, cols) => {
-    const { data } = await sb.from(table).select('*');
-    const ids = (data||[]).filter(r => cols.some(c => norm(r[c])===nu)).map(r => r.id).filter(x => x!=null);
-    if(ids.length) await sb.from(table).delete().in('id', ids);
-  };
-  await delWhere('carimbos', ['profile_user','from_user']);
-  await delWhere('visitas', ['profile_user','visitor_user']);
-  await delWhere('reputacao', ['profile_user','from_user']);
-  await delWhere('palpites', ['usuario']);
-  await delWhere('resets', ['usuario']);
-  await delWhere('notificacoes', ['usuario']);
-  await delWhere('sessoes', ['usuario']);
-  // push (chave é endpoint)
-  const { data: pu } = await sb.from('push').select('endpoint,usuario');
-  const eps = (pu||[]).filter(r => norm(r.usuario)===nu).map(r => r.endpoint);
-  if(eps.length) await sb.from('push').delete().in('endpoint', eps);
-  // usuário por último
   const u = await acharUsuario(usuario);
-  if(u) await sb.from('usuarios').delete().eq('usuario', u.usuario);
-  return { ok:true };
+  if(!u) return { ok:false, error:'usuário não encontrado' };
+  const nu = norm(usuario);
+
+  const avisos = [];
+  const anota = (etapa, error) => { if(error) avisos.push(etapa + ': ' + (error.message || String(error))); };
+
+  /* 1) anonimiza os votos (as médias das peças continuam) */
+  {
+    const { data, error } = await sb.from('submissions').select('row_id,usuario').ilike('usuario', usuario);
+    anota('ler submissions', error);
+    const ids = (data||[]).filter(r => norm(r.usuario)===nu).map(r => r.row_id);
+    if(ids.length){
+      const { error: e2 } = await sb.from('submissions').update({ usuario: null }).in('row_id', ids);
+      anota('anonimizar votos', e2);
+    }
+  }
+
+  /* 2) apaga os rastros — uma consulta FILTRADA por coluna */
+  const delWhere = async (table, cols) => {
+    const ids = new Set();
+    for(const c of cols){
+      const { data, error } = await sb.from(table).select('*').ilike(c, usuario);
+      if(error){ anota('ler ' + table + '.' + c, error); continue; }
+      (data||[]).forEach(r => { if(norm(r[c])===nu && r.id != null) ids.add(r.id); });
+    }
+    if(ids.size){
+      const { error } = await sb.from(table).delete().in('id', [...ids]);
+      anota('apagar ' + table, error);
+    }
+  };
+  await delWhere('carimbos',     ['profile_user','from_user']);
+  await delWhere('visitas',      ['profile_user','visitor_user']);
+  await delWhere('reputacao',    ['profile_user','from_user']);
+  await delWhere('palpites',     ['usuario']);
+  await delWhere('resets',       ['usuario']);
+  await delWhere('notificacoes', ['usuario']);
+  await delWhere('sessoes',      ['usuario']);
+
+  /* login_codes tem a PK na própria coluna usuario */
+  { const { error } = await sb.from('login_codes').delete().ilike('usuario', usuario); anota('apagar login_codes', error); }
+
+  /* push (a chave é o endpoint, não id) */
+  {
+    const { data, error } = await sb.from('push').select('endpoint,usuario').ilike('usuario', usuario);
+    anota('ler push', error);
+    const eps = (data||[]).filter(r => norm(r.usuario)===nu).map(r => r.endpoint);
+    if(eps.length){ const { error: e2 } = await sb.from('push').delete().in('endpoint', eps); anota('apagar push', e2); }
+  }
+
+  /* 3b) se a conta veio do Google, apaga também o usuário no Supabase Auth —
+     senão a pessoa exclui a conta, clica em "Entrar com Google" e ela ressuscita */
+  {
+    const uid = (asObj(u.perfil).oauth || {}).supabase_uid;
+    if(uid){ try{ await sb.auth.admin.deleteUser(String(uid)); }catch(e){ anota('apagar login social', e); } }
+  }
+
+  /* 3) o usuário por último — agora COM checagem de erro */
+  const { error: erroFinal } = await sb.from('usuarios').delete().eq('usuario', u.usuario);
+  if(erroFinal) return { ok:false, error:'não deu pra apagar a conta — ' + (erroFinal.message || erroFinal), detalhes: avisos };
+
+  /* 4) confirma que sumiu mesmo (nunca mais devolver ok:true sem checar) */
+  if(await acharUsuario(usuario)) return { ok:false, error:'a conta continua no banco (alguma tabela ainda referencia ela)', detalhes: avisos };
+
+  return { ok:true, avisos };
+}
+
+/* =====================================================================
+   LOGIN SOCIAL (Google) — o Supabase Auth entra SÓ como "provador de identidade".
+   =====================================================================
+   O sistema de sessão/token daqui continua exatamente o mesmo: o navegador faz
+   o OAuth, manda o access_token pra cá, a gente valida com o Supabase e emite
+   um token NOSSO com criarSessao(). Nada a jusante (perfil, votos, badges)
+   precisa saber que existe OAuth.
+
+   A identidade do site continua sendo o NOME DE USUÁRIO. Por isso quem entra
+   pelo Google sem ter conta recebe { precisaNome:true } e escolhe um nome antes
+   de existir na tabela `usuarios`. */
+
+/* valida o access_token do Supabase Auth e devolve o usuário do provedor */
+async function validarTokenOAuth(accessToken){
+  const jwt = String(accessToken || '');
+  if(!jwt) return { erro: 'token ausente' };
+  let data, error;
+  try{ ({ data, error } = await sb.auth.getUser(jwt)); }
+  catch(e){ return { erro: 'não deu pra validar o login' }; }
+  if(error || !data || !data.user) return { erro: 'login expirado — tente de novo' };
+  const au = data.user;
+  const email = String(au.email || '').trim().toLowerCase();
+  const meta = au.user_metadata || {};
+  /* só aceitamos e-mail VERIFICADO pelo provedor. Sem isso, casar contas por
+     e-mail vira vetor de tomada de conta (eu cadastro com o seu e-mail e espero
+     você entrar pelo Google). */
+  const verificado = !!(au.email_confirmed_at || meta.email_verified === true);
+  if(!email || !verificado) return { erro: 'o provedor não confirmou seu e-mail' };
+  return {
+    uid: String(au.id),
+    email,
+    provider: String((au.app_metadata && au.app_metadata.provider) || 'google'),
+    nomeSugerido: String(meta.full_name || meta.name || email.split('@')[0] || '')
+  };
+}
+
+/* acha a conta já ligada a este uid do Supabase Auth (filtro em JSON, sem varrer a tabela) */
+async function acharUsuarioPorOAuth(uid){
+  const { data } = await sb.from('usuarios').select('*').eq('perfil->oauth->>supabase_uid', String(uid)).limit(1);
+  return (data || [])[0] || null;
+}
+/* acha a conta pelo e-mail salvo no perfil (para LIGAR uma conta antiga ao Google) */
+async function acharUsuarioPorEmail(email){
+  const alvo = String(email || '').trim().toLowerCase();
+  if(!alvo) return null;
+  const { data } = await sb.from('usuarios').select('*').ilike('perfil->>email', alvo).limit(10);
+  return (data || []).find(r => String(asObj(r.perfil).email || '').trim().toLowerCase() === alvo) || null;
+}
+
+/* transforma um nome qualquer (vindo do Google) numa sugestão válida pro site */
+function sugerirNome(bruto){
+  let n = String(bruto || '').normalize('NFD').replace(/[\u0300-\u036f]/g, '');
+  n = n.replace(/[^A-Za-z0-9_.\- ]/g, '').trim().slice(0, 20);
+  return n.length >= 2 ? n : '';
+}
+
+async function apiLoginOAuth(body){
+  const info = await validarTokenOAuth(body.accessToken);
+  if(info.erro) return { ok:false, error: info.erro };
+
+  /* 1) já entrou pelo Google antes: só emite a sessão */
+  let u = await acharUsuarioPorOAuth(info.uid);
+
+  /* 2) tem conta antiga com esse e-mail: liga as duas (e-mail já verificado acima) */
+  if(!u){
+    const antigo = await acharUsuarioPorEmail(info.email);
+    if(antigo){
+      const p = asObj(antigo.perfil);
+      p.oauth = Object.assign({}, p.oauth, { supabase_uid: info.uid, provider: info.provider });
+      await sb.from('usuarios').update({ perfil: p }).eq('usuario', antigo.usuario);
+      u = antigo;
+    }
+  }
+
+  /* 3) ninguém: precisa escolher um nome de usuário antes de existir aqui */
+  if(!u){
+    let sug = sugerirNome(info.nomeSugerido);
+    if(sug && await acharUsuario(sug)) sug = '';
+    return { ok:false, precisaNome:true, email: info.email, sugestao: sug };
+  }
+
+  const token = await criarSessao(u.usuario, body.dispositivo);
+  return { ok:true, user: u.usuario, token, admin: u.admin === true };
+}
+
+/* segunda etapa: a pessoa escolheu o nome de usuário */
+async function apiFinalizarOAuth(body){
+  const info = await validarTokenOAuth(body.accessToken);
+  if(info.erro) return { ok:false, error: info.erro };
+
+  /* corrida/duplicata: se nesse meio-tempo já ligou, só devolve a sessão */
+  const jaLigado = await acharUsuarioPorOAuth(info.uid);
+  if(jaLigado){
+    const token = await criarSessao(jaLigado.usuario, body.dispositivo);
+    return { ok:true, user: jaLigado.usuario, token, admin: jaLigado.admin === true };
+  }
+
+  const usuario = String(body.user || '').trim();
+  if(usuario.length < 2 || usuario.length > 20) return { ok:false, error:'usuário deve ter de 2 a 20 caracteres' };
+  if(!/^[A-Za-z0-9_.\- ]+$/.test(usuario)) return { ok:false, error:'usuário tem caracteres inválidos' };
+  if(await acharUsuario(usuario)) return { ok:false, error:'esse usuário já existe — escolha outro' };
+
+  /* conta sem senha: gravamos um hash aleatório impossível de adivinhar e
+     marcamos semSenha, para o login por senha recusar com uma mensagem útil */
+  const salt = novoToken().slice(0, 8);
+  const senhaImpossivel = novoToken() + novoToken();
+  const perfil = { email: info.email, oauth: { supabase_uid: info.uid, provider: info.provider, semSenha: true } };
+
+  const { error } = await sb.from('usuarios').insert({
+    usuario, senha_hash: hash(senhaImpossivel, salt), salt, token: null,
+    criado_em: Date.now(), tentativas: 0, lock_until: 0, perfil
+  });
+  if(error) return { ok:false, error:'esse usuário já existe — escolha outro' };
+
+  const token = await criarSessao(usuario, body.dispositivo);
+  return { ok:true, user: usuario, token, admin: false };
 }
 
 async function apiMeuPerfil(body){
@@ -643,7 +808,8 @@ async function handlePost(req, res){
   body = body || {};
   const action = body.action ? String(body.action) : 'voto';
   const rotas = {
-    registrar: apiRegistrar, login: apiLogin, login2fa: apiLogin2fa, palpite: apiPalpite, perfil: apiPerfil,
+    registrar: apiRegistrar, login: apiLogin, login2fa: apiLogin2fa,
+    loginOAuth: apiLoginOAuth, finalizarOAuth: apiFinalizarOAuth, palpite: apiPalpite, perfil: apiPerfil,
     visita: apiVisita, carimbo: apiCarimbo, reputacao: apiReputacao, deletarConta: apiDeletarConta,
     meuPerfil: apiMeuPerfil, salvarPush: apiSalvarPush, removerPush: apiRemoverPush,
     pedirReset: apiPedirReset, redefinirSenha: apiRedefinirSenha,
