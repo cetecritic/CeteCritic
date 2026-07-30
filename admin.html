@@ -1,6 +1,6 @@
 <!DOCTYPE html>
 <html lang="pt-BR">
-<head>
+<head>o
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>Admin — CETECritic</title>
@@ -52,6 +52,43 @@
   .hidden{ display:none; }
   .toolbar{ display:flex; gap:8px; flex-wrap:wrap; margin-top:12px; }
   a{ color:var(--gold); }
+
+  /* ---- linha de usuário: o nome vira botão que abre o editor completo ---- */
+  .u-nome{ background:none; border:0; padding:0; color:var(--text); font-weight:800; font-size:14px;
+           cursor:pointer; text-align:left; font-family:inherit; }
+  .u-nome:hover{ color:var(--gold); text-decoration:underline; }
+  .u-tags{ display:inline-flex; gap:4px; flex-wrap:wrap; vertical-align:middle; margin-left:4px; }
+  .pill{ font-size:10px; font-weight:800; border-radius:20px; padding:1px 8px; color:#fff; }
+
+  /* ---- modal do usuário ---- */
+  .modal-bg{ position:fixed; inset:0; background:rgba(0,0,0,.72); z-index:200; display:flex;
+             align-items:flex-start; justify-content:center; padding:24px 14px; overflow:auto; }
+  .modal{ background:var(--surface); border:1px solid var(--border); border-radius:16px;
+          width:100%; max-width:860px; padding:0; }
+  .modal-head{ display:flex; align-items:center; justify-content:space-between; gap:10px;
+               padding:16px 18px; border-bottom:1px solid var(--border); position:sticky; top:0;
+               background:var(--surface); border-radius:16px 16px 0 0; z-index:2; }
+  .modal-head h2{ margin:0; }
+  .modal-body{ padding:18px; }
+  .modal-tabs{ display:flex; gap:6px; flex-wrap:wrap; padding:12px 18px 0; }
+  .modal-tab{ background:transparent; border:1px solid var(--border); color:var(--muted);
+              border-radius:20px; padding:6px 13px; font-size:12.5px; font-weight:700; }
+  .modal-tab.active{ background:var(--gold); color:#0b0c0f; border-color:var(--gold); }
+  .modal-pane{ display:none; } .modal-pane.active{ display:block; }
+  .m-sec{ border:1px solid var(--border); border-radius:12px; padding:14px; margin-bottom:14px; }
+  .m-sec h3{ margin:0 0 10px; font-size:13px; color:var(--gold); text-transform:uppercase; letter-spacing:.4px; }
+  .m-linha{ display:flex; align-items:center; justify-content:space-between; gap:10px;
+            padding:7px 0; border-bottom:1px solid var(--border); font-size:13px; }
+  .m-linha:last-child{ border-bottom:0; }
+  .m-check{ display:flex; align-items:center; gap:7px; font-size:13px; margin:6px 0; }
+  .m-check input{ width:auto; }
+  .m-lista{ max-height:280px; overflow:auto; }
+  .m-vazio{ color:var(--muted); font-size:12.5px; padding:6px 0; }
+  .badge-linha{ display:flex; align-items:center; gap:8px; padding:5px 0; font-size:13px;
+                border-bottom:1px solid var(--border); }
+  .badge-linha:last-child{ border-bottom:0; }
+  .badge-linha select{ width:auto; padding:4px 8px; font-size:12px; }
+  .badge-linha .bl-nome{ flex:1; }
 </style>
 </head>
 <body>
@@ -489,8 +526,12 @@ $('btnSalvarConfig').addEventListener('click', async () => {
 });
 
 /* ---------- EDIÇÕES ---------- */
+/* guardado porque o modal do usuário usa os anos para montar os títulos
+   "Veterano de <ano>" no autocomplete de badges */
+let EDICOES_CACHE = [];
 async function carregarEdicoes(){
   const r = await getJson('q=edicoes'); const eds = (r && r.edicoes) || [];
+  EDICOES_CACHE = eds;
   $('edLista').innerHTML = eds.length ? eds.map(e =>
     `<div class="ed-item"><div>Cetec Festival <b>${e.ano}</b>${e.em_breve?'<span class="tag">em breve</span>':''} <span style="color:var(--muted);font-size:12px;">· ${e.noites} noites</span></div>
      <button class="ghost small" data-ed="${e.ano}">Editar</button></div>`).join('') : '<div class="msg">Nenhuma edição ainda.</div>';
@@ -888,21 +929,29 @@ async function buscarUsuarios(){
   $('uMsg').textContent = us.length + ' usuário(s).';
   $('uLista').innerHTML = us.map(u => {
     const nome = escH(u.usuario);
-    const tag = (bg, txt) => `<span style="background:${bg};color:#fff;font-size:10px;font-weight:800;border-radius:20px;padding:1px 8px;margin-left:4px;">${txt}</span>`;
+    const pill = (bg, txt, cor) => `<span class="pill" style="background:${bg};${cor?'color:'+cor+';':''}">${txt}</span>`;
+    const dt = ms => new Date(Number(ms)).toLocaleDateString('pt-BR');
     const tags =
-      (u.admin ? tag('#f5c518', 'ADMIN').replace('#fff','#0b0c0f') : '') +
-      (u.anonimo ? tag('#6d28d9', '🕶️ anônimo' + (u.pseudo ? ' · ' + escH(u.pseudo) : '')) : '') +
-      (u.privado ? tag('#d93c3c', '🔒 privado') : '');
+      (u.admin ? pill('#f5c518', 'ADMIN', '#0b0c0f') : '') +
+      (u.banido ? pill('#b91c1c', '🚫 suspenso' + (u.banidoAte ? ' até ' + dt(u.banidoAte) : ' (permanente)')) : '') +
+      (u.silenciado ? pill('#b45309', '🔇 silenciado até ' + dt(u.silenciadoAte)) : '') +
+      (u.precisaTrocarNome ? pill('#0f766e', '✏️ trocando nome') : '') +
+      (u.anonimo ? pill('#6d28d9', '🕶️ ' + (u.pseudo ? escH(u.pseudo) : 'anônimo')) : '') +
+      (u.privado ? pill('#d93c3c', '🔒 privado') : '');
     return `<div class="u-item" data-u="${nome}">
-      <div><b>${nome}</b>${tags}
-        <span style="color:var(--muted);font-size:12px;">${u.email?(' · '+escH(u.email)):''}</span></div>
+      <div>
+        <button class="u-nome" data-act="abrir" title="Abrir editor completo do perfil">${nome}</button>
+        <span class="u-tags">${tags}</span>
+        <span style="color:var(--muted);font-size:12px;">${u.email?(' · '+escH(u.email)+(u.emailVerificado?' ✓':'')):''}</span>
+      </div>
       <div class="u-acts">
+        <button class="ghost small" data-act="abrir">⚙️ Editar tudo</button>
+        <button class="ghost small" data-act="mensagem">✉️ Mensagem</button>
+        <button class="ghost small" data-act="trocarNome">✏️ Esconder nome</button>
         <button class="ghost small" data-act="admin" data-v="${u.admin?0:1}">${u.admin?'Remover admin':'Tornar admin'}</button>
-        <button class="ghost small" data-act="carimbos">Limpar carimbos</button>
-        <button class="ghost small" data-act="visitas">Limpar visitas</button>
-        <button class="ghost small" data-act="reputacao">Zerar reputação</button>
-        <button class="ghost small" data-act="editarRep">✏️ Editar reputação</button>
-        <button class="ghost small" data-act="showcase">Limpar destaques</button>
+        <button class="ghost small" data-act="silenciar">${u.silenciado?'🔊 Liberar':'🔇 Silenciar'}</button>
+        <button class="${u.banido?'ghost':'danger'} small" data-act="banir">${u.banido?'✅ Reativar':'🚫 Suspender'}</button>
+        <button class="ghost small" data-act="editarRep">👍 Reputação</button>
         <button class="danger small" data-act="excluir">Excluir conta</button>
       </div>
     </div>`;
@@ -910,13 +959,61 @@ async function buscarUsuarios(){
 
   $('uLista').querySelectorAll('.u-item').forEach(item => {
     const alvo = item.dataset.u;
+    const u = us.find(x => x.usuario === alvo) || {};
     item.querySelectorAll('button').forEach(b => b.addEventListener('click', async () => {
       const act = b.dataset.act;
+
+      if(act === 'abrir'){ abrirModalUsuario(alvo); return; }
+
+      if(act === 'mensagem'){ abrirMensagemRapida(alvo); return; }
+
+      if(act === 'trocarNome'){
+        if(!confirm('Esconder o nome de "'+alvo+'"?\n\nO nome some de todas as telas públicas na hora (vira um pseudônimo) e a pessoa é obrigada a escolher outro no próximo acesso.')) return;
+        const motivo = prompt('Motivo (aparece pra pessoa na tela de troca — opcional):', 'Seu nome de usuário não está de acordo com as regras da comunidade.');
+        if(motivo === null) return;
+        const r = await post('forcarTrocaNome', { alvo, motivo });
+        if(r && r.ok) buscarUsuarios(); else alert((r && r.error) || 'Falhou.');
+        return;
+      }
+
       if(act === 'admin'){ await post('tornarAdmin', { alvo, valor: b.dataset.v === '1' }); buscarUsuarios(); return; }
+
+      if(act === 'silenciar'){
+        if(u.silenciado){
+          await post('definirSilencio', { alvo, ativo:false });
+          buscarUsuarios(); return;
+        }
+        const h = prompt('Silenciar "'+alvo+'" por quantas HORAS?\n\nEle continua navegando e lendo, mas não vota, carimba nem palpita.', '24');
+        if(h === null) return;
+        const horas = Number(h);
+        if(!Number.isFinite(horas) || horas <= 0){ alert('Número de horas inválido.'); return; }
+        const r = await post('definirSilencio', { alvo, ativo:true, horas });
+        if(r && r.ok) buscarUsuarios(); else alert((r && r.error) || 'Falhou.');
+        return;
+      }
+
+      if(act === 'banir'){
+        if(u.banido){
+          if(!confirm('Reativar a conta "'+alvo+'"?')) return;
+          await post('definirBanimento', { alvo, ativo:false });
+          buscarUsuarios(); return;
+        }
+        const d = prompt('Suspender "'+alvo+'" por quantos DIAS?\n\nDeixe 0 para suspensão permanente. Todas as sessões dele caem na hora.', '7');
+        if(d === null) return;
+        const dias = Number(d);
+        if(!Number.isFinite(dias) || dias < 0){ alert('Número de dias inválido.'); return; }
+        const motivo = prompt('Motivo (a pessoa vê isso ao tentar entrar):', '');
+        if(motivo === null) return;
+        const r = await post('definirBanimento', { alvo, ativo:true, dias, motivo });
+        if(r && r.ok) buscarUsuarios(); else alert((r && r.error) || 'Falhou.');
+        return;
+      }
+
       if(act === 'excluir'){
         if(!confirm('Excluir a conta "'+alvo+'"? Apaga perfil, carimbos, visitas, reputação e palpites. Os votos viram anônimos. Isso é permanente.')) return;
         await post('deletarUsuario', { alvo }); buscarUsuarios(); return;
       }
+
       if(act === 'editarRep'){
         const atual = await post('lerReputacao', { alvo });
         const val = prompt('Reputação de "'+alvo+'" (atual: '+((atual&&atual.totalAtual)||0)+'):', (atual&&atual.totalAtual)||0);
@@ -927,15 +1024,494 @@ async function buscarUsuarios(){
         buscarUsuarios();
         return;
       }
-      const rotulo = { carimbos:'os carimbos', visitas:'as visitas', reputacao:'a reputação', showcase:'os destaques/favoritas' }[act];
-      if(!confirm('Remover '+rotulo+' de "'+alvo+'"?')) return;
-      await post('moderarPerfil', { alvo, opcoes: { [act]: true } });
-      alert('Feito.');
     }));
+  });
+}
+
+/* ---------- atalho: mensagem/notificação direta ---------- */
+function abrirMensagemRapida(alvo){
+  const ov = abrirModalBase('✉️ Mensagem para ' + escH(alvo), `
+    <div class="m-sec">
+      <label>Título</label>
+      <input id="mrTitulo" maxlength="120" placeholder="📣 Recado da organização">
+      <label>Mensagem</label>
+      <textarea id="mrCorpo" maxlength="500" placeholder="Escreva aqui…"></textarea>
+      <label>Link ao clicar</label>
+      <input id="mrUrl" value="/notificacoes.html">
+      <label class="m-check"><input type="checkbox" id="mrPush" checked> Enviar também como push no aparelho</label>
+      <div class="msg" id="mrMsg"></div>
+      <div class="toolbar"><button id="mrEnviar">Enviar</button></div>
+    </div>`);
+  ov.querySelector('#mrEnviar').addEventListener('click', async () => {
+    const titulo = ov.querySelector('#mrTitulo').value.trim();
+    const corpo = ov.querySelector('#mrCorpo').value.trim();
+    const msg = ov.querySelector('#mrMsg');
+    if(!titulo && !corpo){ msg.textContent = 'Escreva pelo menos o título ou a mensagem.'; return; }
+    msg.textContent = 'Enviando…';
+    const r = await post('notificarUsuario', {
+      alvo, titulo, corpo,
+      url: ov.querySelector('#mrUrl').value.trim() || '/notificacoes.html',
+      push: ov.querySelector('#mrPush').checked
+    });
+    if(r && r.ok){ msg.textContent = 'Enviado ✓' + (r.push ? (' · push em ' + r.push + ' aparelho(s)') : ' · sem aparelho com push'); }
+    else msg.textContent = (r && r.error) || 'Falhou.';
   });
 }
 $('btnBuscarU').addEventListener('click', buscarUsuarios);
 $('uBusca').addEventListener('keydown', ev => { if(ev.key==='Enter') buscarUsuarios(); });
+
+/* =====================================================================
+   MODAL DO USUÁRIO — editor completo de um perfil
+   =====================================================================
+   Abre pelo nome (ou pelo "⚙️ Editar tudo") na lista. Espelha as seções do
+   perfil público, mas tudo editável. Cada aba salva de forma independente,
+   pra um erro numa parte não derrubar o resto. */
+
+function abrirModalBase(titulo, corpoHtml, tabsHtml){
+  const antigo = document.getElementById('modalUsuario');
+  if(antigo) antigo.remove();
+  document.body.insertAdjacentHTML('beforeend', `
+    <div class="modal-bg" id="modalUsuario">
+      <div class="modal">
+        <div class="modal-head">
+          <h2>${titulo}</h2>
+          <button class="ghost small" id="modalFechar">✕ Fechar</button>
+        </div>
+        ${tabsHtml || ''}
+        <div class="modal-body" id="modalBody">${corpoHtml}</div>
+      </div>
+    </div>`);
+  const ov = document.getElementById('modalUsuario');
+  const fechar = () => ov.remove();
+  ov.querySelector('#modalFechar').addEventListener('click', fechar);
+  ov.addEventListener('click', ev => { if(ev.target === ov) fechar(); });
+  document.addEventListener('keydown', function esc(ev){
+    if(ev.key === 'Escape'){ fechar(); document.removeEventListener('keydown', esc); }
+  });
+  return ov;
+}
+
+/* Lista de títulos de badge só para o AUTOCOMPLETE.
+   A fonte da verdade é o catalogoBadges() do core.js — em vez de duplicar a
+   lista aqui (e ela envelhecer), lemos o próprio core.js e extraímos os
+   títulos. Se a extração falhar, o campo continua aceitando texto livre, que
+   é o caminho principal de qualquer forma. */
+let _badgeTitulos = null;
+async function titulosDeBadge(){
+  if(_badgeTitulos) return _badgeTitulos;
+  _badgeTitulos = [];
+  try{
+    const src = await fetch('/assets/core.js', { cache:'no-store' }).then(r => r.text());
+    const re = /S\(\s*'[^']*'\s*,\s*'([^']+)'/g;
+    let m; while((m = re.exec(src))) _badgeTitulos.push(m[1]);
+    if(/titulo:\s*`Veterano de \$\{ano\}`/.test(src)){
+      (EDICOES_CACHE || []).forEach(e => _badgeTitulos.push('Veterano de ' + e.ano));
+    }
+    if(/titulo:\s*'Colecionador'/.test(src)) _badgeTitulos.push('Colecionador');
+  }catch(e){ /* fica só o texto livre */ }
+  _badgeTitulos = [...new Set(_badgeTitulos)].sort();
+  return _badgeTitulos;
+}
+
+async function abrirModalUsuario(alvo){
+  const ov = abrirModalBase('👤 ' + escH(alvo), '<div class="m-vazio">Carregando…</div>', `
+    <div class="modal-tabs" id="mTabs">
+      <button class="modal-tab active" data-pane="pIdent">Identidade</button>
+      <button class="modal-tab" data-pane="pKarma">Karma e badges</button>
+      <button class="modal-tab" data-pane="pConteudo">Conteúdo</button>
+      <button class="modal-tab" data-pane="pSocial">Social</button>
+      <button class="modal-tab" data-pane="pModer">Moderação</button>
+    </div>`);
+
+  const d = await post('usuarioDetalhe', { alvo });
+  if(!d || !d.ok){
+    ov.querySelector('#modalBody').innerHTML = '<div class="m-vazio">' + escH((d && d.error) || 'Não foi possível carregar.') + '</div>';
+    return;
+  }
+  const p = d.perfil || {};
+  const mod = d.moderacao || {};
+  const dt = ms => ms ? new Date(Number(ms)).toLocaleString('pt-BR') : '—';
+  const jsonBox = (id, valor) => `<textarea id="${id}" spellcheck="false" style="font-family:ui-monospace,Consolas,monospace;font-size:12px;min-height:110px;">${escH(JSON.stringify(valor ?? null, null, 2))}</textarea>`;
+
+  ov.querySelector('#modalBody').innerHTML = `
+    <!-- ============ IDENTIDADE ============ -->
+    <div class="modal-pane active" id="pIdent">
+      <div class="m-sec">
+        <h3>Conta</h3>
+        <div class="m-linha"><span>Nome de usuário</span><b>${escH(d.usuario)}</b></div>
+        <div class="m-linha"><span>Criada em</span><span>${dt(d.criadoEm)}</span></div>
+        <div class="m-linha"><span>Entra por</span><span>${d.temSenha ? 'senha' : 'Google (sem senha)'}</span></div>
+        <div class="m-linha"><span>Nomes anteriores</span><span>${(p.nomes_antigos||[]).map(n => escH(n.nome)).join(', ') || '—'}</span></div>
+        <label>Renomear a conta (migra votos, carimbos, reputação e amigos)</label>
+        <div class="row2">
+          <input id="idNovoNome" maxlength="20" placeholder="novo nome de usuário">
+          <button class="ghost" id="btnRenomear">Renomear agora</button>
+        </div>
+        <div class="msg" id="idRenMsg"></div>
+      </div>
+
+      <div class="m-sec">
+        <h3>Dados do perfil</h3>
+        <label>E-mail</label><input id="idEmail" value="${escH(p.email || '')}" maxlength="120">
+        <label class="m-check"><input type="checkbox" id="idEmailVer" ${p.email_verificado ? 'checked' : ''}> E-mail verificado <span style="color:var(--muted);font-size:11px;">(libera o vínculo com o Google)</span></label>
+        <label>Pseudônimo (usado quando está anônimo)</label><input id="idPseudo" value="${escH(p.pseudo || '')}" maxlength="40">
+        <label>Bio</label><input id="idBio" value="${escH(p.bio || '')}" maxlength="300">
+        <label>Nota interna (só o admin vê)</label><input id="idNota" value="${escH(p.nota_admin || '')}" maxlength="300">
+        <label class="m-check"><input type="checkbox" id="idAnon" ${p.anonimo ? 'checked' : ''}> 🕶️ Anônimo</label>
+        <label class="m-check"><input type="checkbox" id="idPriv" ${p.privado ? 'checked' : ''}> 🔒 Privado</label>
+        <label class="m-check"><input type="checkbox" id="id2fa" ${p.twofa ? 'checked' : ''}> 🔐 2FA por e-mail</label>
+        <label class="m-check"><input type="checkbox" id="idAdmin" ${d.admin ? 'checked' : ''}> ⭐ Administrador</label>
+        <div class="toolbar"><button id="btnSalvarIdent">Salvar identidade</button></div>
+        <div class="msg" id="identMsg"></div>
+      </div>
+    </div>
+
+    <!-- ============ KARMA E BADGES ============ -->
+    <div class="modal-pane" id="pKarma">
+      <div class="m-sec">
+        <h3>Reputação (karma)</h3>
+        <div class="m-linha"><span>Votos reais da comunidade</span><b>${d.reputacao.real}</b></div>
+        <div class="m-linha"><span>Ajuste do admin</span><b>${d.reputacao.ajuste}</b></div>
+        <div class="m-linha"><span>Total exibido</span><b>${d.reputacao.total}</b></div>
+        <label>Definir o total exibido</label>
+        <div class="row2">
+          <input id="krTotal" type="number" value="${d.reputacao.total}">
+          <button class="ghost" id="btnSalvarRep">Aplicar</button>
+        </div>
+        <div class="msg" id="krMsg">O ajuste é gravado como uma linha separada — os votos de quem votou nunca são apagados.</div>
+      </div>
+
+      <div class="m-sec">
+        <h3>Badges</h3>
+        <p class="sub" style="margin:0 0 10px;">As badges são calculadas no navegador a partir dos votos. Aqui você grava exceções: <b>forçar</b> mostra a badge mesmo sem o requisito, <b>bloquear</b> esconde uma que ela conquistou.</p>
+        <div class="row2">
+          <div>
+            <label>Adicionar exceção</label>
+            <input id="bgTitulo" list="bgLista" placeholder="título exato da badge">
+            <datalist id="bgLista"></datalist>
+          </div>
+          <div>
+            <label>&nbsp;</label>
+            <div class="toolbar" style="margin:0;">
+              <button class="ghost small" id="btnBgForcar">Forçar</button>
+              <button class="ghost small" id="btnBgBloquear">Bloquear</button>
+            </div>
+          </div>
+        </div>
+        <div id="bgAtuais" style="margin-top:12px;"></div>
+        <div class="msg" id="bgMsg"></div>
+      </div>
+    </div>
+
+    <!-- ============ CONTEÚDO ============ -->
+    <div class="modal-pane" id="pConteudo">
+      <div class="m-sec">
+        <h3>Avaliações (${d.votos.length})</h3>
+        <div class="m-lista" id="ctVotos"></div>
+      </div>
+      <div class="m-sec">
+        <h3>Palpites do bolão (${d.palpites.length})</h3>
+        <div class="m-lista" id="ctPalpites"></div>
+      </div>
+      <div class="m-sec">
+        <h3>Destaques, preferidas e amigos</h3>
+        <label>Destaques (showcase) — JSON</label>${jsonBox('ctShowcase', p.showcase || {})}
+        <label>Edições preferidas — JSON (ex.: [2024, 2025])</label>${jsonBox('ctFavs', p.edicoesFav || [])}
+        <label>Amigos — JSON (ex.: ["fulano","ciclano"])</label>${jsonBox('ctAmigos', p.amigos || [])}
+        <div class="toolbar"><button id="btnSalvarConteudo">Salvar</button></div>
+        <div class="msg" id="ctMsg"></div>
+      </div>
+    </div>
+
+    <!-- ============ SOCIAL ============ -->
+    <div class="modal-pane" id="pSocial">
+      <div class="m-sec">
+        <h3>Carimbos recebidos (${d.carimbosRecebidos.length})</h3>
+        <div class="m-lista" id="soCarimbos"></div>
+      </div>
+      <div class="m-sec">
+        <h3>Carimbos que ele deu (${d.carimbosDados.length})</h3>
+        <div class="m-lista" id="soCarimbosDados"></div>
+      </div>
+      <div class="m-sec">
+        <h3>Reações em posts do feed (${(d.reacoes||[]).length})</h3>
+        <div class="m-lista" id="soReacoes"></div>
+      </div>
+      <div class="m-sec">
+        <h3>Visitas recebidas (${d.visitasRecebidas.length}) · visitou ${d.visitasFeitas} perfis</h3>
+        <div class="m-lista" id="soVisitas"></div>
+      </div>
+      <div class="m-sec">
+        <h3>Notificações recentes (${d.notificacoes.length})</h3>
+        <div class="m-lista" id="soNotifs"></div>
+      </div>
+    </div>
+
+    <!-- ============ MODERAÇÃO ============ -->
+    <div class="modal-pane" id="pModer">
+      <div class="m-sec">
+        <h3>Situação</h3>
+        <div class="m-linha"><span>Suspensão</span><b>${mod.banido ? ('ativa' + (mod.banidoAte ? ' até ' + dt(mod.banidoAte) : ' (permanente)')) : 'não'}</b></div>
+        <div class="m-linha"><span>Motivo</span><span>${escH(mod.banidoMotivo || '—')}</span></div>
+        <div class="m-linha"><span>Silêncio</span><b>${mod.silenciado ? ('até ' + dt(mod.silenciadoAte)) : 'não'}</b></div>
+        <div class="m-linha"><span>Precisa trocar de nome</span><b>${mod.precisaTrocarNome ? 'sim' : 'não'}</b></div>
+        <div class="toolbar">
+          <button class="ghost" id="btnModNome">✏️ Esconder nome e exigir troca</button>
+          <button class="ghost" id="btnModNomeCancel">Cancelar exigência</button>
+          <button class="ghost" id="btnModDeslogar">📴 Derrubar todas as sessões</button>
+        </div>
+        <div class="msg" id="modMsg"></div>
+      </div>
+
+      <div class="m-sec">
+        <h3>Sessões abertas (${d.sessoes.length})</h3>
+        <div class="m-lista" id="modSessoes"></div>
+      </div>
+
+      <div class="m-sec">
+        <h3>Limpezas em massa</h3>
+        <p class="sub" style="margin:0 0 8px;">Os votos são <b>anonimizados</b>, não apagados — as médias das peças continuam corretas.</p>
+        <label class="m-check"><input type="checkbox" data-op="carimbos"> Carimbos recebidos</label>
+        <label class="m-check"><input type="checkbox" data-op="carimbosDados"> Carimbos que ele deu</label>
+        <label class="m-check"><input type="checkbox" data-op="reacoes"> Reações que ele deu em posts</label>
+        <label class="m-check"><input type="checkbox" data-op="visitas"> Visitas recebidas</label>
+        <label class="m-check"><input type="checkbox" data-op="reputacao"> Reputação</label>
+        <label class="m-check"><input type="checkbox" data-op="palpites"> Palpites</label>
+        <label class="m-check"><input type="checkbox" data-op="notificacoes"> Notificações</label>
+        <label class="m-check"><input type="checkbox" data-op="push"> Inscrições de push</label>
+        <label class="m-check"><input type="checkbox" data-op="showcase"> Destaques e preferidas</label>
+        <label class="m-check"><input type="checkbox" data-op="amigos"> Lista de amigos</label>
+        <label class="m-check"><input type="checkbox" data-op="votos"> Anonimizar as avaliações</label>
+        <div class="toolbar"><button class="danger" id="btnLimpar">Executar limpeza</button></div>
+        <div class="msg" id="limpMsg"></div>
+      </div>
+    </div>`;
+
+  /* ---- abas ---- */
+  ov.querySelectorAll('.modal-tab').forEach(t => t.addEventListener('click', () => {
+    ov.querySelectorAll('.modal-tab').forEach(x => x.classList.remove('active'));
+    ov.querySelectorAll('.modal-pane').forEach(x => x.classList.remove('active'));
+    t.classList.add('active');
+    const pane = ov.querySelector('#' + t.dataset.pane);
+    if(pane) pane.classList.add('active');
+  }));
+
+  const q = sel => ov.querySelector(sel);
+  const recarregar = () => { ov.remove(); abrirModalUsuario(alvo); };
+
+  /* ---------- IDENTIDADE ---------- */
+  q('#btnSalvarIdent').addEventListener('click', async () => {
+    const msg = q('#identMsg'); msg.textContent = 'Salvando…';
+    const r = await post('salvarUsuarioAdmin', { alvo, campos: {
+      email: q('#idEmail').value.trim(),
+      email_verificado: q('#idEmailVer').checked,
+      pseudo: q('#idPseudo').value.trim(),
+      bio: q('#idBio').value.trim(),
+      nota_admin: q('#idNota').value.trim(),
+      anonimo: q('#idAnon').checked,
+      privado: q('#idPriv').checked,
+      twofa: q('#id2fa').checked,
+      admin: q('#idAdmin').checked
+    }});
+    msg.textContent = (r && r.ok) ? 'Salvo ✓' : ((r && r.error) || 'Falhou.');
+    if(r && r.ok) buscarUsuarios();
+  });
+
+  q('#btnRenomear').addEventListener('click', async () => {
+    const novo = q('#idNovoNome').value.trim();
+    const msg = q('#idRenMsg');
+    if(!novo){ msg.textContent = 'Digite o nome novo.'; return; }
+    if(!confirm('Renomear "'+alvo+'" para "'+novo+'"?\n\nIsso reescreve o nome em todas as tabelas (votos, carimbos, visitas, reputação, palpites, notificações, sessões) e na lista de amigos de quem seguia essa pessoa. Não dá pra desfazer com um clique.')) return;
+    msg.textContent = 'Migrando…';
+    const r = await post('renomearUsuario', { alvo, novoNome: novo, limparAnonimato: true });
+    if(r && r.ok){
+      msg.textContent = 'Renomeado ✓' + ((r.avisos && r.avisos.length) ? (' (com avisos: ' + r.avisos.join('; ') + ')') : '');
+      buscarUsuarios();
+      setTimeout(() => { ov.remove(); abrirModalUsuario(novo); }, 800);
+    } else {
+      msg.textContent = ((r && r.error) || 'Falhou.') + ((r && r.avisos && r.avisos.length) ? (' — ' + r.avisos.join('; ')) : '');
+    }
+  });
+
+  /* ---------- KARMA ---------- */
+  q('#btnSalvarRep').addEventListener('click', async () => {
+    const msg = q('#krMsg');
+    const num = Number(q('#krTotal').value);
+    if(!Number.isFinite(num)){ msg.textContent = 'Número inválido.'; return; }
+    msg.textContent = 'Aplicando…';
+    const r = await post('ajustarReputacao', { alvo, valor: num });
+    msg.textContent = (r && r.ok) ? ('Total agora: ' + r.totalAtual) : ((r && r.error) || 'Falhou.');
+  });
+
+  /* ---------- BADGES ---------- */
+  let ab = (p.admin_badges && typeof p.admin_badges === 'object') ? p.admin_badges : { forcadas: [], bloqueadas: [] };
+  ab.forcadas = Array.isArray(ab.forcadas) ? ab.forcadas : [];
+  ab.bloqueadas = Array.isArray(ab.bloqueadas) ? ab.bloqueadas : [];
+
+  function renderBadges(){
+    const linha = (t, tipo) => `<div class="badge-linha">
+      <span class="bl-nome">${tipo === 'forcada' ? '✅' : '🚫'} ${escH(t)}</span>
+      <button class="ghost small" data-rm="${escH(t)}" data-tipo="${tipo}">remover</button>
+    </div>`;
+    const html = ab.forcadas.map(t => linha(t, 'forcada')).join('') + ab.bloqueadas.map(t => linha(t, 'bloqueada')).join('');
+    q('#bgAtuais').innerHTML = html || '<div class="m-vazio">Nenhuma exceção — as badges seguem 100% o cálculo automático.</div>';
+    q('#bgAtuais').querySelectorAll('[data-rm]').forEach(b => b.addEventListener('click', () => {
+      const t = b.dataset.rm;
+      if(b.dataset.tipo === 'forcada') ab.forcadas = ab.forcadas.filter(x => x !== t);
+      else ab.bloqueadas = ab.bloqueadas.filter(x => x !== t);
+      renderBadges(); salvarBadges();
+    }));
+  }
+  async function salvarBadges(){
+    const msg = q('#bgMsg'); msg.textContent = 'Salvando…';
+    const r = await post('ajustarBadges', { alvo, forcadas: ab.forcadas, bloqueadas: ab.bloqueadas });
+    msg.textContent = (r && r.ok) ? 'Salvo ✓' : ((r && r.error) || 'Falhou.');
+  }
+  q('#btnBgForcar').addEventListener('click', () => {
+    const t = q('#bgTitulo').value.trim(); if(!t) return;
+    ab.bloqueadas = ab.bloqueadas.filter(x => x !== t);
+    if(ab.forcadas.indexOf(t) < 0) ab.forcadas.push(t);
+    q('#bgTitulo').value = ''; renderBadges(); salvarBadges();
+  });
+  q('#btnBgBloquear').addEventListener('click', () => {
+    const t = q('#bgTitulo').value.trim(); if(!t) return;
+    ab.forcadas = ab.forcadas.filter(x => x !== t);
+    if(ab.bloqueadas.indexOf(t) < 0) ab.bloqueadas.push(t);
+    q('#bgTitulo').value = ''; renderBadges(); salvarBadges();
+  });
+  renderBadges();
+  titulosDeBadge().then(lista => {
+    const dl = q('#bgLista'); if(dl) dl.innerHTML = lista.map(t => `<option value="${escH(t)}">`).join('');
+  });
+
+  /* ---------- CONTEÚDO: votos ---------- */
+  function renderVotos(){
+    const box = q('#ctVotos');
+    if(!d.votos.length){ box.innerHTML = '<div class="m-vazio">Nenhuma avaliação.</div>'; return; }
+    box.innerHTML = d.votos.map(v => {
+      const notas = Object.keys(v.grid).sort().map(k =>
+        `<label style="font-size:11px;color:var(--muted);">${escH(k)}
+           <input data-row="${escH(String(v.row_id))}" data-k="${escH(k)}" type="number" min="0" max="10" step="0.5"
+                  value="${escH(String(v.grid[k]))}" style="width:62px;padding:4px 6px;font-size:12px;">
+         </label>`).join('');
+      return `<div class="m-sec" style="margin-bottom:8px;padding:10px;">
+        <div class="m-linha" style="border:0;padding:0 0 6px;">
+          <b>Festival ${v.year}</b>
+          <span style="color:var(--muted);font-size:11.5px;">${dt(v.ts)}</span>
+        </div>
+        <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:flex-end;">${notas || '<span class="m-vazio">sem notas</span>'}</div>
+        <div class="toolbar" style="margin-top:8px;">
+          <button class="ghost small" data-salvar="${escH(String(v.row_id))}">Salvar notas</button>
+          <button class="danger small" data-apagar="${escH(String(v.row_id))}">Apagar avaliação</button>
+        </div>
+      </div>`;
+    }).join('');
+
+    box.querySelectorAll('[data-salvar]').forEach(b => b.addEventListener('click', async () => {
+      const row = b.dataset.salvar;
+      const grid = {};
+      box.querySelectorAll(`[data-row="${CSS.escape(row)}"]`).forEach(inp => {
+        const n = Number(inp.value);
+        if(Number.isFinite(n)) grid[inp.dataset.k] = n;
+      });
+      b.disabled = true; b.textContent = 'Salvando…';
+      const r = await post('editarVoto', { row_id: row, grid });
+      b.disabled = false; b.textContent = (r && r.ok) ? 'Salvo ✓' : 'Falhou';
+      setTimeout(() => { b.textContent = 'Salvar notas'; }, 1500);
+    }));
+    box.querySelectorAll('[data-apagar]').forEach(b => b.addEventListener('click', async () => {
+      if(!confirm('Apagar esta avaliação de vez? A média das peças vai mudar.')) return;
+      const r = await post('apagarItemUsuario', { tipo:'voto', id: b.dataset.apagar });
+      if(r && r.ok){ d.votos = d.votos.filter(v => String(v.row_id) !== String(b.dataset.apagar)); renderVotos(); }
+      else alert((r && r.error) || 'Falhou.');
+    }));
+  }
+  renderVotos();
+
+  /* ---------- CONTEÚDO: palpites ---------- */
+  q('#ctPalpites').innerHTML = d.palpites.length ? d.palpites.map(pa => `
+    <div class="m-linha">
+      <span><b>Festival ${pa.year}</b> · ${Object.keys(pa.palpites || {}).length} palpite(s) · ${dt(pa.ts)}</span>
+      <button class="danger small" data-palp="${escH(String(pa.id))}">Apagar</button>
+    </div>`).join('') : '<div class="m-vazio">Nenhum palpite.</div>';
+  q('#ctPalpites').querySelectorAll('[data-palp]').forEach(b => b.addEventListener('click', async () => {
+    if(!confirm('Apagar este palpite?')) return;
+    const r = await post('apagarItemUsuario', { tipo:'palpite', id: b.dataset.palp });
+    if(r && r.ok) b.closest('.m-linha').remove(); else alert((r && r.error) || 'Falhou.');
+  }));
+
+  /* ---------- CONTEÚDO: JSONs ---------- */
+  q('#btnSalvarConteudo').addEventListener('click', async () => {
+    const msg = q('#ctMsg');
+    let showcase, favoritas, amigos;
+    try{
+      showcase  = JSON.parse(q('#ctShowcase').value || 'null');
+      favoritas = JSON.parse(q('#ctFavs').value || 'null');
+      amigos    = JSON.parse(q('#ctAmigos').value || 'null');
+    }catch(e){ msg.textContent = 'JSON inválido: ' + e.message; return; }
+    if(favoritas !== null && !Array.isArray(favoritas)){ msg.textContent = 'Preferidas precisa ser uma lista.'; return; }
+    if(amigos !== null && !Array.isArray(amigos)){ msg.textContent = 'Amigos precisa ser uma lista.'; return; }
+    msg.textContent = 'Salvando…';
+    /* `edicoesFav` é o nome real do campo no perfil (é o que o core.js lê em
+       renderFavs) — mandamos com esse nome, não "favoritas" */
+    const r = await post('salvarUsuarioAdmin', { alvo, campos: { showcase, edicoesFav: favoritas, amigos } });
+    msg.textContent = (r && r.ok) ? 'Salvo ✓' : ((r && r.error) || 'Falhou.');
+  });
+
+  /* ---------- SOCIAL ---------- */
+  const listaSimples = (sel, itens, render, tipo, idKey) => {
+    const box = q(sel);
+    box.innerHTML = itens.length ? itens.map(x => `
+      <div class="m-linha"><span>${render(x)}</span>
+        <button class="ghost small" data-del="${escH(String(x[idKey]))}">Apagar</button></div>`).join('')
+      : '<div class="m-vazio">Nada aqui.</div>';
+    box.querySelectorAll('[data-del]').forEach(b => b.addEventListener('click', async () => {
+      /* `alvo` é obrigatório em notificação: a notif_id se repete entre
+         usuários quando o aviso foi enviado pra todo mundo */
+      const r = await post('apagarItemUsuario', { tipo, id: b.dataset.del, alvo });
+      if(r && r.ok) b.closest('.m-linha').remove(); else alert((r && r.error) || 'Falhou.');
+    }));
+  };
+  listaSimples('#soCarimbos', d.carimbosRecebidos, c => `${escH(c.tipo)} de <b>${escH(c.de)}</b> · ${dt(c.ts)}`, 'carimbo', 'id');
+  listaSimples('#soCarimbosDados', d.carimbosDados, c => `${escH(c.tipo)} para <b>${escH(c.para)}</b> · ${dt(c.ts)}`, 'carimbo', 'id');
+  listaSimples('#soReacoes', d.reacoes || [], x => `${escH(x.tipo)} em <code>${escH(x.post)}</code>${x.autor ? ' (de ' + escH(x.autor) + ')' : ''} · ${dt(x.ts)}`, 'carimbo', 'id');
+  listaSimples('#soVisitas', d.visitasRecebidas, v => `<b>${escH(v.de)}</b> · ${v.count}x · ${dt(v.ts)}`, 'visita', 'id');
+  listaSimples('#soNotifs', d.notificacoes, n => `${n.lida ? '' : '🔵 '}<b>${escH(n.titulo)}</b> ${escH(n.corpo || '')} <span style="color:var(--muted);font-size:11px;">${dt(n.ts)}</span>`, 'notificacao', 'notif_id');
+
+  /* ---------- MODERAÇÃO ---------- */
+  listaSimples('#modSessoes', d.sessoes, s => `${escH(s.dispositivo || 'Dispositivo')} · entrou ${dt(s.criadoEm)}`, 'sessao', 'id');
+
+  q('#btnModNome').addEventListener('click', async () => {
+    const motivo = prompt('Motivo (a pessoa vê isso na tela de troca):', 'Seu nome de usuário não está de acordo com as regras da comunidade.');
+    if(motivo === null) return;
+    const r = await post('forcarTrocaNome', { alvo, motivo });
+    q('#modMsg').textContent = (r && r.ok) ? 'Nome escondido ✓ — ela escolhe outro no próximo acesso.' : ((r && r.error) || 'Falhou.');
+    if(r && r.ok){ buscarUsuarios(); setTimeout(recarregar, 900); }
+  });
+  q('#btnModNomeCancel').addEventListener('click', async () => {
+    const r = await post('cancelarTrocaNome', { alvo });
+    q('#modMsg').textContent = (r && r.ok) ? 'Exigência cancelada ✓' : ((r && r.error) || 'Falhou.');
+    if(r && r.ok){ buscarUsuarios(); setTimeout(recarregar, 900); }
+  });
+  q('#btnModDeslogar').addEventListener('click', async () => {
+    if(!confirm('Derrubar todas as sessões de "'+alvo+'"? Ele vai precisar entrar de novo em todos os aparelhos.')) return;
+    const r = await post('deslogarTudo', { alvo });
+    q('#modMsg').textContent = (r && r.ok) ? 'Sessões derrubadas ✓' : ((r && r.error) || 'Falhou.');
+    if(r && r.ok) setTimeout(recarregar, 900);
+  });
+
+  q('#btnLimpar').addEventListener('click', async () => {
+    const opcoes = {};
+    q('#pModer').querySelectorAll('[data-op]').forEach(c => { if(c.checked) opcoes[c.dataset.op] = true; });
+    const chaves = Object.keys(opcoes);
+    if(!chaves.length){ q('#limpMsg').textContent = 'Marque ao menos uma opção.'; return; }
+    if(!confirm('Executar em "'+alvo+'": ' + chaves.join(', ') + '?\n\nIsso não dá pra desfazer.')) return;
+    q('#limpMsg').textContent = 'Executando…';
+    const r = await post('moderarPerfil', { alvo, opcoes });
+    q('#limpMsg').textContent = (r && r.ok) ? 'Feito ✓' : ('Concluído com avisos: ' + ((r && r.avisos) || []).join('; '));
+    setTimeout(recarregar, 1200);
+  });
+}
 
 /* ---------- ENVIAR NOTIFICAÇÃO ---------- */
 $('ntAlvoTipo').addEventListener('change', () => {
