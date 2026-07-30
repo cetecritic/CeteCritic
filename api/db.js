@@ -420,6 +420,77 @@ async function handleGet(req, res){
     return res.json({ ok:true, reacoes: out });
   }
 
+  /* ---- atividade pública da comunidade (aba Social > Geral) -----------
+     Serve para as pessoas se descobrirem: quem avaliou o quê, quem ganhou
+     badge, quem carimbou quem, quem chegou agora.
+
+     Só entra aqui o que JÁ é público em outro lugar do site. Perfis
+     privados ficam de fora por completo, e quem está anônimo aparece pelo
+     pseudônimo — a mesma regra do resto do site, aplicada no servidor.
+
+     As badges saem da tabela `notificacoes` (tipo 'badges'), onde o
+     notif_id é 'badge:<título>'. Reconstruímos o texto na terceira pessoa a
+     partir do id, em vez de repassar o corpo original, que é escrito para o
+     dono ("Você desbloqueou..."). */
+  if(q.atividade){
+    const pmap = await lerPerfisMap();
+    const visivel = who => {
+      const m = pmap[norm(who)];
+      if(!m) return null;              // conta apagada
+      if(m.privado) return null;       // perfil privado não entra no feed
+      return m.display;                // já é o pseudônimo quando anônimo
+    };
+    const eventos = [];
+
+    /* avaliações recentes */
+    try{
+      const { data } = await sb.from('submissions')
+        .select('sub_id,usuario,year,ts').order('ts', { ascending:false }).limit(60);
+      (data||[]).forEach(r => {
+        const nome = visivel(r.usuario); if(!nome) return;
+        eventos.push({ tipo:'avaliacao', quem:nome, ano:Number(r.year), ts:Number(r.ts)||0, id:'sub:'+r.sub_id });
+      });
+    }catch(e){ /* uma fonte falhar não derruba o feed */ }
+
+    /* badges desbloqueadas */
+    try{
+      const { data } = await sb.from('notificacoes')
+        .select('usuario,notif_id,tipo,ts').eq('tipo','badges')
+        .order('ts', { ascending:false }).limit(40);
+      (data||[]).forEach(r => {
+        const nome = visivel(r.usuario); if(!nome) return;
+        const badge = String(r.notif_id||'').indexOf('badge:') === 0 ? String(r.notif_id).slice(6) : '';
+        if(!badge) return;
+        eventos.push({ tipo:'badge', quem:nome, badge, ts:Number(r.ts)||0, id:'bdg:'+r.usuario+':'+badge });
+      });
+    }catch(e){}
+
+    /* carimbos entre perfis (os dois lados precisam ser públicos) */
+    try{
+      const { data } = await sb.from('carimbos')
+        .select('profile_user,from_user,tipo,ts').is('alvo', null)
+        .order('ts', { ascending:false }).limit(40);
+      (data||[]).forEach(r => {
+        const de = visivel(r.from_user), para = visivel(r.profile_user);
+        if(!de || !para) return;
+        eventos.push({ tipo:'carimbo', quem:de, alvo:para, carimbo:String(r.tipo||''), ts:Number(r.ts)||0, id:'car:'+r.from_user+':'+r.profile_user+':'+r.ts });
+      });
+    }catch(e){}
+
+    /* gente nova na comunidade */
+    try{
+      const { data } = await sb.from('usuarios')
+        .select('usuario,criado_em').order('criado_em', { ascending:false }).limit(20);
+      (data||[]).forEach(r => {
+        const nome = visivel(r.usuario); if(!nome) return;
+        eventos.push({ tipo:'novo', quem:nome, ts:Number(r.criado_em)||0, id:'novo:'+r.usuario });
+      });
+    }catch(e){}
+
+    eventos.sort((a,b) => b.ts - a.ts);
+    return res.json({ ok:true, atividade: eventos.slice(0, 60) });
+  }
+
   // lista de usuários (busca / adicionar amigo)
   if(q.usuarios){
     const map = await lerPerfisMap();

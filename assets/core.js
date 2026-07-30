@@ -205,6 +205,27 @@ function posterDaEdicao(ano, valorConhecido){
   return urlRecurso(p, `${BASE}${ano}/`);
 }
 
+/* Turmas que se apresentaram numa noite, sem repetir e na ordem de palco.
+   Vira o texto de apoio dos cards de compartilhamento — antes ali ficava a
+   frase genérica "turmas que se apresentaram na noite N do festival", que
+   não dizia quais eram. */
+function turmasDaNoite(n){
+  const fonte = (typeof ND !== 'undefined' && ND) ? ND : {};
+  const pecas = (fonte[n] && Array.isArray(fonte[n].pecas)) ? fonte[n].pecas : [];
+  const vistas = [];
+  pecas.forEach(p => {
+    const t = String((p && p.turma) || '').trim();
+    if(t && vistas.indexOf(t) < 0) vistas.push(t);
+  });
+  return vistas;
+}
+/* tema/mostra da edição — o "sobre.titulo" do ano */
+function temaDaEdicao(ed){
+  const e = ed || ((typeof ED !== 'undefined') ? ED : null);
+  const t = (e && e.sobre && e.sobre.titulo) ? String(e.sobre.titulo).trim() : '';
+  return t;
+}
+
 function media(arr){ return (!arr || !arr.length) ? null : arr.reduce((a,b)=>a+b,0)/arr.length; }
 
 function corDaNota(r){
@@ -536,6 +557,14 @@ async function apiApagarAvaliacao(id){
 async function apiReagir(postId, tipo, autor){
   const s = usuarioLogado(); if(!s) return { ok:false, error:'faça login' };
   return apiPost({ action:'reagir', user:s.user, token:s.token, postId, tipo, autor });
+}
+/* atividade pública da comunidade — alimenta a aba Social > Geral */
+async function fetchAtividade(){
+  try{
+    const r = await fetch(API_URL + '?atividade=1&_=' + Date.now(), { cache:'no-store' });
+    const j = await r.json();
+    return (j && j.atividade) || [];
+  }catch(e){ return []; }
 }
 async function fetchReacoes(ids, por){
   if(!ids || !ids.length) return {};
@@ -2642,7 +2671,8 @@ function paginaEdicao(){
     abrirCompartilhamento({
       poster: posterDaEdicao(ANO, ED && ED.poster),
       titulo: (ED && ED.titulo) || `Cetec Festival ${ANO}`,
-      sub: `Cetec Festival ${ANO}`,
+      /* sob o título do ano vai o TEMA daquela edição */
+      sub: temaDaEdicao(ED) || `Cetec Festival ${ANO}`,
       nota: media(notas),
       legenda: `Média do festival · ${notas.length} nota${notas.length === 1 ? '' : 's'} no CETECritic`,
       arquivo: `CETECritic_${ANO}.png`
@@ -3088,10 +3118,11 @@ function paginaNoite(n){
       pecas.forEach((info, idx) => valoresDaChave(`s${n}e${idx + 1}`).forEach(v => vals.push(v)));
       abrirCompartilhamento({
         poster: posterDaEdicao(ANO, (typeof ED !== 'undefined' && ED) ? ED.poster : ''),
-        titulo: `Noite ${n} — Cetec Festival ${ANO}`,
-        sub: nd.subtitulo || `${pecas.length} peça${pecas.length === 1 ? '' : 's'}`,
+        /* a NOITE é o destaque; embaixo, as turmas que subiram no palco */
+        titulo: `Noite ${n}`,
+        sub: turmasDaNoite(n).join(' · ') || nd.subtitulo || '',
         nota: media(vals),
-        legenda: 'Média da noite no CETECritic',
+        legenda: `Média da noite · Cetec Festival ${ANO}`,
         arquivo: `CETECritic_${ANO}_Noite_${n}.png`
       });
     });
@@ -3105,10 +3136,11 @@ function paginaNoite(n){
       const avg = media(valoresDaChave(b.dataset.key));
       abrirCompartilhamento({
         poster: posterDaEdicao(ANO, (typeof ED !== 'undefined' && ED) ? ED.poster : ''),
+        /* a PEÇA é o destaque; embaixo, noite e turma */
         titulo: b.dataset.titulo,
-        sub: `Turma ${b.dataset.turma} · Cetec Festival ${ANO}`,
+        sub: `Noite ${n} · Turma ${b.dataset.turma}`,
         nota: avg,
-        legenda: 'Nota da plateia no CETECritic',
+        legenda: `Nota da plateia · Cetec Festival ${ANO}`,
         arquivo: `CETECritic_${ANO}_${String(b.dataset.titulo).replace(/[^\w]+/g, '_').slice(0, 40)}.png`
       });
     });
@@ -3383,7 +3415,9 @@ function paginaMonte(){
     const escolha = await abrirEscolhaEscopo(NUM_NOITES, MAX_EPS);
     if(!escolha) return;
 
-    let vals, sub;
+    /* Mesma hierarquia dos outros cards: o que está sendo avaliado vira o
+       TÍTULO, e o contexto (noite, turma, tema) desce para o texto de apoio. */
+    let vals, titulo, sub;
     if(escolha.tipo === 'noite'){
       const s = escolha.valor;
       vals = [];
@@ -3391,24 +3425,27 @@ function paginaMonte(){
         const v = customValues[`s${s}e${e}`];
         if(v !== undefined) vals.push(v);
       }
-      sub = `Noite ${s} · Cetec Festival ${ANO}`;
+      titulo = `Noite ${s}`;
+      sub = turmasDaNoite(s).join(' · ') || `Cetec Festival ${ANO}`;
     } else if(escolha.tipo === 'episodio'){
       const s = escolha.noite, e = escolha.valor;
       const v = customValues[`s${s}e${e}`];
       vals = (v !== undefined) ? [v] : [];
       const peca = (ND[s] && Array.isArray(ND[s].pecas)) ? ND[s].pecas[e - 1] : null;
-      sub = (peca && peca.titulo) ? `${peca.titulo} · Cetec Festival ${ANO}` : `Noite ${s} · Episódio ${e} · Cetec Festival ${ANO}`;
+      titulo = (peca && peca.titulo) ? peca.titulo : `Noite ${s} · Episódio ${e}`;
+      sub = (peca && peca.turma) ? `Noite ${s} · Turma ${peca.turma}` : `Noite ${s}`;
     } else {
       vals = Object.values(customValues).map(Number).filter(v => !isNaN(v));
-      sub = `Cetec Festival ${ANO}`;
+      titulo = `Meu ${ED.titulo}`;
+      sub = temaDaEdicao(ED) || `Cetec Festival ${ANO}`;
     }
 
     abrirCompartilhamento({
       poster: posterImg.src || posterPadrao,
-      titulo: `Meu ${ED.titulo}`,
+      titulo,
       sub,
       nota: media(vals),
-      legenda: 'Minha média no CETECritic',
+      legenda: `Minha média · Cetec Festival ${ANO}`,
       arquivo: `Meu_Cetec_Festival_${ANO}.png`
     });
   });
@@ -5651,9 +5688,36 @@ async function paginaPerfil(){
   const idPostFeed = f => (f && f.ts) ? ('feed:' + f.ts) : null;
   const idPostSub  = s => (s && s.id) ? ('sub:' + s.id) : null;
 
+  /* um evento da atividade pública vira uma linha do feed */
+  function atividadeParaFeed(ev){
+    const perfil = u => `${BASE}perfil.html?user=${encodeURIComponent(u)}`;
+    if(ev.tipo === 'avaliacao'){
+      return { nome: ev.quem, ts: ev.ts, url: `${BASE}${ev.ano}/index.html`,
+        postId: ev.id, autorReal: ev.quem,
+        html: `<b>${esc(ev.quem)}</b> avaliou o <b>Cetec Festival ${ev.ano}</b>` };
+    }
+    if(ev.tipo === 'badge'){
+      return { nome: ev.quem, ts: ev.ts, url: perfil(ev.quem), emojiFeed: '🏅',
+        html: `<b>${esc(ev.quem)}</b> desbloqueou a badge <b>${esc(ev.badge)}</b>` };
+    }
+    if(ev.tipo === 'carimbo'){
+      const c = (typeof CARIMBOS !== 'undefined' && CARIMBOS[ev.carimbo]) ? CARIMBOS[ev.carimbo] : { emoji:'🏷️', nome:ev.carimbo };
+      return { nome: ev.quem, ts: ev.ts, url: perfil(ev.alvo), emojiFeed: c.emoji,
+        html: `<b>${esc(ev.quem)}</b> deu o carimbo <b>${esc(c.nome)}</b> para <b>${esc(ev.alvo)}</b>` };
+    }
+    if(ev.tipo === 'novo'){
+      return { nome: ev.quem, ts: ev.ts, url: perfil(ev.quem), emojiFeed: '👋',
+        html: `<b>${esc(ev.quem)}</b> entrou no CETECritic` };
+    }
+    return null;
+  }
+
   async function montarFeeds(todosSubs, perfilCfg, pub, notifs){
     const lista = Array.isArray(notifs) ? notifs : [];
-    /* ---- GERAL ---- */
+    /* ---- GERAL ----
+       Vitrine da comunidade: o que os OUTROS andaram fazendo. A atividade
+       vem do servidor já filtrada (perfil privado fora, anônimo pelo
+       pseudônimo), então aqui é só transformar em linha. */
     const geral = [];
     const feedAdmin = (typeof FEED !== 'undefined' && Array.isArray(FEED)) ? FEED : [];
     feedAdmin.forEach(f => geral.push({
@@ -5662,12 +5726,23 @@ async function paginaPerfil(){
       html: `<b>${esc(f.autor || 'CETECritic')}</b> ${esc(f.emoji || '')} ${esc(f.texto || '')}`
     }));
     lista.filter(n => NOTIF_FEED_GERAL[n.tipo]).forEach(n => geral.push(notifParaFeed(n)));
-    todosSubs
-      .filter(s => { const u = String(s.user || '').trim(); return u && u.toLowerCase() !== alvo; })
-      .sort((a,b) => Number(b.ts) - Number(a.ts)).slice(0, 25)
-      .forEach(s => geral.push({ nome: s.user, ts: s.ts, url: `${BASE}${s.year}/index.html`,
-        postId: idPostSub(s), autorReal: s.user,
-        html: `<b>${esc(s.user)}</b> avaliou o <b>Cetec Festival ${s.year}</b>` }));
+
+    const atividade = await fetchAtividade();
+    atividade
+      .filter(ev => String(ev.quem || '').trim().toLowerCase() !== alvo)   // o feed é dos outros
+      .map(atividadeParaFeed).filter(Boolean)
+      .forEach(item => geral.push(item));
+
+    /* se a atividade não vier (rota antiga no ar, rede caindo), o feed ainda
+       mostra as avaliações que já temos carregadas em memória */
+    if(!atividade.length){
+      todosSubs
+        .filter(s => { const u = String(s.user || '').trim(); return u && u.toLowerCase() !== alvo; })
+        .sort((a,b) => Number(b.ts) - Number(a.ts)).slice(0, 25)
+        .forEach(s => geral.push({ nome: s.user, ts: s.ts, url: `${BASE}${s.year}/index.html`,
+          postId: idPostSub(s), autorReal: s.user,
+          html: `<b>${esc(s.user)}</b> avaliou o <b>Cetec Festival ${s.year}</b>` }));
+    }
     geral.sort((a,b) => Number(b.ts || 0) - Number(a.ts || 0));
 
     /* ---- AMIGOS ---- */
@@ -5951,10 +6026,14 @@ async function paginaNotificacoes(){
     return;
   }
 
+  /* cabeçalho próprio em vez de reaproveitar .perfil-head/.perfil-actions:
+     aquela classe é declarada duas vezes no CSS e a segunda declaração vem
+     depois do media query de celular, atropelando parte dele — o botão
+     "Limpar" acabava fora da vista no telefone */
   montarShell(`
-    <div class="perfil-head">
+    <div class="notif-topo">
       <h1>🔔 Notificações</h1>
-      <div class="perfil-actions"><button class="btn btn-ghost" id="notifMarcarTodas" style="display:none;" title="Zera a bolinha do sino sem apagar o histórico">🧹 Limpar</button></div>
+      <button class="btn btn-ghost" id="notifMarcarTodas" style="display:none;" title="Zera a bolinha do sino sem apagar o histórico">🧹 Limpar</button>
     </div>
     <div id="notifBox"><div class="empty-note">Carregando…</div></div>`);
 

@@ -1201,7 +1201,22 @@ a.showcase-card:hover{ border-color: var(--gold); }
 /* =====================================================================
    CENTRAL DE NOTIFICAÇÕES (notificacoes.html) + banner animado no topo
    ===================================================================== */
-.perfil-actions{ display:flex; gap:8px; align-items:center; }
+/* cabeçalho da central: título à esquerda, "Limpar" à direita, e no celular
+   o botão desce pra própria linha em vez de sumir */
+.notif-topo{
+  width:100%; max-width:900px; margin-bottom:22px;
+  display:flex; align-items:center; justify-content:space-between;
+  gap:12px; flex-wrap:wrap;
+}
+.notif-topo h1{
+  font-family:'Bebas Neue', sans-serif; font-size:30px; letter-spacing:.5px;
+  color:var(--gold); line-height:1;
+}
+.notif-topo .btn{ flex:0 0 auto; }
+@media (max-width:480px){
+  .notif-topo{ align-items:flex-start; }
+  .notif-topo .btn{ width:100%; }
+}
 
 /* lista da central */
 .notif-item{
