@@ -2,6 +2,17 @@
   "crons": [
     { "path": "/api/cron-push", "schedule": "0 12 * * *" }
   ],
+  "rewrites": [
+    { "source": "/config.js",      "destination": "/api/content?file=config" },
+    { "source": "/home-dados.js",  "destination": "/api/content?file=home" },
+    { "source": "/hall-dados.js",  "destination": "/api/content?file=hall" },
+    { "source": "/perfil.js",      "destination": "/api/content?file=perfil" },
+
+    { "source": "/:ano(\\d{4})/edicao.js", "destination": "/api/content?file=edicao&ano=:ano" },
+
+    { "source": "/:ano(\\d{4})/noites/noite-:noite(\\d+).js", "destination": "/api/content?file=noites&ano=:ano&noite=:noite" },
+    { "source": "/:ano(\\d{4})/noites/:qualquer",             "destination": "/api/content?file=noites&ano=:ano" }
+  ],
   "headers": [
     {
       "source": "/sitemap.xml",
