@@ -950,15 +950,27 @@ a.showcase-card:hover{ border-color: var(--gold); }
 /* ---- palco: o fundo colorido atrás do card (formato de story) ----
    Exportar o palco em vez do card resolve as "pontas pretas" no Instagram:
    sem canto transparente, não há o que o app achatar em preto. */
+/* Palco = a tela do story (9:16). O card fica menor dentro dele, com respiro
+   em volta — proporção parecida com a do Letterboxd: o cartão domina, mas o
+   fundo aparece. --sc-w controla a largura do card e, junto, o tamanho de
+   toda a tipografia dele (font-size: largura / 20). */
 .share-palco{
-  width: 320px; padding: 26px 22px; border-radius: 22px;
+  --palco-w: 300px;
+  --sc-w: calc(var(--palco-w) * .68);
+  width: var(--palco-w); aspect-ratio: 9 / 16; border-radius: 22px;
   display:flex; align-items:center; justify-content:center;
   transition: background .25s ease;
 }
-/* "sem fundo": o palco some visualmente e a exportação pega só o card */
-.share-palco.sem-fundo{ padding:0; border-radius:0; }
+.share-palco .share-card{
+  width: var(--sc-w); height: auto; aspect-ratio: 9 / 16;
+  font-size: calc(var(--sc-w) / 20);
+  box-shadow: 0 14px 40px rgba(0,0,0,.45);
+}
+/* "sem fundo": o card ocupa o palco inteiro, porque a exportação pega só ele
+   e a resolução final não pode cair */
+.share-palco.sem-fundo{ border-radius:0; aspect-ratio:auto; }
+.share-palco.sem-fundo{ --sc-w: var(--palco-w); }
 .share-palco.sem-fundo .share-card{ box-shadow:none; }
-.share-palco .share-card{ width:100%; height:auto; aspect-ratio: 9 / 16; box-shadow: 0 14px 40px rgba(0,0,0,.45); }
 
 /* ---- seletor de fundo ---- */
 .share-fundos{ display:flex; gap:10px; align-items:center; justify-content:center; }
@@ -977,7 +989,7 @@ a.showcase-card:hover{ border-color: var(--gold); }
 }
 
 @media (max-width:560px){
-  .share-palco{ width: min(300px, 82vw); padding: 20px 16px; }
+  .share-palco{ --palco-w: min(300px, 78vw); }
 }
 
 /* o cartão em si (proporção 9:16 de story) */
@@ -985,25 +997,31 @@ a.showcase-card:hover{ border-color: var(--gold); }
   width: 320px; height: 569px; border-radius: 18px; overflow:hidden; flex:none;
   background: linear-gradient(180deg, #17181c 0%, #0e0f12 100%);
   border: 1px solid var(--border); display:flex; flex-direction:column;
+  /* âncora do dimensionamento interno: tudo dentro do card é em `em`.
+     A regra é font-size = largura / 20 (320px -> 16px). */
+  font-size: 16px;
 }
 .sc-poster-wrap{ width:100%; height: 60%; background: var(--surface-2); overflow:hidden; position:relative; }
 .sc-poster-img{ width:100%; height:100%; object-fit: cover; display:block; }
+/* Daqui pra baixo tudo é em `em`, ancorado no font-size do .share-card.
+   Assim o card inteiro encolhe proporcionalmente só mudando a largura —
+   se fosse px, reduzir o card deixaria o texto gigante dentro dele. */
 .sc-poster-wrap.sem-poster::after{
-  content:'🎭'; position:absolute; inset:0; display:flex; align-items:center; justify-content:center; font-size: 64px; opacity:.4;
+  content:'🎭'; position:absolute; inset:0; display:flex; align-items:center; justify-content:center; font-size: 4em; opacity:.4;
 }
-.sc-body{ flex:1; padding: 20px 22px; display:flex; flex-direction:column; justify-content:center; gap: 8px; text-align:center; }
-.sc-title{ font-family:'Bebas Neue', sans-serif; font-size: 30px; line-height: 1.02; letter-spacing:.5px; color: var(--text); }
-.sc-sub{ font-size: 12px; color: var(--text-muted); }
-.sc-stars{ position:relative; display:inline-block; font-size: 26px; line-height:1; letter-spacing: 3px; margin: 4px auto 0; }
+.sc-body{ flex:1; padding: 1.25em 1.375em; display:flex; flex-direction:column; justify-content:center; gap: .5em; text-align:center; }
+.sc-title{ font-family:'Bebas Neue', sans-serif; font-size: 1.875em; line-height: 1.02; letter-spacing:.03em; color: var(--text); }
+.sc-sub{ font-size: .75em; color: var(--text-muted); }
+.sc-stars{ position:relative; display:inline-block; font-size: 1.625em; line-height:1; letter-spacing: .12em; margin: .25em auto 0; }
 .sc-stars-base{ color: #3a3d44; }
 .sc-stars-fill{ color: var(--gold); position:absolute; top:0; left:0; overflow:hidden; white-space:nowrap; }
-.sc-nota{ font-family:'Bebas Neue', sans-serif; font-size: 26px; letter-spacing:1px; color: var(--gold); }
-.sc-nota span{ font-size: 14px; color: var(--text-muted); margin-left: 2px; }
-.sc-nota.sc-semnota{ color: var(--text-muted); font-size: 18px; }
-.sc-legenda{ font-size: 11px; color: var(--text-muted); }
-.sc-brand{ display:flex; align-items:center; justify-content:center; gap: 7px; margin-top: 10px; padding-top: 12px; border-top: 1px solid var(--border); }
-.sc-brand img{ width: 20px; height: auto; }
-.sc-brand span{ font-family:'Bebas Neue', sans-serif; letter-spacing: 2px; font-size: 16px; color: var(--gold); }
+.sc-nota{ font-family:'Bebas Neue', sans-serif; font-size: 1.625em; letter-spacing:.06em; color: var(--gold); }
+.sc-nota span{ font-size: .54em; color: var(--text-muted); margin-left: .12em; }
+.sc-nota.sc-semnota{ color: var(--text-muted); font-size: 1.125em; }
+.sc-legenda{ font-size: .69em; color: var(--text-muted); }
+.sc-brand{ display:flex; align-items:center; justify-content:center; gap: .44em; margin-top: .62em; padding-top: .75em; border-top: 1px solid var(--border); }
+.sc-brand img{ width: 1.25em; height: auto; }
+.sc-brand span{ font-family:'Bebas Neue', sans-serif; letter-spacing: .12em; font-size: 1em; color: var(--gold); }
 
 .share-actions{ display:flex; gap: 8px; flex-wrap:wrap; justify-content:center; }
 .share-hint{ font-size: 11px; color: var(--text-muted); text-align:center; max-width: 320px; }

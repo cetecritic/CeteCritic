@@ -2344,8 +2344,12 @@ function abrirCompartilhamento(opts){
        Com fundo, exporta o palco inteiro — sem canto transparente sobrando. */
     const alvo = fundoAtual === 'nenhum' ? card : palco;
     await aguardarImagens(alvo);
+    /* mira 1080px de largura (padrão de story) em vez de uma escala fixa:
+       assim o PNG sai na mesma resolução independente do tamanho que o card
+       tiver na tela, inclusive no celular */
+    const escala = Math.min(5, Math.max(2, 1080 / (alvo.offsetWidth || 320)));
     const canvas = await comImagensRecortadas(alvo, () => html2canvas(alvo, {
-      backgroundColor: null, scale: 3, useCORS: true, imageTimeout: 15000
+      backgroundColor: null, scale: escala, useCORS: true, imageTimeout: 15000
     }));
     return await new Promise(res => canvas.toBlob(res, 'image/png'));
   }
