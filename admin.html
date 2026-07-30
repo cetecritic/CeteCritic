@@ -49,7 +49,9 @@
   .tag{ font-size:11px; font-weight:700; color:var(--gold); border:1px solid var(--gold); border-radius:20px; padding:1px 8px; margin-left:6px; }
   .noite-block{ border:1px dashed var(--border); border-radius:10px; padding:12px; margin:10px 0; }
   .peca-block{ background:var(--surface2); border-radius:8px; padding:10px; margin:8px 0; }
-  .hidden{ display:none; }
+  /* !important porque .modal-pane.active tem especificidade maior que .hidden —
+     sem isso uma aba escondida pelo papel continuaria visível */
+  .hidden{ display:none !important; }
   .toolbar{ display:flex; gap:8px; flex-wrap:wrap; margin-top:12px; }
   a{ color:var(--gold); }
 
@@ -101,30 +103,32 @@
   </div>
 
   <div id="painel" class="hidden">
+    <!-- data-papel = quem enxerga cada item. O servidor barra de qualquer
+         forma; isto aqui é só pra não mostrar botão que não vai funcionar. -->
     <nav class="admin-nav">
-      <a href="#secBusca">🔎 Buscar</a>
-      <a href="#secConfig">⚙️ Configurações</a>
-      <a href="#secHall">🏆 Hall &amp; avançado</a>
-      <a href="#secCurios">📝 Curiosidades/badges</a>
-      <a href="#secEdicoes">🎬 Edições</a>
-      <a href="#secAgendar">⏰ Agendar</a>
-      <a href="#secNotif">🔔 Notificação</a>
-      <a href="#secFeed">📰 Feed</a>
-      <a href="#secBanners">📢 Banners</a>
-      <a href="#secUsuarios">👥 Usuários</a>
-      <a href="#secVotos">🗑️ Excluir notas</a>
+      <a href="#secBusca"    data-papel="admin historiador">🔎 Buscar</a>
+      <a href="#secConfig"   data-papel="admin">⚙️ Configurações</a>
+      <a href="#secHall"     data-papel="admin">🏆 Hall &amp; avançado</a>
+      <a href="#secCurios"   data-papel="admin">📝 Curiosidades/badges</a>
+      <a href="#secEdicoes"  data-papel="admin historiador">🎬 Edições</a>
+      <a href="#secAgendar"  data-papel="admin">⏰ Agendar</a>
+      <a href="#secNotif"    data-papel="admin">🔔 Notificação</a>
+      <a href="#secFeed"     data-papel="admin">📰 Feed</a>
+      <a href="#secBanners"  data-papel="admin">📢 Banners</a>
+      <a href="#secUsuarios" data-papel="admin moderador">👥 Usuários</a>
+      <a href="#secVotos"    data-papel="admin">🗑️ Excluir notas</a>
       <div class="voltar"><a id="btnVoltarSite">← Voltar ao site</a></div>
     </nav>
 
     <!-- BUSCA -->
-    <div class="card" id="secBusca">
+    <div class="card" id="secBusca" data-papel="admin historiador">
       <h2>🔎 Buscar pra editar</h2>
       <input id="buscaAdmin" type="text" placeholder="Digite uma edição (ex: 2026) ou o nome de uma peça…">
       <div id="buscaRes" style="margin-top:8px;"></div>
     </div>
 
     <!-- CONFIG GLOBAL -->
-    <div class="card" id="secConfig">
+    <div class="card" id="secConfig" data-papel="admin">
       <h2>⚙️ Configurações gerais</h2>
       <div class="row2">
         <div><label>Edição em destaque (ano)</label><input id="cfgDestaque" type="number"></div>
@@ -143,7 +147,7 @@
     </div>
 
     <!-- HALL / AVANÇADO -->
-    <div class="card" id="secHall">
+    <div class="card" id="secHall" data-papel="admin">
       <h2>🏆 Hall da Fama &amp; configs avançadas</h2>
       <div class="row3">
         <div><label>Mín. de votos p/ aparecer no Hall</label><input id="hallMin" type="number"></div>
@@ -163,7 +167,7 @@
     </div>
 
     <!-- EDITORES AMIGÁVEIS (curiosidades, badges, linha do tempo) -->
-    <div class="card" id="secCurios">
+    <div class="card" id="secCurios" data-papel="admin">
       <h2>📝 Curiosidades, badges & linha do tempo</h2>
       <p class="sub" style="margin:0 0 8px;">Adicione ou remova itens direto aqui — cada mudança já salva. <span id="edavMsg" style="color:var(--gold);"></span></p>
 
@@ -182,7 +186,7 @@
     </div>
 
     <!-- EDIÇÕES -->
-    <div class="card" id="secEdicoes">
+    <div class="card" id="secEdicoes" data-papel="admin historiador">
       <h2>🎬 Edições</h2>
       <div id="edLista"><div class="msg">Carregando…</div></div>
       <div class="toolbar"><button id="btnNovaEdicao" class="ghost">+ Nova edição</button></div>
@@ -241,7 +245,7 @@
     </div>
 
     <!-- ENVIAR NOTIFICAÇÃO -->
-    <div class="card" id="secNotif">
+    <div class="card" id="secNotif" data-papel="admin">
       <h2>🔔 Enviar notificação</h2>
       <p class="sub" style="margin:0 0 12px;">Vai pra central 🔔 da pessoa. Marque "push" pra também tocar no aparelho de quem tem push ligado.</p>
       <div class="row2">
@@ -261,7 +265,7 @@
     </div>
 
     <!-- ADICIONAR AO FEED -->
-    <div class="card" id="secFeed">
+    <div class="card" id="secFeed" data-papel="admin">
       <h2>📰 Adicionar ao feed</h2>
       <p class="sub" style="margin:0 0 12px;">Posta na aba <b>Social › Geral</b> dos perfis, como se o CETECritic tivesse publicado. Ótimo pra "nova noite liberada", "vídeos no ar", recordes e avisos da comunidade.</p>
       <div class="row2">
@@ -275,7 +279,7 @@
     </div>
 
     <!-- AGENDAR -->
-    <div class="card" id="secAgendar">
+    <div class="card" id="secAgendar" data-papel="admin">
       <h2>⏰ Agendar banner / push</h2>
       <p class="sub" style="margin:0 0 10px;">Marca pra sair numa data/hora futura. <b>Obs:</b> no plano Hobby da Vercel o cron roda ~1×/dia, então sai na próxima rodada após a hora marcada. Pra hora exata, é preciso Vercel Pro (aí ajusto o cron pra de hora em hora).</p>
       <div class="row2">
@@ -292,7 +296,7 @@
     </div>
 
     <!-- BANNERS -->
-    <div class="card" id="secBanners">
+    <div class="card" id="secBanners" data-papel="admin">
       <h2>📢 Banners (avisos no site)</h2>
       <div class="row2">
         <div><label>Título</label><input id="bnTitulo" type="text"></div>
@@ -317,7 +321,7 @@
     </div>
 
     <!-- USUÁRIOS -->
-    <div class="card" id="secUsuarios">
+    <div class="card" id="secUsuarios" data-papel="admin moderador">
       <h2>👥 Usuários</h2>
       <div class="row2">
         <div><label>Buscar (usuário ou e-mail)</label><input id="uBusca" type="text" placeholder="deixe vazio pra listar todos"></div>
@@ -328,7 +332,7 @@
     </div>
 
     <!-- MODERAR / EXCLUIR NOTAS -->
-    <div class="card" id="secVotos">
+    <div class="card" id="secVotos" data-papel="admin">
       <h2>🗑️ Excluir notas (votos)</h2>
       <p class="sub" style="margin:0 0 10px;">Filtre e apague votos. Deixe um filtro vazio pra ignorá-lo. Noite + episódio localizam a nota daquela peça.</p>
       <div class="row3">
@@ -373,14 +377,42 @@ async function post(action, extra){
 async function getJson(params){ const r = await fetch(API + '?' + params + '&_=' + Date.now(), { cache:'no-store' }); return r.json(); }
 const $ = id => document.getElementById(id);
 
+/* ---------- papel de quem está usando o painel ----------
+   'admin' pode tudo; 'moderador' só mexe com pessoas; 'historiador' só com o
+   acervo. A interface abaixo esconde o que não serve — mas quem realmente
+   barra é o servidor, em cada ação. */
+let PAPEL = 'admin';
+const ehAdmin = () => PAPEL === 'admin';
+const PAPEL_ROTULO = { admin:'Administrador', moderador:'Moderador', historiador:'Historiador' };
+
 /* ---------- gate de acesso ---------- */
 (async () => {
   const gm = $('gateMsg');
-  if(!SESS || !SESS.user){ gm.innerHTML = 'Você precisa <a href="/perfil.html">entrar na sua conta</a> primeiro (com um usuário admin) e voltar aqui.'; return; }
+  if(!SESS || !SESS.user){ gm.innerHTML = 'Você precisa <a href="/perfil.html">entrar na sua conta</a> primeiro (com uma conta da equipe) e voltar aqui.'; return; }
   const r = await post('ping');
-  if(r && r.ok && r.admin){ $('gate').classList.add('hidden'); $('painel').classList.remove('hidden'); iniciar(); }
-  else { gm.textContent = 'Sua conta (' + SESS.user + ') não é administradora. Peça pra marcar como admin.'; }
+  if(r && r.ok && r.admin){
+    PAPEL = r.papel || 'admin';
+    $('gate').classList.add('hidden');
+    $('painel').classList.remove('hidden');
+    aplicarPapel();
+    iniciar();
+  }
+  else { gm.textContent = 'Sua conta (' + SESS.user + ') não faz parte da equipe. Peça pra um administrador te dar um papel.'; }
 })();
+
+/* Esconde as seções que o papel não usa e escreve quem você é no topo.
+   Cada bloco do painel é marcado com data-papel="lista de papéis". */
+function aplicarPapel(){
+  document.querySelectorAll('[data-papel]').forEach(el => {
+    const permitidos = el.dataset.papel.split(/\s+/);
+    if(permitidos.indexOf(PAPEL) < 0) el.classList.add('hidden');
+  });
+  const h1 = document.querySelector('#painel h1');
+  if(h1) h1.textContent = 'Painel — ' + (PAPEL_ROTULO[PAPEL] || PAPEL);
+  const sub = document.querySelector('#painel .sub');
+  if(sub && PAPEL === 'moderador') sub.textContent = 'Você modera pessoas. Suspensões têm prazo máximo de 30 dias, e conteúdo do acervo não aparece aqui.';
+  if(sub && PAPEL === 'historiador') sub.textContent = 'Você cuida do acervo. Dá pra criar e corrigir edições, noites e peças — excluir é com o administrador.';
+}
 
 /* ---------- CONFIG ---------- */
 let CFG = {};
@@ -931,8 +963,10 @@ async function buscarUsuarios(){
     const nome = escH(u.usuario);
     const pill = (bg, txt, cor) => `<span class="pill" style="background:${bg};${cor?'color:'+cor+';':''}">${txt}</span>`;
     const dt = ms => new Date(Number(ms)).toLocaleDateString('pt-BR');
+    const PILL_PAPEL = { admin:['#f5c518','ADMIN','#0b0c0f'], moderador:['#2563eb','MODERADOR'], historiador:['#059669','HISTORIADOR'] };
+    const pp = u.papel && PILL_PAPEL[u.papel];
     const tags =
-      (u.admin ? pill('#f5c518', 'ADMIN', '#0b0c0f') : '') +
+      (pp ? pill(pp[0], pp[1], pp[2]) : '') +
       (u.banido ? pill('#b91c1c', '🚫 suspenso' + (u.banidoAte ? ' até ' + dt(u.banidoAte) : ' (permanente)')) : '') +
       (u.silenciado ? pill('#b45309', '🔇 silenciado até ' + dt(u.silenciadoAte)) : '') +
       (u.precisaTrocarNome ? pill('#0f766e', '✏️ trocando nome') : '') +
@@ -945,14 +979,15 @@ async function buscarUsuarios(){
         <span style="color:var(--muted);font-size:12px;">${u.email?(' · '+escH(u.email)+(u.emailVerificado?' ✓':'')):''}</span>
       </div>
       <div class="u-acts">
-        <button class="ghost small" data-act="abrir">⚙️ Editar tudo</button>
+        <button class="ghost small" data-act="abrir">⚙️ ${ehAdmin() ? 'Editar tudo' : 'Ver detalhes'}</button>
         <button class="ghost small" data-act="mensagem">✉️ Mensagem</button>
         <button class="ghost small" data-act="trocarNome">✏️ Esconder nome</button>
-        <button class="ghost small" data-act="admin" data-v="${u.admin?0:1}">${u.admin?'Remover admin':'Tornar admin'}</button>
         <button class="ghost small" data-act="silenciar">${u.silenciado?'🔊 Liberar':'🔇 Silenciar'}</button>
         <button class="${u.banido?'ghost':'danger'} small" data-act="banir">${u.banido?'✅ Reativar':'🚫 Suspender'}</button>
+        ${ehAdmin() ? `
+        <button class="ghost small" data-act="papel">🛠️ Papel</button>
         <button class="ghost small" data-act="editarRep">👍 Reputação</button>
-        <button class="danger small" data-act="excluir">Excluir conta</button>
+        <button class="danger small" data-act="excluir">Excluir conta</button>` : ''}
       </div>
     </div>`;
   }).join('') || '<div class="msg">Nenhum usuário.</div>';
@@ -976,7 +1011,22 @@ async function buscarUsuarios(){
         return;
       }
 
-      if(act === 'admin'){ await post('tornarAdmin', { alvo, valor: b.dataset.v === '1' }); buscarUsuarios(); return; }
+      if(act === 'papel'){
+        const atual = u.papel || 'nenhum';
+        const novo = prompt(
+          'Papel de "'+alvo+'" (atual: '+atual+')\n\n' +
+          '  admin        — acesso total\n' +
+          '  moderador    — só modera pessoas; suspensão máx. 30 dias\n' +
+          '  historiador  — só edita o acervo; não exclui nada\n' +
+          '  nenhum       — tira do painel\n\n' +
+          'Digite um dos quatro:', atual);
+        if(novo === null) return;
+        const p = novo.trim().toLowerCase();
+        if(['admin','moderador','historiador','nenhum',''].indexOf(p) < 0){ alert('Papel inválido.'); return; }
+        const r = await post('definirPapel', { alvo, papel: (p === 'nenhum' || p === '') ? '' : p });
+        if(r && r.ok) buscarUsuarios(); else alert((r && r.error) || 'Falhou.');
+        return;
+      }
 
       if(act === 'silenciar'){
         if(u.silenciado){
@@ -998,10 +1048,14 @@ async function buscarUsuarios(){
           await post('definirBanimento', { alvo, ativo:false });
           buscarUsuarios(); return;
         }
-        const d = prompt('Suspender "'+alvo+'" por quantos DIAS?\n\nDeixe 0 para suspensão permanente. Todas as sessões dele caem na hora.', '7');
+        const textoPrazo = ehAdmin()
+          ? 'Deixe 0 para suspensão permanente.'
+          : 'Como moderador, o prazo vai de 1 a 30 dias (sem permanente).';
+        const d = prompt('Suspender "'+alvo+'" por quantos DIAS?\n\n'+textoPrazo+'\nTodas as sessões dele caem na hora.', '7');
         if(d === null) return;
         const dias = Number(d);
         if(!Number.isFinite(dias) || dias < 0){ alert('Número de dias inválido.'); return; }
+        if(!ehAdmin() && (dias < 1 || dias > 30)){ alert('Moderador só suspende de 1 a 30 dias.'); return; }
         const motivo = prompt('Motivo (a pessoa vê isso ao tentar entrar):', '');
         if(motivo === null) return;
         const r = await post('definirBanimento', { alvo, ativo:true, dias, motivo });
@@ -1116,9 +1170,9 @@ async function titulosDeBadge(){
 async function abrirModalUsuario(alvo){
   const ov = abrirModalBase('👤 ' + escH(alvo), '<div class="m-vazio">Carregando…</div>', `
     <div class="modal-tabs" id="mTabs">
-      <button class="modal-tab active" data-pane="pIdent">Identidade</button>
-      <button class="modal-tab" data-pane="pKarma">Karma e badges</button>
-      <button class="modal-tab" data-pane="pConteudo">Conteúdo</button>
+      <button class="modal-tab active" data-pane="pIdent" data-papel="admin">Identidade</button>
+      <button class="modal-tab" data-pane="pKarma" data-papel="admin">Karma e badges</button>
+      <button class="modal-tab" data-pane="pConteudo" data-papel="admin">Conteúdo</button>
       <button class="modal-tab" data-pane="pSocial">Social</button>
       <button class="modal-tab" data-pane="pModer">Moderação</button>
     </div>`);
@@ -1135,7 +1189,7 @@ async function abrirModalUsuario(alvo){
 
   ov.querySelector('#modalBody').innerHTML = `
     <!-- ============ IDENTIDADE ============ -->
-    <div class="modal-pane active" id="pIdent">
+    <div class="modal-pane active" id="pIdent" data-papel="admin">
       <div class="m-sec">
         <h3>Conta</h3>
         <div class="m-linha"><span>Nome de usuário</span><b>${escH(d.usuario)}</b></div>
@@ -1155,8 +1209,7 @@ async function abrirModalUsuario(alvo){
         <label>E-mail</label><input id="idEmail" value="${escH(p.email || '')}" maxlength="120">
         <label class="m-check"><input type="checkbox" id="idEmailVer" ${p.email_verificado ? 'checked' : ''}> E-mail verificado <span style="color:var(--muted);font-size:11px;">(libera o vínculo com o Google)</span></label>
         <label>Pseudônimo (usado quando está anônimo)</label><input id="idPseudo" value="${escH(p.pseudo || '')}" maxlength="40">
-        <label>Bio</label><input id="idBio" value="${escH(p.bio || '')}" maxlength="300">
-        <label>Nota interna (só o admin vê)</label><input id="idNota" value="${escH(p.nota_admin || '')}" maxlength="300">
+        <label>Nota interna (só a equipe vê)</label><input id="idNota" value="${escH(p.nota_admin || '')}" maxlength="300">
         <label class="m-check"><input type="checkbox" id="idAnon" ${p.anonimo ? 'checked' : ''}> 🕶️ Anônimo</label>
         <label class="m-check"><input type="checkbox" id="idPriv" ${p.privado ? 'checked' : ''}> 🔒 Privado</label>
         <label class="m-check"><input type="checkbox" id="id2fa" ${p.twofa ? 'checked' : ''}> 🔐 2FA por e-mail</label>
@@ -1167,7 +1220,7 @@ async function abrirModalUsuario(alvo){
     </div>
 
     <!-- ============ KARMA E BADGES ============ -->
-    <div class="modal-pane" id="pKarma">
+    <div class="modal-pane" id="pKarma" data-papel="admin">
       <div class="m-sec">
         <h3>Reputação (karma)</h3>
         <div class="m-linha"><span>Votos reais da comunidade</span><b>${d.reputacao.real}</b></div>
@@ -1204,7 +1257,7 @@ async function abrirModalUsuario(alvo){
     </div>
 
     <!-- ============ CONTEÚDO ============ -->
-    <div class="modal-pane" id="pConteudo">
+    <div class="modal-pane" id="pConteudo" data-papel="admin">
       <div class="m-sec">
         <h3>Avaliações (${d.votos.length})</h3>
         <div class="m-lista" id="ctVotos"></div>
@@ -1279,13 +1332,26 @@ async function abrirModalUsuario(alvo){
         <label class="m-check"><input type="checkbox" data-op="palpites"> Palpites</label>
         <label class="m-check"><input type="checkbox" data-op="notificacoes"> Notificações</label>
         <label class="m-check"><input type="checkbox" data-op="push"> Inscrições de push</label>
-        <label class="m-check"><input type="checkbox" data-op="showcase"> Destaques e preferidas</label>
-        <label class="m-check"><input type="checkbox" data-op="amigos"> Lista de amigos</label>
-        <label class="m-check"><input type="checkbox" data-op="votos"> Anonimizar as avaliações</label>
+        <label class="m-check" data-papel="admin"><input type="checkbox" data-op="showcase"> Destaques e preferidas</label>
+        <label class="m-check" data-papel="admin"><input type="checkbox" data-op="amigos"> Lista de amigos</label>
+        <label class="m-check" data-papel="admin"><input type="checkbox" data-op="votos"> Anonimizar as avaliações</label>
         <div class="toolbar"><button class="danger" id="btnLimpar">Executar limpeza</button></div>
         <div class="msg" id="limpMsg"></div>
       </div>
     </div>`;
+
+  /* esconde as abas e campos que este papel não usa; se a aba que estava
+     ativa foi escondida, promove a primeira que sobrou */
+  aplicarPapel();
+  if(!ov.querySelector('.modal-tab.active:not(.hidden)')){
+    ov.querySelectorAll('.modal-tab.active, .modal-pane.active').forEach(x => x.classList.remove('active'));
+    const primeira = ov.querySelector('.modal-tab:not(.hidden)');
+    if(primeira){
+      primeira.classList.add('active');
+      const pane = ov.querySelector('#' + primeira.dataset.pane);
+      if(pane) pane.classList.add('active');
+    }
+  }
 
   /* ---- abas ---- */
   ov.querySelectorAll('.modal-tab').forEach(t => t.addEventListener('click', () => {
@@ -1306,7 +1372,6 @@ async function abrirModalUsuario(alvo){
       email: q('#idEmail').value.trim(),
       email_verificado: q('#idEmailVer').checked,
       pseudo: q('#idPseudo').value.trim(),
-      bio: q('#idBio').value.trim(),
       nota_admin: q('#idNota').value.trim(),
       anonimo: q('#idAnon').checked,
       privado: q('#idPriv').checked,
@@ -1662,7 +1727,20 @@ $('btnVoltarSite').addEventListener('click', () => {
 /* avisa também ao fechar/atualizar a aba */
 window.addEventListener('beforeunload', e => { if(Object.keys(_dirty).length){ e.preventDefault(); e.returnValue = ''; } });
 
-function iniciar(){ carregarConfig(); carregarEdicoes(); carregarBanners(); buscarUsuarios(); carregarIndice(); carregarAgendados(); configurarDirty(); }
+/* carrega só o que o papel enxerga — chamar o resto daria 403 e encheria o
+   console de erro sem motivo */
+function iniciar(){
+  if(ehAdmin()){
+    carregarConfig(); carregarBanners(); carregarAgendados();
+  }
+  if(ehAdmin() || PAPEL === 'historiador'){
+    carregarEdicoes(); carregarIndice();
+  }
+  if(ehAdmin() || PAPEL === 'moderador'){
+    buscarUsuarios();
+  }
+  configurarDirty();
+}
 </script>
 </body>
 </html>

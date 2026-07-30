@@ -20,7 +20,10 @@
    ===================================================================== */
 const { createClient } = require('@supabase/supabase-js');
 const webpush = require('web-push');
-const { migrarNomeUsuario, estadoConta, validarNome } = require('./_moderacao');
+const {
+  migrarNomeUsuario, estadoConta, validarNome,
+  PAPEIS, MAX_DIAS_BAN_MODERADOR, LIMPEZAS_SO_ADMIN, ITENS_SO_ADMIN, podeExecutar
+} = require('./_moderacao');
 const sb = createClient(process.env.SUPABASE_URL, process.env.SUPABASE_SECRET_KEY, { auth: { persistSession: false } });
 
 const norm = u => String(u || '').trim().toLowerCase();
@@ -107,20 +110,38 @@ function parseLinkMusica(urlStr) {
   return { tipo: 'desconhecido', link: url };
 }
 
-async function ehAdmin(usuario, token) {
-  if (!usuario || !token) return false;
+/* Identifica quem está chamando e QUAL o papel dele.
+   Devolve null se não tem acesso ao painel; senão { usuario, papel }.
+
+   `admin=true` continua sendo a chave da porta; `papel` decide o que a
+   pessoa faz depois de entrar. Conta com admin=true e papel vazio é tratada
+   como 'admin' — é o estado das contas antigas, antes da migração. */
+async function identificarEquipe(usuario, token) {
+  if (!usuario || !token) return null;
   const nu = norm(usuario);
-  // token válido? checa sessoes (vários aparelhos) + legado usuarios.token
   let tokenOk = false;
   try {
     const { data } = await sb.from('sessoes').select('usuario').eq('token', String(token)).limit(5);
     if ((data || []).some(r => norm(r.usuario) === nu)) tokenOk = true;
   } catch (e) { /* sem tabela sessoes: cai no legado */ }
-  const { data: us } = await sb.from('usuarios').select('usuario,token,admin').ilike('usuario', usuario).limit(10);
+  /* Se o SQL dos papéis ainda não rodou, a coluna `papel` não existe e o
+     select inteiro falha — o que trancaria TODO MUNDO fora do painel, você
+     inclusive. Por isso a leitura tem plano B: sem a coluna, quem tem
+     admin=true continua entrando como 'admin', igual antes. */
+  let us = null;
+  {
+    const r1 = await sb.from('usuarios').select('usuario,token,admin,papel').ilike('usuario', usuario).limit(10);
+    if (r1.error) {
+      const r2 = await sb.from('usuarios').select('usuario,token,admin').ilike('usuario', usuario).limit(10);
+      us = r2.data;
+    } else us = r1.data;
+  }
   const u = (us || []).find(r => norm(r.usuario) === nu);
-  if (!u) return false;
+  if (!u) return null;
   if (!tokenOk && u.token && u.token === String(token)) tokenOk = true;   // legado
-  return tokenOk && u.admin === true;
+  if (!tokenOk || u.admin !== true) return null;
+  const papel = PAPEIS.indexOf(String(u.papel || '')) >= 0 ? String(u.papel) : 'admin';
+  return { usuario: u.usuario, papel };
 }
 
 /* ---------- montar objetos a partir do banco ---------- */
@@ -267,7 +288,7 @@ const ACOES_CONHECIDAS = {
   forcarTrocaNome: 1, cancelarTrocaNome: 1, renomearUsuario: 1,
   definirBanimento: 1, definirSilencio: 1, deslogarTudo: 1, ajustarBadges: 1,
   notificarUsuario: 1, apagarItemUsuario: 1, editarVoto: 1, parseLink: 1,
-  anonimizarUsuario: 1, removerAnonimato: 1, tornarAdmin: 1, lerReputacao: 1,
+  anonimizarUsuario: 1, removerAnonimato: 1, tornarAdmin: 1, definirPapel: 1, lerReputacao: 1,
   ajustarReputacao: 1, moderarPerfil: 1, deletarUsuario: 1, salvarConfig: 1,
   postarFeed: 1, deletarEdicao: 1, salvarEdicaoCompleta: 1, enviarNotif: 1,
   listarVotos: 1, deletarVotos: 1, uploadImagem: 1, agendar: 1,
@@ -280,22 +301,38 @@ async function handlePost(req, res) {
   if (typeof body === 'string') { try { body = JSON.parse(body); } catch (e) { body = {}; } }
   body = body || {};
 
-  if (!(await ehAdmin(body.user, body.token))) { res.status(403).json({ ok: false, error: 'acesso restrito a administradores' }); return; }
+  const eu = await identificarEquipe(body.user, body.token);
+  if (!eu) { res.status(403).json({ ok: false, error: 'acesso restrito à equipe' }); return; }
   const action = String(body.action || '');
+
+  /* A interface esconde o que o papel não usa, mas quem MANDA é isto aqui:
+     esconder botão não impede ninguém de chamar a API na mão. */
+  if (!podeExecutar(eu.papel, action)) {
+    res.status(403).json({ ok: false, error: 'seu papel (' + eu.papel + ') não permite esta ação' });
+    return;
+  }
 
   /* `versao` serve pra conferir, em 2 segundos, se o que está no ar é mesmo o
      build atual — sem isso a gente fica adivinhando quando uma ação nova
      responde "ação desconhecida". Ao adicionar ações, suba o número. */
   if (action === 'ping') return res.status(200).json({
     ok: true, admin: true,
-    versao: 3,
-    acoes: Object.keys(ACOES_CONHECIDAS)
+    papel: eu.papel,
+    versao: 4,
+    acoes: Object.keys(ACOES_CONHECIDAS).filter(a => podeExecutar(eu.papel, a))
   });
 
   // ----- gestão de usuários -----
   if (action === 'listarUsuarios') {
     const busca = norm(body.busca || '');
-    const { data } = await sb.from('usuarios').select('usuario,admin,criado_em,perfil');
+    /* mesmo plano B do identificarEquipe: sem a coluna `papel`, a lista ainda
+       carrega e todo admin aparece como 'admin' */
+    let data = null;
+    {
+      const r1 = await sb.from('usuarios').select('usuario,admin,papel,criado_em,perfil');
+      if (r1.error) { const r2 = await sb.from('usuarios').select('usuario,admin,criado_em,perfil'); data = r2.data; }
+      else data = r1.data;
+    }
     let lista = (data || []).map(u => {
       const p = (u.perfil && typeof u.perfil === 'object') ? u.perfil : {};
       // pseudônimo do anônimo (o número que aparece no site); mesma regra do db.js
@@ -305,7 +342,9 @@ async function handlePost(req, res) {
       // nomeReal: só pro painel admin (essa rota já exige ehAdmin) — mostra quem está por trás do anônimo
       const est = estadoConta(p);
       return {
-        usuario: u.usuario, nomeReal: u.usuario, admin: u.admin === true, criadoEm: u.criado_em || 0,
+        usuario: u.usuario, nomeReal: u.usuario, admin: u.admin === true,
+        papel: u.admin === true ? (PAPEIS.indexOf(String(u.papel || '')) >= 0 ? String(u.papel) : 'admin') : null,
+        criadoEm: u.criado_em || 0,
         email: String(p.email || ''), emailVerificado: p.email_verificado === true,
         anonimo: anonimoEfetivo, privado: !!p.privado, pseudo,
         anonModo: p.anon_modo || null, anonAte: p.anon_ate || null,
@@ -355,6 +394,7 @@ async function handlePost(req, res) {
     if (!linha) return res.status(404).json({ ok: false, error: 'usuário não encontrado' });
     const nome = linha.usuario;
     const p = (linha.perfil && typeof linha.perfil === 'object') ? linha.perfil : {};
+    const papelAlvo = linha.admin === true ? (PAPEIS.indexOf(String(linha.papel || '')) >= 0 ? String(linha.papel) : 'admin') : null;
 
     const meu = (rows, col) => (rows || []).filter(r => norm(r[col]) === norm(nome));
 
@@ -386,6 +426,8 @@ async function handlePost(req, res) {
       ok: true,
       usuario: nome,
       admin: linha.admin === true,
+      papel: papelAlvo,
+      euSou: eu.papel,          /* o modal usa isto pra esconder o que este papel não pode */
       criadoEm: linha.criado_em || 0,
       temSenha: !((p.oauth || {}).semSenha),
       perfil: p,
@@ -414,7 +456,7 @@ async function handlePost(req, res) {
     const patch = {};
     /* lista explícita do que o modal pode gravar — evita que um campo digitado
        errado no front vire lixo permanente dentro do JSON do perfil */
-    const TEXTO = ['email', 'pseudo', 'bio', 'nota_admin'];
+    const TEXTO = ['email', 'pseudo', 'nota_admin'];
     const BOOL = ['anonimo', 'privado', 'twofa', 'email_verificado'];
     const OBJ = ['showcase', 'notif', 'admin_badges'];
     /* `edicoesFav` é o nome que o core.js lê (renderFavs) — não renomear */
@@ -435,10 +477,8 @@ async function handlePost(req, res) {
       if (!atual && !patch.pseudo) patch.pseudo = 'Anônimo ' + (1000 + Math.floor(Math.random() * 9000));
     }
 
-    if (c.admin !== undefined) {
-      const { error } = await sb.from('usuarios').update({ admin: !!c.admin }).eq('usuario', linha.usuario);
-      if (error) return res.status(500).json({ ok: false, error: error.message });
-    }
+    /* cargo NÃO se define por aqui: passa pelo `definirPapel`, que é a única
+       rota com a checagem de "não rebaixe a si mesmo" e o registro do papel */
     const r = await patchPerfil(linha, patch);
     if (r.erro) return res.status(500).json({ ok: false, error: r.erro });
     return res.status(200).json({ ok: true, perfil: r.perfil });
@@ -499,7 +539,14 @@ async function handlePost(req, res) {
     }
     let valor = null;
     if (body.ativo) {
-      const dias = Number(body.dias) || 0;
+      let dias = Number(body.dias) || 0;
+      /* suspensão sem prazo é decisão de admin. O moderador tem teto — assim
+         o pior que ele consegue fazer é reversível sozinho pelo tempo. */
+      if (eu.papel !== 'admin') {
+        if (dias <= 0 || dias > MAX_DIAS_BAN_MODERADOR) {
+          return res.status(403).json({ ok: false, error: 'como moderador, a suspensão precisa ter prazo de 1 a ' + MAX_DIAS_BAN_MODERADOR + ' dias' });
+        }
+      }
       valor = { ts: Date.now(), motivo: String(body.motivo || '').slice(0, 200).trim(), por: String(body.user || '') };
       if (dias > 0) valor.ate = Date.now() + dias * 24 * 60 * 60 * 1000;
     }
@@ -580,6 +627,10 @@ async function handlePost(req, res) {
     };
     const par = mapa[tipo];
     if (!par) return res.status(400).json({ ok: false, error: 'tipo inválido: ' + tipo });
+    /* voto e palpite mexem em dados de votação — só admin apaga */
+    if (eu.papel !== 'admin' && ITENS_SO_ADMIN[tipo]) {
+      return res.status(403).json({ ok: false, error: 'apagar ' + tipo + ' é restrito ao admin' });
+    }
 
     let q = sb.from(par[0]).delete().eq(par[1], id);
     /* ATENÇÃO: notif_id NÃO é único. Um aviso enviado "para todos" grava a
@@ -649,13 +700,45 @@ async function handlePost(req, res) {
     return res.status(200).json({ ok: true });
   }
 
-  if (action === 'tornarAdmin') {
+  /* Define o papel da pessoa na equipe. Só admin chega aqui (ver a tabela de
+     permissões), o que impede um moderador de se promover.
+
+       papel null/'' -> tira do painel (admin=false)
+       'admin' | 'moderador' | 'historiador' -> entra com aquele papel
+
+     `admin` (booleano) segue sendo a chave da porta e `papel` o que ela faz
+     lá dentro — por isso os dois são gravados juntos, sempre. */
+  if (action === 'definirPapel' || action === 'tornarAdmin') {
     const alvo = String(body.alvo || '');
     const { data } = await sb.from('usuarios').select('usuario').ilike('usuario', alvo);
     const real = (data || []).find(r => norm(r.usuario) === norm(alvo));
     if (!real) return res.status(404).json({ ok: false, error: 'usuário não encontrado' });
-    await sb.from('usuarios').update({ admin: !!body.valor }).eq('usuario', real.usuario);
-    return res.status(200).json({ ok: true });
+
+    /* compatibilidade: a chamada antiga mandava só { valor: true/false } */
+    let papel = body.papel !== undefined ? String(body.papel || '') : (body.valor ? 'admin' : '');
+    if (papel && PAPEIS.indexOf(papel) < 0) return res.status(400).json({ ok: false, error: 'papel inválido: ' + papel });
+
+    /* não dá pra tirar o próprio acesso e ficar sem ninguém com a chave */
+    if (norm(real.usuario) === norm(eu.usuario) && papel !== 'admin') {
+      return res.status(400).json({ ok: false, error: 'você não pode rebaixar a si mesmo — peça a outro admin' });
+    }
+
+    const { error } = await sb.from('usuarios').update({ admin: !!papel, papel: papel || null }).eq('usuario', real.usuario);
+    if (error) {
+      const dica = /papel/i.test(error.message || '') ? ' — rode o SQL sql/2026-07-papeis-admin.sql no Supabase primeiro' : '';
+      return res.status(500).json({ ok: false, error: error.message + dica });
+    }
+    /* mudou de papel: derruba as sessões pra recarregar o painel com os
+       poderes certos, e avisa a pessoa */
+    if (papel) {
+      await sb.from('notificacoes').insert({
+        usuario: real.usuario, notif_id: 'papel:' + Date.now(), tipo: 'admin',
+        titulo: '🛠️ Acesso à equipe',
+        corpo: 'Seu papel no painel agora é: ' + papel + '.',
+        url: '/admin.html', ts: Date.now(), lida: false
+      });
+    }
+    return res.status(200).json({ ok: true, papel: papel || null });
   }
   // ----- item 6: reputação editável pelo admin -----
   // Guardamos o ajuste do admin como uma linha ESPECIAL em `reputacao`
@@ -691,6 +774,12 @@ async function handlePost(req, res) {
   if (action === 'moderarPerfil') {
     const alvo = String(body.alvo || '');
     const nu = norm(alvo); const op = body.opcoes || {};
+    /* o moderador limpa rastro social (carimbo, visita, reação, notificação),
+       mas não toca em voto nem em conteúdo autoral do perfil */
+    if (eu.papel !== 'admin') {
+      const proibida = Object.keys(op).find(k => op[k] && LIMPEZAS_SO_ADMIN[k]);
+      if (proibida) return res.status(403).json({ ok: false, error: 'limpar "' + proibida + '" é restrito ao admin' });
+    }
     const avisos = [];
     /* filtro NO SERVIDOR (ilike) e não select('*') solto: o PostgREST corta em
        1000 linhas, e em tabelas grandes as linhas do usuário nem apareciam —
@@ -837,6 +926,42 @@ async function handlePost(req, res) {
     const e = body.edicao || {};
     const ano = Number(e.ano);
     if (!ano) return res.status(400).json({ ok: false, error: 'ano inválido' });
+
+    /* ---- trava anti-exclusão do historiador --------------------------
+       Esta rota substitui a edição inteira: apaga noites e peças do ano e
+       reinsere o que veio no corpo. Para quem pode criar mas NÃO excluir,
+       isso seria uma porta dos fundos — bastaria mandar a lista sem uma
+       peça pra apagá-la. Então comparamos com o que já existe e recusamos
+       qualquer payload que encolha o acervo. Adicionar e corrigir passa. */
+    if (eu.papel !== 'admin') {
+      const { data: noitesAtuais } = await sb.from('noites').select('noite').eq('ano', ano);
+      const { data: pecasAtuais } = await sb.from('pecas').select('noite').eq('ano', ano);
+
+      const noitesNovas = Array.isArray(body.noites) ? body.noites : [];
+      const setNovas = new Set(noitesNovas.map(n => Number(n.noite)).filter(Boolean));
+
+      const sumiu = (noitesAtuais || []).map(n => Number(n.noite)).find(n => !setNovas.has(n));
+      if (sumiu) return res.status(403).json({ ok: false, error: 'a noite ' + sumiu + ' sumiu do envio. Como historiador você pode adicionar e corrigir, mas não excluir.' });
+
+      const contaAtual = {};
+      (pecasAtuais || []).forEach(p => { const n = Number(p.noite); contaAtual[n] = (contaAtual[n] || 0) + 1; });
+      for (const n of Object.keys(contaAtual)) {
+        const nd = noitesNovas.find(x => Number(x.noite) === Number(n));
+        const qtd = (nd && Array.isArray(nd.pecas)) ? nd.pecas.length : 0;
+        if (qtd < contaAtual[n]) {
+          return res.status(403).json({ ok: false, error: 'a noite ' + n + ' tem ' + contaAtual[n] + ' peça(s) e o envio traz ' + qtd + '. Como historiador você pode adicionar e corrigir, mas não excluir.' });
+        }
+      }
+      /* campos da edição que mudam o estado do site, não o acervo */
+      if (e.em_breve !== undefined && !!e.em_breve !== false) {
+        /* deixar marcar "em breve" é inofensivo; o que não pode é esconder
+           uma edição já publicada — checamos abaixo */
+        const { data: edAtual } = await sb.from('edicoes').select('em_breve').eq('ano', ano).limit(1);
+        if (edAtual && edAtual[0] && edAtual[0].em_breve === false) {
+          return res.status(403).json({ ok: false, error: 'só o admin pode voltar uma edição publicada para "em breve"' });
+        }
+      }
+    }
     const row = {
       ano,
       ordem: e.ordem != null ? Number(e.ordem) : ano,

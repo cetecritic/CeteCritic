@@ -211,4 +211,71 @@ function mensagemBloqueio(est){
   return null;
 }
 
-module.exports = { norm, asObj, validarNome, migrarNomeUsuario, estadoConta, mensagemBloqueio, REFERENCIAS };
+/* =====================================================================
+   PAPÉIS DA EQUIPE — quem pode executar o quê no painel
+   =====================================================================
+   Esta tabela é a autoridade. A interface esconde botões pelo papel, mas
+   esconder botão não é segurança: TODA ação passa por `podeExecutar` no
+   servidor antes de rodar.
+
+   Princípio de cada papel:
+
+     admin        pode tudo.
+
+     moderador    lida com PESSOAS e nada mais. Tudo o que ele faz é
+                  reversível: silenciar, suspender por prazo, esconder nome,
+                  derrubar sessão, limpar carimbo/visita. Não apaga conta,
+                  não renomeia (migração irreversível), não mexe em nota de
+                  votação, não dá cargo, não toca no acervo nem no config.
+
+     historiador  lida com o ACERVO e nada mais. Pode criar edição, noite e
+                  peça, corrigir texto e subir imagem — mas não excluir. A
+                  proibição de excluir é verificada de verdade no
+                  salvarEdicaoCompleta, não só escondendo o botão.
+   ===================================================================== */
+const PAPEIS = ['admin', 'moderador', 'historiador'];
+
+/* suspensão por tempo indeterminado é decisão de admin. O moderador tem teto. */
+const MAX_DIAS_BAN_MODERADOR = 30;
+
+const ACOES_POR_PAPEL = {
+  moderador: {
+    ping: 1,
+    /* ver e agir sobre pessoas */
+    listarUsuarios: 1, usuarioDetalhe: 1,
+    notificarUsuario: 1,
+    definirSilencio: 1,
+    definirBanimento: 1,          // limitado a MAX_DIAS_BAN_MODERADOR, sem permanente
+    forcarTrocaNome: 1, cancelarTrocaNome: 1,
+    anonimizarUsuario: 1, removerAnonimato: 1,
+    deslogarTudo: 1,
+    moderarPerfil: 1,             // opções destrutivas filtradas abaixo
+    apagarItemUsuario: 1,         // tipos destrutivos filtrados abaixo
+    lerReputacao: 1,
+    listarVotos: 1                // pode investigar, não pode alterar
+  },
+  historiador: {
+    ping: 1,
+    /* acervo */
+    salvarEdicaoCompleta: 1,      // com trava anti-exclusão
+    uploadImagem: 1,
+    parseLink: 1
+  }
+};
+
+/* opções de limpeza que o moderador NÃO pode disparar: mexem em dados de
+   votação ou apagam conteúdo autoral que não se recupera */
+const LIMPEZAS_SO_ADMIN = { votos: 1, showcase: 1, amigos: 1 };
+/* itens que o moderador não pode apagar um a um, pela mesma razão */
+const ITENS_SO_ADMIN = { voto: 1, palpite: 1 };
+
+function podeExecutar(papel, acao){
+  if(papel === 'admin') return true;
+  const permitidas = ACOES_POR_PAPEL[papel];
+  return !!(permitidas && permitidas[acao]);
+}
+
+module.exports = {
+  norm, asObj, validarNome, migrarNomeUsuario, estadoConta, mensagemBloqueio, REFERENCIAS,
+  PAPEIS, MAX_DIAS_BAN_MODERADOR, LIMPEZAS_SO_ADMIN, ITENS_SO_ADMIN, podeExecutar
+};
