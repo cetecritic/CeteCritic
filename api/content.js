@@ -552,8 +552,13 @@ async function handlePost(req, res) {
     }
     const r = await patchPerfil(linha, { banido: valor });
     if (r.erro) return res.status(500).json({ ok: false, error: r.erro });
-    /* suspender sem derrubar as sessões abertas não adiantaria nada */
-    if (valor) { try { await sb.from('sessoes').delete().ilike('usuario', linha.usuario); } catch (e) { /* segue */ } }
+    /* Suspender sem derrubar as sessões abertas não adiantaria nada. E não
+       basta limpar a tabela `sessoes`: o token legado mora em usuarios.token
+       e continuaria valendo sozinho. */
+    if (valor) {
+      try { await sb.from('sessoes').delete().ilike('usuario', linha.usuario); } catch (e) { /* segue */ }
+      try { await sb.from('usuarios').update({ token: null }).eq('usuario', linha.usuario); } catch (e) { /* segue */ }
+    }
     return res.status(200).json({ ok: true });
   }
   if (action === 'definirSilencio') {

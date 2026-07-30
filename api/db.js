@@ -140,17 +140,32 @@ async function acharUsuario(usuario){
   const { data } = await sb.from('usuarios').select('*').ilike('usuario', usuario).limit(10);
   return (data || []).find(r => norm(r.usuario) === alvo) || null;
 }
+/* Valida a sessão E o direito de usá-la.
+
+   A checagem de banimento mora AQUI, no ponto por onde toda ação autenticada
+   passa, e não espalhada rota a rota. Antes ela existia só no login e nas
+   ações de interação — quem já tinha uma sessão aberta continuava editando
+   perfil, registrando visita e salvando push mesmo suspenso.
+
+   Custo: uma leitura a mais do usuário quando o token bate na tabela
+   `sessoes`. É barato perto de deixar conta suspensa agindo. */
 async function verificarToken(usuario, token){
   if(!usuario || !token) return false;
   const nu = norm(usuario);
+  let tokenOk = false;
   // 1) sessões novas (múltiplos dispositivos)
   try{
     const { data } = await sb.from('sessoes').select('usuario').eq('token', String(token)).limit(5);
-    if((data||[]).some(r => norm(r.usuario) === nu)) return true;
+    if((data||[]).some(r => norm(r.usuario) === nu)) tokenOk = true;
   }catch(e){ /* tabela sessoes ainda não existe: cai no legado */ }
-  // 2) legado: token único guardado em usuarios (sessões antigas continuam válidas)
   const u = await acharUsuario(usuario);
-  return !!(u && u.token && u.token === String(token));
+  if(!u) return false;
+  // 2) legado: token único guardado em usuarios (sessões antigas continuam válidas)
+  if(!tokenOk && u.token && u.token === String(token)) tokenOk = true;
+  if(!tokenOk) return false;
+  // 3) conta suspensa não tem sessão válida, venha o token de onde vier
+  if(estadoConta(u.perfil).banido) return false;
+  return true;
 }
 // cria uma sessão (1 token por dispositivo). Se a tabela 'sessoes' não existir,
 // cai no comportamento antigo (token único em usuarios) — login nunca quebra.
