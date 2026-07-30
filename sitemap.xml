@@ -1,4 +1,14 @@
 <?xml version="1.0" encoding="UTF-8"?>
+<!--
+  ATENCAO ao editar este arquivo: salve SEMPRE como UTF-8, nunca como
+  "Unicode"/UTF-16. O Bloco de Notas salvando em "Unicode", ou um redirect
+  ">" do PowerShell, gravam UTF-16 com BOM: o navegador ate mostra o XML,
+  mas o Google le conforme o encoding declarado aqui em cima, encontra
+  bytes nulos e responde "nao foi possivel ler o sitemap".
+
+  Os comentarios abaixo estao sem acento de proposito, para o arquivo ficar
+  em ASCII puro e nao depender de encoding nenhum.
+-->
 <urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">
 
   <url><loc>https://cetecritic.xyz/</loc><changefreq>weekly</changefreq><priority>1.0</priority></url>
@@ -65,7 +75,7 @@
   <url><loc>https://cetecritic.xyz/2025/noite-4.html</loc><changefreq>yearly</changefreq><priority>0.5</priority></url>
   <url><loc>https://cetecritic.xyz/2025/noite-5.html</loc><changefreq>yearly</changefreq><priority>0.5</priority></url>
 
-  <!-- 2026 (edição em destaque) -->
+  <!-- 2026 (edicao em destaque) -->
   <url><loc>https://cetecritic.xyz/2026</loc><changefreq>daily</changefreq><priority>0.9</priority></url>
   <url><loc>https://cetecritic.xyz/2026/sobre.html</loc><changefreq>weekly</changefreq><priority>0.6</priority></url>
   <url><loc>https://cetecritic.xyz/2026/abertura.html</loc><changefreq>weekly</changefreq><priority>0.5</priority></url>
