@@ -141,6 +141,8 @@ body{
 .noite-card-rating .val.empty{ background: var(--surface-2); color: var(--text-muted); }
 .noite-card-rating .cnt{ font-size: 10px; color: var(--text-muted); margin-top:4px; }
 .noite-card-synopsis{ font-size: 13px; color: var(--text-muted); line-height:1.6; margin-bottom: 16px; }
+/* respeita as quebras de linha digitadas no admin (contexto, sobre, abertura) */
+.texto-quebras{ white-space: pre-line; }
 .sobre-banner{ width:100%; height:auto; display:block; border-radius:8px; margin-bottom:18px; }
 .video-embed-placeholder{
   width:100%; aspect-ratio: 16/9; background: var(--surface-2); border: 1.5px dashed var(--border);

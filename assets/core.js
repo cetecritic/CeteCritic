@@ -2948,7 +2948,7 @@ function paginaResumo(){
   const contexto = String(s.contexto || '').trim();
   let curioHtml;
   if(contexto){
-    curioHtml = `<div class="noite-card-synopsis" style="margin-bottom:0;">${esc(contexto)}</div>`;
+    curioHtml = `<div class="noite-card-synopsis texto-quebras" style="margin-bottom:0;">${esc(contexto)}</div>`;
   } else {
     const curios = (typeof CURIOSIDADES !== 'undefined' && Array.isArray(CURIOSIDADES)) ? CURIOSIDADES : [];
     curioHtml = curios.length
@@ -2965,11 +2965,11 @@ function paginaResumo(){
         <div class="resumo-col-head">📖 Sobre</div>
         ${s.banner ? `<img class="sobre-banner" src="${esc(s.banner)}" alt="" onerror="this.style.display='none'">` : ''}
         <div class="noite-card-title" style="margin-bottom:10px; font-size:16px;">${esc(s.titulo || ED.titulo)}</div>
-        <div class="noite-card-synopsis" style="margin-bottom:0;">${esc(s.texto || 'Em breve.')}</div>
+        <div class="noite-card-synopsis texto-quebras" style="margin-bottom:0;">${esc(s.texto || 'Em breve.')}</div>
       </div>
       <div class="noite-card resumo-col">
         <div class="resumo-col-head">🎼 Abertura</div>
-        <div class="noite-card-synopsis" style="margin-bottom:${a.spotify ? '18px' : '0'};">${esc(a.texto || 'Em breve.')}</div>
+        <div class="noite-card-synopsis texto-quebras" style="margin-bottom:${a.spotify ? '18px' : '0'};">${esc(a.texto || 'Em breve.')}</div>
         ${a.spotify ? `<iframe style="border-radius:12px; border:none;" src="${esc(a.spotify)}" width="100%" height="352" allow="autoplay; clipboard-write; encrypted-media; fullscreen; picture-in-picture" loading="lazy"></iframe>` : ''}
       </div>
       <div class="noite-card resumo-col">
@@ -3001,7 +3001,7 @@ function paginaSobre(){
     <div class="noite-card">
       ${s.banner ? `<img class="sobre-banner" src="${esc(s.banner)}" alt="" onerror="this.style.display='none'">` : ''}
       <div class="noite-card-title" style="margin-bottom:10px; font-size:16px;">${esc(s.titulo || ED.titulo)}</div>
-      <div class="noite-card-synopsis" style="margin-bottom:0;">${esc(s.texto || 'Em breve.')}</div>
+      <div class="noite-card-synopsis texto-quebras" style="margin-bottom:0;">${esc(s.texto || 'Em breve.')}</div>
     </div>`);
 }
 
@@ -3027,7 +3027,7 @@ function paginaAbertura(){
     </div>
     <div class="noite-card">
       <div class="noite-card-title" style="margin-bottom:10px; font-size:16px;">Sobre a abertura</div>
-      <div class="noite-card-synopsis" style="margin-bottom:18px;">${esc(a.texto || 'Em breve.')}</div>
+      <div class="noite-card-synopsis texto-quebras" style="margin-bottom:18px;">${esc(a.texto || 'Em breve.')}</div>
       ${a.spotify ? `
       <div class="noite-card-title" style="margin-bottom:14px; font-size:16px;">Trilha sonora</div>
       <iframe style="border-radius:12px; border:none;" src="${esc(a.spotify)}" width="100%" height="352" allow="autoplay; clipboard-write; encrypted-media; fullscreen; picture-in-picture" loading="lazy"></iframe>` : ''}

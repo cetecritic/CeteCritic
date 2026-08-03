@@ -229,9 +229,12 @@
       <div class="toolbar" style="margin-bottom:6px;">
         <button id="btnImportarCsv" class="ghost small" type="button">📥 Importar CSV</button>
         <input type="file" id="edCsvFile" accept=".csv,text/csv" style="display:none;">
+        <button id="btnBaixarCsv" class="ghost small" type="button">📤 Baixar CSV</button>
         <button id="btnAplicarDatas" class="ghost small" type="button">🔁 Datas +1 dia (a partir da noite 1)</button>
       </div>
-      <p class="sub" style="margin:0 0 10px;">CSV com colunas <b>ano, noite, titulo, turma, sinopse, youtubeLink</b> e opcionalmente <b>data</b> (aceita ISO, <code>AAAA-MM-DD</code> ou <code>DD/MM/AAAA</code>) — cabeçalho flexível, aceita <code>;</code> ou <code>,</code>. Isso <b>substitui</b> as noites/peças atuais do editor. Campo vazio de subtítulo usa o padrão ("Turmas que se apresentaram na 1ª/2ª/... noite do festival"); se a coluna "data" só vier preenchida na noite 1, as outras já saem calculadas automaticamente (+1 dia cada, sempre editável depois). Sem a coluna "data", preencha a da noite 1 na mão e use "Datas +1 dia".</p>
+      <p class="sub" style="margin:0 0 10px;"><b>Baixar CSV</b> gera um arquivo com <b>tudo o que está no editor agora</b> — campos da edição (título, descrição, datas, sobre, contexto, abertura…), noites e peças. Edite no Excel/Sheets e importe de volta. Também serve de modelo pra montar uma edição do zero.<br>
+      O CSV tem uma coluna <b>tipo</b> que diz o que é cada linha: <code>config</code> (usa <b>campo</b> + <b>valor</b>), <code>noite</code> (usa <b>noite, data, subtitulo</b>) e <code>peca</code> (usa <b>noite, titulo, turma, sinopse, youtubeLink, youtubeInicio</b>). Aceita <code>;</code> ou <code>,</code>, e datas em ISO, <code>AAAA-MM-DD</code> ou <code>DD/MM/AAAA</code>.<br>
+      Importar <b>substitui</b> as noites/peças atuais do editor e sobrescreve os campos que vierem no arquivo — <b>imagens (pôster e banner) nunca são alteradas pelo CSV</b>. Subtítulo vazio usa o padrão ("Turmas que se apresentaram na 1ª/2ª/... noite do festival"); se só a noite 1 tiver data, as outras saem calculadas (+1 dia cada). O formato antigo (<b>ano, noite, titulo, turma, sinopse, youtubeLink</b>, sem coluna "tipo") continua funcionando igual.</p>
       <div class="msg" id="edCsvMsg"></div>
       <div id="noitesBox"></div>
       <div class="toolbar"><button id="btnAddNoite" class="ghost small">+ Adicionar noite</button></div>
@@ -650,21 +653,102 @@ $('btnAplicarDatas').addEventListener('click', () => {
   $('edCsvMsg').textContent = 'Datas recalculadas a partir da noite 1 ✓ (dá pra ajustar cada uma antes de salvar).';
 });
 
-// parser simples de CSV (aceita ; ou , e campos entre aspas)
+/* ---------- CSV: modelo unificado (config + noites + peças) ----------
+   Colunas: tipo;campo;valor;noite;data;subtitulo;titulo;turma;sinopse;youtubeLink;youtubeInicio
+     tipo=config → usa "campo" + "valor"  (ano, titulo, sobre.contexto, …)
+     tipo=noite  → usa "noite", "data", "subtitulo"
+     tipo=peca   → usa "noite", "titulo", "turma", "sinopse", "youtubeLink", "youtubeInicio"
+   CSV antigo (sem a coluna "tipo") continua funcionando: toda linha vira peça.
+   Imagens (pôster e banner do Sobre) ficam DE FORA de propósito — importar um
+   CSV nunca mexe nelas. */
+const CSV_COLS = ['tipo','campo','valor','noite','data','subtitulo','titulo','turma','sinopse','youtubeLink','youtubeInicio'];
+/* campo do CSV -> id do input no editor. Ordem = ordem que sai no arquivo. */
+const CSV_CAMPOS_CONFIG = [
+  ['ano',                 'edAno'],
+  ['noites',              'edNoites'],
+  ['ordem',               'edOrdem'],
+  ['em_breve',            'edEmBreve'],
+  ['abre_em',             'edAbreEm'],
+  ['monte_abre_em',       'edMonteAbreEm'],
+  ['titulo',              'edTitulo'],
+  ['descricao',           'edDescricao'],
+  ['episodios_por_noite', 'edEps'],
+  ['inicio',              'edInicio'],
+  ['fim_votacao',         'edFim'],
+  ['mensagem_fim',        'edMensagemFim'],
+  ['sobre.titulo',        'edSobreTitulo'],
+  ['sobre.texto',         'edSobreTexto'],
+  ['sobre.contexto',      'edSobreContexto'],
+  ['abertura.texto',      'edAberturaTexto'],
+  ['abertura.spotify',    'edAberturaSpotify']
+];
+/* normaliza o nome do campo: "Sobre — Contexto", "sobre_contexto" e
+   "sobre.contexto" viram a mesma chave */
+function chaveCampoCSV(s){ return normTxt(s).replace(/[^a-z0-9]/g, ''); }
+/* apelidos aceitos na coluna "campo" (pra quem digitar na mão) */
+const CSV_APELIDOS = {
+  contexto: 'sobre.contexto', curiosidades: 'sobre.contexto',
+  sobre: 'sobre.texto', texto: 'sobre.texto',
+  spotify: 'abertura.spotify', abertura: 'abertura.texto',
+  fim: 'fim_votacao', fimvotacao: 'fim_votacao',
+  eps: 'episodios_por_noite', episodios: 'episodios_por_noite',
+  embreve: 'em_breve', mensagemfinal: 'mensagem_fim', numeronoites: 'noites'
+};
+function idDoCampoCSV(campo){
+  const k = chaveCampoCSV(campo);
+  const alvo = CSV_APELIDOS[k] ? chaveCampoCSV(CSV_APELIDOS[k]) : k;
+  const achado = CSV_CAMPOS_CONFIG.find(([nome]) => chaveCampoCSV(nome) === alvo);
+  return achado ? achado[1] : null;
+}
+function boolCSV(v){ return /^(1|s|sim|true|v|verdadeiro|x|y|yes)$/i.test(String(v || '').trim()); }
+
+/* ---------- gerar/baixar ---------- */
+function csvEscape(v){
+  v = String(v == null ? '' : v);
+  return /[";\n\r]/.test(v) ? '"' + v.replace(/"/g, '""') + '"' : v;
+}
+function csvLinha(obj){ return CSV_COLS.map(c => csvEscape(obj[c])).join(';'); }
+function valorConfigAtual(id){
+  const el = $(id); if(!el) return '';
+  if(el.type === 'checkbox') return el.checked ? 'sim' : 'nao';
+  return el.value || '';
+}
+function exportarCSV(){
+  const linhas = [CSV_COLS.join(';')];
+  CSV_CAMPOS_CONFIG.forEach(([campo, id]) => linhas.push(csvLinha({ tipo:'config', campo, valor: valorConfigAtual(id) })));
+  const noites = coletarNoites();
+  noites.forEach(nd => {
+    linhas.push(csvLinha({ tipo:'noite', noite: nd.noite, data: nd.data || '', subtitulo: nd.subtitulo || '' }));
+    (nd.pecas || []).forEach(p => linhas.push(csvLinha({
+      tipo:'peca', noite: nd.noite, titulo: p.titulo, turma: p.turma, sinopse: p.sinopse,
+      youtubeLink: p.youtube, youtubeInicio: p.youtubeInicio || 0
+    })));
+  });
+  // BOM + CRLF: abre certinho no Excel em pt-BR, com acento e tudo
+  const blob = new Blob(['\uFEFF' + linhas.join('\r\n')], { type: 'text/csv;charset=utf-8;' });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url; a.download = 'cetecritic-' + (($('edAno').value || 'edicao')) + '.csv';
+  document.body.appendChild(a); a.click(); a.remove();
+  setTimeout(() => URL.revokeObjectURL(url), 5000);
+  const totalPecas = noites.reduce((s, nd) => s + ((nd.pecas || []).length), 0);
+  $('edCsvMsg').textContent = 'CSV baixado ✓ — ' + noites.length + ' noite(s), ' + totalPecas + ' peça(s) e todos os campos de texto da edição (imagens ficam de fora).';
+}
+
+// parser simples de CSV (aceita ; ou , e campos entre aspas, inclusive com quebra de linha dentro)
 function parseCSV(text){
-  text = String(text || '').replace(/^\uFEFF/, '');
-  const primeiraLinha = text.split(/\r?\n/, 1)[0] || '';
+  text = String(text || '').replace(/^\uFEFF/, '').replace(/\r\n?/g, '\n');
+  const primeiraLinha = text.split('\n', 1)[0] || '';
   const delim = (primeiraLinha.split(';').length > primeiraLinha.split(',').length) ? ';' : ',';
   const linhas = []; let campo = '', linha = [], entreAspas = false;
   for(let i = 0; i < text.length; i++){
     const c = text[i], prox = text[i + 1];
     if(entreAspas){
       if(c === '"'){ if(prox === '"'){ campo += '"'; i++; } else entreAspas = false; }
-      else campo += c;
+      else campo += c;                      // aqui \n entra no campo: sinopse/contexto multi-linha
     } else if(c === '"'){ entreAspas = true; }
     else if(c === delim){ linha.push(campo); campo = ''; }
     else if(c === '\n'){ linha.push(campo); linhas.push(linha); linha = []; campo = ''; }
-    else if(c === '\r'){ /* ignora */ }
     else campo += c;
   }
   if(campo.length || linha.length){ linha.push(campo); linhas.push(linha); }
@@ -706,48 +790,94 @@ async function importarCSV(file){
     if(linhas.length < 2){ msgEl.textContent = 'CSV vazio ou sem linhas de dados.'; return; }
     const header = linhas[0].map(h => normTxt(h).trim());
     const buscarCol = nomes => { for(const n of nomes){ const i = header.indexOf(n); if(i >= 0) return i; } return -1; };
-    const iAno = buscarCol(['ano', 'year']);
-    const iNoite = buscarCol(['noite', 'night']);
-    const iTitulo = buscarCol(['titulo', 'title']);
-    const iTurma = buscarCol(['turma', 'classe', 'class']);
+    const iTipo    = buscarCol(['tipo', 'type']);
+    const iCampo   = buscarCol(['campo', 'field', 'chave', 'key']);
+    const iValor   = buscarCol(['valor', 'value', 'conteudo']);
+    const iAno     = buscarCol(['ano', 'year']);
+    const iNoite   = buscarCol(['noite', 'night']);
+    const iSub     = buscarCol(['subtitulo', 'subtitle']);
+    const iTitulo  = buscarCol(['titulo', 'title']);
+    const iTurma   = buscarCol(['turma', 'classe', 'class']);
     const iSinopse = buscarCol(['sinopse', 'synopsis', 'descricao']);
-    const iYt = buscarCol(['youtubelink', 'youtube', 'link', 'video', 'videolink']);
-    const iData = buscarCol(['data', 'date']);
-    if(iNoite < 0 || iTitulo < 0){ msgEl.textContent = 'O CSV precisa ter pelo menos as colunas "noite" e "titulo".'; return; }
-    if($('noitesBox').querySelectorAll('.noite-block').length){
-      if(!confirm('Isso vai SUBSTITUIR as noites/peças que já estão neste editor pelas do CSV. Continuar?')){ msgEl.textContent = ''; return; }
+    const iYt      = buscarCol(['youtubelink', 'youtube', 'link', 'video', 'videolink']);
+    const iYtIni   = buscarCol(['youtubeinicio', 'inicio_video', 'iniciovideo', 'iniciosegundos']);
+    const iData    = buscarCol(['data', 'date']);
+    const temTipo  = iTipo >= 0;
+    if(!temTipo && (iNoite < 0 || iTitulo < 0)){
+      msgEl.textContent = 'O CSV precisa ter a coluna "tipo" (modelo novo) ou, no mínimo, "noite" e "titulo" (modelo antigo).';
+      return;
     }
-    const porNoite = {}, dataPorNoite = {}; let primeiroAno = null;
+    // 1ª passada: separa config / noites / peças
+    const configs = [], porNoite = {}, dataPorNoite = {}, subPorNoite = {};
+    let primeiroAno = null, temLinhaDeNoite = false;
     linhas.slice(1).forEach(cols => {
-      const noite = Number(cols[iNoite]); if(!noite) return;
+      const tipo = temTipo ? normTxt(cols[iTipo] || '').trim() : '';
+      if(tipo === 'config' || tipo === 'edicao' || tipo === 'configuracao'){
+        const campo = iCampo >= 0 ? String(cols[iCampo] || '').trim() : '';
+        const valor = iValor >= 0 ? String(cols[iValor] == null ? '' : cols[iValor]) : '';
+        if(campo) configs.push([campo, valor]);
+        return;
+      }
       if(iAno >= 0 && !primeiroAno){ const a = Number(cols[iAno]); if(a) primeiroAno = a; }
+      const noite = Number(cols[iNoite]); if(!noite) return;
       if(!porNoite[noite]) porNoite[noite] = [];
       if(iData >= 0 && !dataPorNoite[noite]){ const dv = normalizarDataCSV(cols[iData]); if(dv) dataPorNoite[noite] = dv; }
+      if(iSub >= 0 && !subPorNoite[noite]){ const sv = String(cols[iSub] || '').trim(); if(sv) subPorNoite[noite] = sv; }
+      if(tipo === 'noite' || tipo === 'night'){ temLinhaDeNoite = true; return; }   // linha só da noite: sem peça
+      const tituloPeca = (iTitulo >= 0 ? String(cols[iTitulo] || '') : '').trim();
+      const turma = (iTurma >= 0 ? String(cols[iTurma] || '') : '').trim();
+      const sinopse = (iSinopse >= 0 ? String(cols[iSinopse] || '') : '').trim();
+      if(!tituloPeca && !turma && !sinopse) return;   // linha vazia de peça: ignora
       const ytRaw = iYt >= 0 ? String(cols[iYt] || '').trim() : '';
       const parsed = ytRaw ? parseYoutubeLinkClient(ytRaw) : null;
+      const iniManual = iYtIni >= 0 ? Number(cols[iYtIni]) : 0;
       porNoite[noite].push({
-        titulo: (iTitulo >= 0 ? String(cols[iTitulo] || '') : '').trim(),
-        turma: (iTurma >= 0 ? String(cols[iTurma] || '') : '').trim(),
-        sinopse: (iSinopse >= 0 ? String(cols[iSinopse] || '') : '').trim(),
+        titulo: tituloPeca, turma, sinopse,
         youtube: parsed ? parsed.id : '',
-        youtubeInicio: parsed ? parsed.inicio : 0
+        youtubeInicio: (parsed && parsed.inicio) || iniManual || 0
       });
     });
     const ns = Object.keys(porNoite).map(Number).sort((a, b) => a - b);
-    if(!ns.length){ msgEl.textContent = 'Nenhuma linha válida encontrada (confira a coluna "noite").'; return; }
-    // se a noite 1 veio com data no CSV, propaga +1 dia pras noites que não trouxeram data própria
-    if(dataPorNoite[ns[0]]) ns.forEach((n, i) => { if(i > 0 && !dataPorNoite[n]) dataPorNoite[n] = somarDiasISO(dataPorNoite[ns[0]], i); });
-    if(primeiroAno && !$('edAno').value) $('edAno').value = primeiroAno;
-    if(!$('edNoites').value || Number($('edNoites').value) < ns.length) $('edNoites').value = ns[ns.length - 1];
-    $('noitesBox').innerHTML = ns.map(n => noiteBlockHtml(n, { data: dataPorNoite[n] || '', subtitulo: subtituloPadrao(n), pecas: porNoite[n] })).join('');
-    wireNoites();
+    if(!configs.length && !ns.length){ msgEl.textContent = 'Nenhuma linha válida encontrada (confira as colunas "tipo" e "noite").'; return; }
+    if(ns.length && $('noitesBox').querySelectorAll('.noite-block').length){
+      if(!confirm('Isso vai SUBSTITUIR as noites/peças que já estão neste editor pelas do CSV. Continuar?')){ msgEl.textContent = ''; return; }
+    }
+    // 2ª passada: aplica os campos da edição (config)
+    let camposAplicados = 0, camposIgnorados = [];
+    configs.forEach(([campo, valor]) => {
+      const id = idDoCampoCSV(campo);
+      if(!id){ camposIgnorados.push(campo); return; }
+      const el = $(id); if(!el) return;
+      if(el.type === 'checkbox') el.checked = boolCSV(valor);
+      else el.value = valor;
+      camposAplicados++;
+    });
+    // 3ª passada: noites e peças
+    if(ns.length){
+      if(dataPorNoite[ns[0]]) ns.forEach((n, i) => { if(i > 0 && !dataPorNoite[n]) dataPorNoite[n] = somarDiasISO(dataPorNoite[ns[0]], i); });
+      if(primeiroAno && !$('edAno').value) $('edAno').value = primeiroAno;
+      if(!$('edNoites').value || Number($('edNoites').value) < ns.length) $('edNoites').value = ns[ns.length - 1];
+      $('noitesBox').innerHTML = ns.map(n => noiteBlockHtml(n, {
+        data: dataPorNoite[n] || '',
+        subtitulo: subPorNoite[n] || subtituloPadrao(n),
+        pecas: porNoite[n]
+      })).join('');
+      wireNoites();
+    }
     marcarDirty('edicao', 'Editor de edição (não salvo)');
     const totalPecas = ns.reduce((s, n) => s + porNoite[n].length, 0);
-    msgEl.textContent = ns.length + ' noite(s) e ' + totalPecas + ' peça(s) importadas ✓ — confira, ajuste as datas e clique em "Salvar edição".';
+    const partes = [];
+    if(camposAplicados) partes.push(camposAplicados + ' campo(s) da edição');
+    if(ns.length) partes.push(ns.length + ' noite(s)');
+    if(totalPecas) partes.push(totalPecas + ' peça(s)');
+    msgEl.textContent = partes.join(', ') + ' importado(s) ✓ — confira e clique em "Salvar edição".'
+      + (camposIgnorados.length ? ' Campos não reconhecidos: ' + camposIgnorados.join(', ') + '.' : '')
+      + ' (Imagens não são alteradas pelo CSV.)';
   }catch(e){ msgEl.textContent = 'Erro ao importar: ' + ((e && e.message) || e); }
 }
 $('btnImportarCsv').addEventListener('click', () => $('edCsvFile').click());
 $('edCsvFile').addEventListener('change', e => { const f = e.target.files[0]; e.target.value = ''; importarCSV(f); });
+$('btnBaixarCsv').addEventListener('click', exportarCSV);
 
 
 async function abrirEdicao(ano){
