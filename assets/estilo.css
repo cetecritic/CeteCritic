@@ -665,6 +665,72 @@ a.record-item:hover{ border-color: var(--gold); }
   border: 1px solid var(--border); border-radius: 8px; padding: 14px 16px;
 }
 .bolao-locked b{ color: var(--gold); }
+.bolao-aberto{
+  font-size: 13px; color: var(--text); background: rgba(49,185,110,.10);
+  border: 1px solid #31b96e; border-radius: 8px; padding: 14px 16px;
+}
+.bolao-aberto b{ color: #31b96e; }
+
+/* selo "palpite aberto" no link do menu lateral */
+.nav-selo{
+  font-size: 10px; font-weight: 800; letter-spacing:.02em; margin-left: 8px;
+  background: #31b96e; color: #0b0c0f; border-radius: 20px; padding: 1px 7px;
+}
+
+/* convite pro bolão, na página da edição */
+.bolao-cta{
+  display:flex; align-items:center; justify-content:space-between; gap: 14px; flex-wrap: wrap;
+  background: var(--surface-2); border: 1px solid var(--border); border-radius: 10px; padding: 14px 16px;
+}
+.bolao-cta-tit{ font-size: 14px; font-weight: 800; color: var(--text); }
+.bolao-cta-sub{ font-size: 12.5px; color: var(--text-muted); margin-top: 3px; line-height:1.5; }
+.bolao-cta-sub b{ color: var(--gold); }
+
+/* tabela de pontos por peça */
+.bolao-pontos{ display:grid; grid-template-columns: repeat(auto-fit, minmax(190px, 1fr)); gap: 8px; }
+.bpt-linha{
+  display:flex; align-items:center; gap: 10px;
+  background: var(--surface-2); border: 1px solid var(--border); border-radius: 8px; padding: 8px 12px;
+}
+.bpt-pts{
+  font-size: 17px; font-weight: 800; color: var(--gold); min-width: 22px; text-align:center;
+}
+.bpt-linha.zero .bpt-pts{ color: var(--text-muted); }
+.bpt-faixa{ font-size: 12px; color: var(--text-muted); line-height:1.4; }
+
+.bolao-lider{
+  font-size: 14px; color: var(--text); background: rgba(245,197,24,.10);
+  border: 1px solid var(--gold); border-radius: 8px; padding: 12px 14px; margin-bottom: 12px;
+}
+.bolao-lider b{ color: var(--gold); }
+
+/* comparação palpite × nota oficial */
+.bcomp-total{ font-size: 13px; color: var(--text-muted); margin-bottom: 10px; }
+.bcomp-total b{ color: var(--gold); font-size: 15px; }
+.bcomp{ display:flex; flex-direction:column; gap: 6px; }
+.bcomp-linha{
+  display:flex; align-items:center; justify-content:space-between; gap: 12px;
+  background: var(--surface-2); border: 1px solid var(--border); border-radius: 8px; padding: 8px 12px;
+}
+.bcomp-nome{ font-size: 12.5px; color: var(--text); min-width: 0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+.bcomp-vals{ display:flex; align-items:center; gap: 7px; flex:none; }
+.bcomp-chip{
+  min-width: 38px; text-align:center; border-radius: 5px; padding: 3px 6px;
+  font-size: 12px; font-weight: 800; color: #14161a;
+}
+.bcomp-chip.vazio{ background: var(--gray-cell); color: var(--text-muted); font-weight: 600; font-size: 11px; }
+.bcomp-seta{ color: var(--text-muted); font-size: 12px; }
+.bcomp-pts{
+  min-width: 34px; text-align:center; font-size: 12px; font-weight: 800; color: var(--gold);
+}
+.bcomp-pts.cravou{ color: #31b96e; }
+.bcomp-pts.vazio{ color: var(--text-muted); font-weight: 600; }
+
+/* linha do bolão no perfil (expande a comparação) */
+.record-item.bolao-linha.clicavel{ cursor: pointer; }
+.record-item.bolao-linha .chevron{ transition: transform .2s ease; color: var(--text-muted); }
+.record-item.bolao-linha.aberto .chevron{ transform: rotate(180deg); }
+.bolao-detalhe{ margin-top: 10px; }
 
 /* ---- badges do perfil ---- */
 .badge-count{ font-size: 12px; color: var(--text-muted); font-weight: 600; }

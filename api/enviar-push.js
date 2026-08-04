@@ -28,7 +28,10 @@ function limparSubject(s) {
   return 'mailto:cetecritic@gmail.com';
 }
 
-async function enviarParaTodos({ title, body, url, dur }) {
+/* `semBroadcast: true` manda só o push. Serve pra quem já gravou o próprio
+   broadcast com um bc_id determinístico (é assim que os avisos automáticos do
+   bolão garantem que só saem uma vez) — sem isso sairiam dois banners. */
+async function enviarParaTodos({ title, body, url, dur, semBroadcast }) {
   webpush.setVapidDetails(
     limparSubject(process.env.VAPID_SUBJECT),
     process.env.VAPID_PUBLIC_KEY,
@@ -63,7 +66,7 @@ async function enviarParaTodos({ title, body, url, dur }) {
 
   /* registra o aviso como BROADCAST, pra aparecer no site pra todo mundo
      (inclusive quem não tem login/push) de forma transitória */
-  try {
+  if (!semBroadcast) try {
     let d = Number(dur) || 0; if (d < 0) d = 0; if (d > 120) d = 120;
     await sb.from('broadcasts').insert({
       bc_id: 'bc:' + Date.now(), titulo: title || 'CETECritic', corpo: body || '',

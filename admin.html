@@ -246,6 +246,34 @@
       <label>Abertura — texto</label><textarea id="edAberturaTexto"></textarea>
       <label>Abertura — Spotify (embed src)</label><input id="edAberturaSpotify" type="text">
 
+      <!-- ---------- BOLÃO ----------
+           Tudo aqui mora em edicoes.extra.bolao (coluna jsonb que já existia),
+           por isso o bolão não precisou de migração de esquema. -->
+      <h2 style="margin-top:18px;">🔮 Bolão</h2>
+      <p class="sub" style="margin:0 0 10px;">
+        Abre junto com o "Monte o Seu" e o palpite trava no horário da <b>Noite 1</b>.
+        A aba sai do menu 1 dia depois do fim da votação. Deixe os campos em branco para usar o padrão.
+      </p>
+      <label><input type="checkbox" id="edBolaoAtivo" style="width:auto;" checked> Bolão ligado nesta edição</label>
+      <label>Palpite fecha em (ISO — vazio = usa o horário da Noite 1)</label>
+      <input id="edBolaoFecha" type="text" placeholder="2027-07-12T19:00:00-03:00">
+      <label>Regras (texto exibido na aba — vazio = usa a explicação padrão)</label>
+      <textarea id="edBolaoRegras" placeholder="Antes do festival começar, você chuta a nota média final de cada peça…"></textarea>
+
+      <h3 style="margin:14px 0 4px; font-size:14px; color:var(--muted);">Aviso automático de ABERTURA (banner no site + push)</h3>
+      <div class="row2">
+        <div><label>Título</label><input id="edBolaoAbreTitulo" type="text" placeholder="🔮 O bolão de 2027 abriu!"></div>
+        <div><label>Texto</label><input id="edBolaoAbreCorpo" type="text" placeholder="Palpite a nota de cada peça antes da primeira noite."></div>
+      </div>
+      <h3 style="margin:14px 0 4px; font-size:14px; color:var(--muted);">Aviso automático de FECHAMENTO (banner no site + push)</h3>
+      <div class="row2">
+        <div><label>Título</label><input id="edBolaoFechaTitulo" type="text" placeholder="🔒 O bolão de 2027 fechou"></div>
+        <div><label>Texto</label><input id="edBolaoFechaCorpo" type="text" placeholder="Os palpites estão travados. Acompanhe o placar!"></div>
+      </div>
+      <p class="sub" style="margin:8px 0 0;">
+        Os dois avisos disparam sozinhos, uma única vez cada. Se já tiverem saído, editar o texto aqui não reenvia.
+      </p>
+
       <h2 style="margin-top:18px;">🌙 Noites e peças</h2>
       <div class="toolbar" style="margin-bottom:6px;">
         <button id="btnImportarCsv" class="ghost small" type="button">📥 Importar CSV</button>
@@ -909,7 +937,10 @@ async function abrirEdicao(ano){
   const pecas = (r && r.pecas) || [];
   preencherEditor(e, noites, pecas);
 }
-function novaEdicao(){ preencherEditor({ ano:'', noites:5, episodios_por_noite:3, em_breve:false, sobre:{}, abertura:{} }, [], []); }
+/* `extra` da edição aberta no editor — devolvido intacto no salvamento pra
+   não apagar chaves que este painel ainda não conhece (o bolão mora nele) */
+let _EXTRA_EDICAO = {};
+function novaEdicao(){ preencherEditor({ ano:'', noites:5, episodios_por_noite:3, em_breve:false, sobre:{}, abertura:{}, extra:{} }, [], []); }
 
 function preencherEditor(e, noites, pecas){
   limparDirty('edicao');   // acabou de carregar: nada pendente ainda
@@ -924,6 +955,18 @@ function preencherEditor(e, noites, pecas){
   const sobre = e.sobre || {}, abertura = e.abertura || {};
   $('edSobreTitulo').value = sobre.titulo || ''; $('edSobreBanner').value = sobre.banner || ''; $('edSobreTexto').value = sobre.texto || ''; $('edSobreContexto').value = sobre.contexto || '';
   $('edAberturaTexto').value = abertura.texto || ''; $('edAberturaSpotify').value = abertura.spotify || '';
+  /* bolão (edicoes.extra.bolao) — guardamos o `extra` inteiro pra devolvê-lo
+     no salvamento sem perder chaves que este painel não edita */
+  _EXTRA_EDICAO = (e.extra && typeof e.extra === 'object') ? e.extra : {};
+  const cfgB = (_EXTRA_EDICAO.bolao && typeof _EXTRA_EDICAO.bolao === 'object') ? _EXTRA_EDICAO.bolao : {};
+  const txtB = (cfgB.textos && typeof cfgB.textos === 'object') ? cfgB.textos : {};
+  $('edBolaoAtivo').checked = cfgB.ativo !== false;      // ausente = ligado
+  $('edBolaoFecha').value = cfgB.fechaEm || '';
+  $('edBolaoRegras').value = cfgB.regras || '';
+  $('edBolaoAbreTitulo').value  = txtB.abreTitulo  || '';
+  $('edBolaoAbreCorpo').value   = txtB.abreCorpo   || '';
+  $('edBolaoFechaTitulo').value = txtB.fechaTitulo || '';
+  $('edBolaoFechaCorpo').value  = txtB.fechaCorpo  || '';
   // noites
   const nmap = {}; noites.forEach(nd => nmap[nd.noite] = { data:nd.data, subtitulo:nd.subtitulo, pecas:[] });
   pecas.forEach(p => { if(nmap[p.noite]) nmap[p.noite].pecas.push({ titulo:p.titulo, turma:p.turma, sinopse:p.sinopse, youtube:p.youtube, youtubeInicio:p.youtube_inicio }); });
@@ -1159,6 +1202,23 @@ function coletarNoites(){
 $('btnSalvarEdicao').addEventListener('click', async () => {
   const ano = Number($('edAno').value);
   if(!ano){ $('edMsg').textContent = 'Informe o ano.'; return; }
+  /* `extra` é preservado: o servidor grava a coluna inteira, então mandar só
+     os campos do formulário apagaria qualquer chave que este painel ainda não
+     conheça. Guardamos o valor original em _EXTRA_EDICAO ao carregar. */
+  const extra = Object.assign({}, _EXTRA_EDICAO || {});
+  const txt = id => $(id).value.trim();
+  extra.bolao = Object.assign({}, extra.bolao || {}, {
+    ativo: $('edBolaoAtivo').checked,
+    fechaEm: txt('edBolaoFecha') || null,
+    regras: txt('edBolaoRegras'),
+    textos: {
+      abreTitulo:  txt('edBolaoAbreTitulo'),
+      abreCorpo:   txt('edBolaoAbreCorpo'),
+      fechaTitulo: txt('edBolaoFechaTitulo'),
+      fechaCorpo:  txt('edBolaoFechaCorpo')
+    }
+  });
+
   const edicao = {
     ano, noites: Number($('edNoites').value) || 5, ordem: Number($('edOrdem').value) || ano,
     em_breve: $('edEmBreve').checked, abre_em: $('edAbreEm').value.trim() || null, monte_abre_em: $('edMonteAbreEm').value.trim() || null,
@@ -1166,7 +1226,8 @@ $('btnSalvarEdicao').addEventListener('click', async () => {
     episodios_por_noite: Number($('edEps').value) || 3, inicio: $('edInicio').value.trim() || null, fim_votacao: $('edFim').value.trim() || null,
     poster: $('edPoster').value.trim() || null, mensagem_fim: $('edMensagemFim').value.trim() || null,
     sobre: { titulo: $('edSobreTitulo').value.trim(), banner: $('edSobreBanner').value.trim(), texto: $('edSobreTexto').value.trim(), contexto: $('edSobreContexto').value.trim() },
-    abertura: { texto: $('edAberturaTexto').value.trim(), spotify: $('edAberturaSpotify').value.trim() }
+    abertura: { texto: $('edAberturaTexto').value.trim(), spotify: $('edAberturaSpotify').value.trim() },
+    extra
   };
   $('edMsg').textContent = 'Salvando…';
   const r = await post('salvarEdicaoCompleta', { edicao, noites: coletarNoites() });

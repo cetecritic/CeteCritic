@@ -16,6 +16,8 @@
 const { createClient } = require('@supabase/supabase-js');
 const crypto = require('crypto');
 const { migrarNomeUsuario, estadoConta, mensagemBloqueio, validarNome } = require('./_moderacao');
+/* usado pelos avisos automáticos do bolão (abertura/fechamento) */
+const { enviarParaTodos } = require('./enviar-push');
 
 const sb = createClient(process.env.SUPABASE_URL, process.env.SUPABASE_SECRET_KEY, {
   auth: { persistSession: false }
@@ -69,6 +71,250 @@ async function votingClosed(year){
   if(!(y in FESTIVAL_END_BY_YEAR)) return true;
   const end = FESTIVAL_END_BY_YEAR[y];
   return end === null ? false : (new Date() >= end);
+}
+
+/* ==================================================================
+   BOLÃO
+   ==================================================================
+   Regras combinadas:
+     - abre junto com o Monte o Seu (edicoes.monte_abre_em);
+     - o palpite trava no horário da Noite 1 (ou em extra.bolao.fechaEm);
+     - a partir daí ninguém edita e o placar vai se formando conforme as
+       notas reais saem;
+     - a página some do menu 1 dia depois do fim da votação.
+
+   O palpite individual de terceiro NUNCA sai daqui. O servidor devolve
+   placar já calculado; palpite cru só volta pro próprio dono, com token. */
+
+/* pontuação linear, 0 a 5 por peça. A faixa de 5 é 0,1 pra "cravou" valer de
+   verdade (palpite 7,5 numa peça que fechou 7,59 conta como exato).
+   O epsilon existe porque 7,6 - 7,5 dá 0.10000000000000053 em float. */
+const BOLAO_FAIXAS = [
+  { ate: 0.1, pts: 5 },
+  { ate: 0.6, pts: 4 },
+  { ate: 1.2, pts: 3 },
+  { ate: 1.8, pts: 2 },
+  { ate: 3.0, pts: 1 }
+];
+const BOLAO_PONTOS_MAX = 5;
+function pontosBolao(palpite, real){
+  const p = Number(palpite), r = Number(real);
+  if(!isFinite(p) || !isFinite(r)) return 0;
+  const d = Math.abs(p - r);
+  for(const f of BOLAO_FAIXAS){ if(d <= f.ate + 1e-9) return f.pts; }
+  return 0;
+}
+
+/* config do bolão de um ano: junta os campos da edição com o extra.bolao */
+let _edCache = null, _edCacheAt = 0;
+async function lerEdicoesBolao(){
+  if(_edCache && (Date.now() - _edCacheAt) < 30000) return _edCache;
+  try{
+    const { data } = await sb.from('edicoes').select('ano,monte_abre_em,fim_votacao,em_breve,extra');
+    _edCache = data || []; _edCacheAt = Date.now();
+  }catch(e){ _edCache = _edCache || []; }
+  return _edCache;
+}
+/* a Noite 1 é o prazo padrão do palpite */
+async function dataNoite1(year){
+  try{
+    const { data } = await sb.from('noites').select('data').eq('ano', Number(year)).eq('noite', 1).limit(1);
+    const d = data && data[0] && data[0].data;
+    return d ? new Date(d) : null;
+  }catch(e){ return null; }
+}
+async function estadoBolao(year){
+  const y = Number(year);
+  const linha = (await lerEdicoesBolao()).find(e => Number(e.ano) === y) || null;
+  const extra = asObj(linha && linha.extra);
+  const cfg = asObj(extra.bolao);
+  const agora = new Date();
+
+  /* desligado explicitamente no painel, ou edição ainda "em breve" */
+  if(cfg.ativo === false || (linha && linha.em_breve)) {
+    return { existe:false, ativo:false, aberto:false, palpiteFechado:true, encerrado:true };
+  }
+
+  const abre = (linha && linha.monte_abre_em) ? new Date(linha.monte_abre_em) : null;
+  const fimVot = (linha && linha.fim_votacao) ? new Date(linha.fim_votacao) : null;
+
+  /* prazo do palpite: o do painel > horário da Noite 1 > fim da votação.
+     O último degrau é rede de segurança pras edições antigas, que podem não
+     ter data de noite cadastrada — sem ele o palpite nunca "fecharia" e o
+     placar daquele ano jamais apareceria. */
+  const fechaCfg = cfg.fechaEm ? new Date(cfg.fechaEm) : null;
+  let fechaPalpite = (fechaCfg && !isNaN(fechaCfg)) ? fechaCfg : await dataNoite1(y);
+  if(!fechaPalpite || isNaN(fechaPalpite)) fechaPalpite = (fimVot && !isNaN(fimVot)) ? fimVot : null;
+
+  /* a aba sai do menu 1 dia depois das notas fecharem */
+  const somePorFim = (fimVot && !isNaN(fimVot)) ? new Date(fimVot.getTime() + 24*60*60*1000) : null;
+
+  const liberado = !abre || isNaN(abre) || agora >= abre;
+  const palpiteFechado = !!(fechaPalpite && agora >= fechaPalpite);
+
+  return {
+    existe: !!linha,
+    ativo: true,
+    abreEm: (abre && !isNaN(abre)) ? abre.toISOString() : null,
+    fechaPalpiteEm: fechaPalpite ? fechaPalpite.toISOString() : null,
+    somePorFimEm: somePorFim ? somePorFim.toISOString() : null,
+    liberado,
+    aberto: liberado && !palpiteFechado,       // dá pra palpitar agora
+    palpiteFechado,
+    encerrado: !!(somePorFim && agora >= somePorFim),
+    regras: String(cfg.regras || '')
+  };
+}
+
+/* média real de cada peça do ano — é contra ela que o palpite é medido */
+async function mediasReaisDoAno(year){
+  const { data } = await sb.from('submissions').select('grid').eq('year', Number(year));
+  const soma = {}, cont = {};
+  (data||[]).forEach(r => {
+    const g = asObj(r.grid);
+    if(hasInvalidRating(g)) return;              // mesma limpeza do feed público
+    Object.keys(g).forEach(k => {
+      const v = Number(g[k]);
+      if(isNaN(v)) return;
+      soma[k] = (soma[k] || 0) + v;
+      cont[k] = (cont[k] || 0) + 1;
+    });
+  });
+  const medias = {};
+  Object.keys(soma).forEach(k => { medias[k] = soma[k] / cont[k]; });
+  return medias;
+}
+
+/* ---- avisos automáticos de abertura e fechamento ----
+   No plano Hobby o cron da Vercel roda ~1x/dia, grosso demais pra um bolão
+   que abre num horário marcado. Então quem dispara é o próprio tráfego do
+   site: a cada request do feed conferimos se passou da hora.
+
+   O `bc_id` determinístico é o que garante o "uma vez só": gravamos o
+   broadcast ANTES de enviar o push, então uma segunda instância que entre
+   junto encontra a linha e desiste. O índice único em broadcasts(bc_id)
+   (ver migracao-bolao.sql) fecha a janela de corrida de vez. */
+async function avisarUmaVez(bcId, titulo, corpo, url){
+  const { data } = await sb.from('broadcasts').select('bc_id').eq('bc_id', bcId).limit(1);
+  if(data && data.length) return false;
+  const ins = await sb.from('broadcasts').insert({
+    bc_id: bcId, titulo, corpo, url, ts: Date.now(), dur: 25
+  });
+  if(ins.error) return false;                 // perdeu a corrida: a outra instância já mandou
+  try{ await enviarParaTodos({ title: titulo, body: corpo, url, semBroadcast: true }); }
+  catch(e){ /* o banner já está no ar mesmo se o push falhar */ }
+  return true;
+}
+
+let _bolaoAvisoAt = 0;
+async function dispararAvisosBolao(){
+  if(Date.now() - _bolaoAvisoAt < 60000) return;   // no máximo 1 verificação por minuto
+  _bolaoAvisoAt = Date.now();
+  try{
+    for(const linha of await lerEdicoesBolao()){
+      const y = Number(linha.ano);
+      if(!y) continue;
+      const estado = await estadoBolao(y);
+      if(!estado.ativo || !estado.existe) continue;
+      /* `encerrado` corta as edições antigas: sem isso, subir esta versão
+         dispararia um push de "o bolão de 2024 fechou" pra todo mundo */
+      if(estado.encerrado) continue;
+      const t = asObj(asObj(asObj(linha.extra).bolao).textos);
+
+      if(estado.liberado && !estado.palpiteFechado){
+        await avisarUmaVez('bolao-abre:' + y,
+          String(t.abreTitulo || '').trim() || ('🔮 O bolão de ' + y + ' abriu!'),
+          String(t.abreCorpo || '').trim() || 'Palpite a nota de cada peça antes da primeira noite começar. Vale preencher tudo.',
+          '/' + y + '/bolao.html');
+      }
+      if(estado.palpiteFechado){
+        await avisarUmaVez('bolao-fecha:' + y,
+          String(t.fechaTitulo || '').trim() || ('🔒 O bolão de ' + y + ' fechou'),
+          String(t.fechaCorpo || '').trim() || 'Os palpites estão travados. Acompanhe o placar conforme as notas vão saindo!',
+          '/' + y + '/bolao.html');
+      }
+    }
+  }catch(e){ /* aviso é acessório: nunca derruba o request de quem está lendo */ }
+}
+
+/* ranking do bolão de um ano. Só nomes e pontos — nunca o palpite de ninguém.
+   Desempate: mais pontos → menor erro médio → quem palpitou primeiro.
+   Quem empata em pontos E erro divide a mesma posição (ambos levam a badge). */
+async function placarBolao(year){
+  const y = Number(year);
+  const medias = await mediasReaisDoAno(y);
+  const { data } = await sb.from('palpites').select('usuario,palpites,ts').eq('year', y);
+  const pmap = await lerPerfisMap();
+  const linhasBrutas = (data || []).filter(r => r.usuario);
+
+  /* menor erro de cada peça entre TODOS — base da badge "Visionário".
+     Precisa ser calculado aqui porque o cliente não vê mais palpite alheio. */
+  const melhorErroPorPeca = {};
+  linhasBrutas.forEach(r => {
+    const pal = asObj(r.palpites);
+    Object.keys(pal).forEach(k => {
+      if(medias[k] === undefined) return;
+      const er = Math.abs(Number(pal[k]) - medias[k]);
+      if(isNaN(er)) return;
+      if(melhorErroPorPeca[k] === undefined || er < melhorErroPorPeca[k]) melhorErroPorPeca[k] = er;
+    });
+  });
+
+  /* "noite ouro" = a de maior média do ano — base da badge "Cálculo Exato" */
+  const somaNoite = {}, contNoite = {};
+  Object.keys(medias).forEach(k => {
+    const m = /^s(\d+)e\d+$/.exec(k);
+    if(!m) return;
+    const n = Number(m[1]);
+    somaNoite[n] = (somaNoite[n] || 0) + medias[k];
+    contNoite[n] = (contNoite[n] || 0) + 1;
+  });
+  let noiteOuro = null, melhorMedia = -Infinity;
+  Object.keys(somaNoite).forEach(n => {
+    const avg = somaNoite[n] / contNoite[n];
+    if(avg > melhorMedia){ melhorMedia = avg; noiteOuro = Number(n); }
+  });
+
+  const linhas = linhasBrutas.map(r => {
+    const pal = asObj(r.palpites);
+    let pontos = 0, apuradas = 0, somaErro = 0, cravadas = 0;
+    let oraculo = false, apostaRisco = false, visionario = false;
+    let somaOuro = 0, nOuro = 0;
+    Object.keys(pal).forEach(k => {
+      if(medias[k] === undefined) return;        // peça sem nota ainda: fora da conta
+      const p = Number(pal[k]);
+      const er = Math.abs(p - medias[k]);
+      const pts = pontosBolao(p, medias[k]);
+      pontos += pts;
+      if(pts === BOLAO_PONTOS_MAX) cravadas++;
+      somaErro += er;
+      apuradas++;
+      /* sinais finos que viram badge no perfil */
+      if(er < 0.05) oraculo = true;
+      if((p <= 2 || p >= 9) && er < 0.5) apostaRisco = true;
+      if(linhasBrutas.length >= 3 && melhorErroPorPeca[k] !== undefined && er <= melhorErroPorPeca[k] + 1e-9) visionario = true;
+      const mn = /^s(\d+)e\d+$/.exec(k);
+      if(mn && noiteOuro !== null && Number(mn[1]) === noiteOuro){ somaOuro += er; nOuro++; }
+    });
+    return {
+      user: displayFeed(String(r.usuario), pmap),   // respeita o modo anônimo
+      pontos, apuradas, cravadas,
+      erroMedio: apuradas ? somaErro / apuradas : null,
+      oraculo, apostaRisco, visionario,
+      calculoExato: !!(nOuro && (somaOuro / nOuro) < 0.1),
+      ts: Number(r.ts) || 0
+    };
+  }).filter(l => l.apuradas > 0);
+
+  linhas.sort((a, b) => b.pontos - a.pontos || a.erroMedio - b.erroMedio || a.ts - b.ts);
+  let pos = 0, chaveAnt = null;
+  linhas.forEach((l, i) => {
+    const chave = l.pontos + '|' + (l.erroMedio === null ? '' : l.erroMedio.toFixed(4));
+    if(chave !== chaveAnt){ pos = i + 1; chaveAnt = chave; }
+    l.pos = pos;
+    delete l.ts;                                  // detalhe interno, não vai pro cliente
+  });
+  return { placar: linhas, pecasApuradas: Object.keys(medias).length, pontosPorPeca: BOLAO_PONTOS_MAX };
 }
 
 /* ---------------- helpers ---------------- */
@@ -536,16 +782,50 @@ async function handleGet(req, res){
     return res.json({ ranking });
   }
 
-  // bolão (só depois de fechar)
+  /* ---- bolão: estado + placar (público) ----
+     Devolve ranking já calculado. O palpite de terceiro não sai daqui em
+     nenhuma hipótese — antes o endpoint entregava a grade inteira de todo
+     mundo assim que a votação fechava. */
+  if(q.bolao){
+    const y = Number(q.bolao);
+    if(!y) return res.json({ ok:false, error:'ano inválido' });
+    const estado = await estadoBolao(y);
+    /* enquanto dá pra palpitar, ninguém vê placar: os palpites ainda mudam e
+       mostrar parcial entregaria informação de quem já enviou */
+    if(!estado.palpiteFechado) return res.json({ ok:true, estado, placar:[], pecasApuradas:0 });
+    const r = await placarBolao(y);
+    return res.json({ ok:true, estado, ...r });
+  }
+
+  /* ---- bolão: o SEU palpite (precisa de token) ----
+     Serve pra montar a comparação palpite × nota oficial no perfil. Vem com
+     as médias reais e os pontos já calculados, pra conta bater exatamente
+     com a do placar. */
   if(q.palpites){
     const y = Number(q.palpites);
-    if(!(await votingClosed(y))) return res.json({ open:true, palpites:[] });
-    const { data } = await sb.from('palpites').select('*').eq('year', y);
-    const palpites = (data||[]).filter(r => r.usuario).map(r => ({ user:String(r.usuario), year:Number(r.year), palpites: asObj(r.palpites), ts:Number(r.ts) }));
-    return res.json({ closed:true, palpites });
+    const usuario = String(q.user || '');
+    if(!y || !usuario) return res.json({ ok:false, palpites:{}, medias:{} });
+    if(!(await verificarToken(usuario, q.token))) return res.json({ ok:false, error:'faça login', palpites:{}, medias:{} });
+
+    const { data } = await sb.from('palpites').select('usuario,palpites,ts').eq('year', y);
+    const meu = (data || []).find(r => norm(r.usuario) === norm(usuario));
+    if(!meu) return res.json({ ok:true, temPalpite:false, palpites:{}, medias:{}, pontos:{} });
+
+    const pal = asObj(meu.palpites);
+    const estado = await estadoBolao(y);
+    /* as médias reais só entram depois que o palpite trava — antes disso
+       elas seriam uma cola em tempo real pra quem ainda está preenchendo */
+    const medias = estado.palpiteFechado ? await mediasReaisDoAno(y) : {};
+    const pontos = {};
+    Object.keys(pal).forEach(k => { if(medias[k] !== undefined) pontos[k] = pontosBolao(pal[k], medias[k]); });
+    return res.json({ ok:true, temPalpite:true, estado, palpites: pal, medias, pontos, ts: Number(meu.ts) || 0 });
   }
 
   // feed de votos (default)
+  /* pendura aqui a verificação dos avisos do bolão: é a rota que todo mundo
+     chama o tempo todo, e ela mesma se limita a 1 checagem por minuto */
+  await dispararAvisosBolao();
+
   const year = q.year ? Number(q.year) : CURRENT_EDITION_YEAR;
   const { data } = await sb.from('submissions').select('*').eq('year', year);
   const pmap = await lerPerfisMap();
@@ -689,22 +969,60 @@ async function apiApagarAvaliacao(body){
   return { ok:true };
 }
 
+/* chaves (s{noite}e{ordem}) de todas as peças cadastradas num ano — é a
+   lista que o palpite precisa cobrir inteira */
+async function chavesDoAno(year){
+  const set = new Set();
+  try{
+    const { data } = await sb.from('pecas').select('noite,ordem').eq('ano', Number(year));
+    (data || []).forEach(p => {
+      const n = Number(p.noite), o = Number(p.ordem);
+      if(n && o) set.add('s' + n + 'e' + o);
+    });
+  }catch(e){ /* sem tabela de peças: cai na validação leve lá embaixo */ }
+  return set;
+}
+
 async function apiPalpite(body){
   const usuario = String(body.user||'');
   if(!(await verificarToken(usuario, body.token))) return { ok:false, error:'faça login para palpitar' };
   { const bloq = await barreiraModeracao(usuario, 'interagir'); if(bloq) return { ok:false, error: bloq }; }
   const year = body.year ? Number(body.year) : CURRENT_EDITION_YEAR;
-  if(await votingClosed(year)) return { ok:false, error:'o bolão desse ano já fechou' };
+
+  /* o prazo agora é o horário da Noite 1 (ou o que o painel definir), não mais
+     o fim da votação: o bolão é uma aposta ANTES de ver qualquer peça */
+  const estado = await estadoBolao(year);
+  if(!estado.existe)         return { ok:false, error:'essa edição não existe' };
+  if(!estado.ativo)          return { ok:false, error:'o bolão desta edição está desativado' };
+  if(!estado.liberado)       return { ok:false, error:'o bolão desta edição ainda não abriu' };
+  if(estado.palpiteFechado)  return { ok:false, error:'o prazo de palpite já fechou — ele encerra quando a primeira noite começa' };
+
   const entrada = (body.palpites && typeof body.palpites==='object') ? body.palpites : null;
   if(!entrada) return { ok:false, error:'nenhum palpite enviado' };
+
+  const exigidas = await chavesDoAno(year);
   const limpos = {};
-  Object.keys(entrada).forEach(k => { const v = Number(entrada[k]); if(!isNaN(v) && v>=0 && v<=MAX_RATING) limpos[k]=v; });
+  Object.keys(entrada).forEach(k => {
+    /* chave fora do formato ou peça que não existe no ano: ignora */
+    if(!/^s\d+e\d+$/.test(k)) return;
+    if(exigidas.size && !exigidas.has(k)) return;
+    const v = Number(entrada[k]);
+    if(!isNaN(v) && v>=0 && v<=MAX_RATING) limpos[k]=v;
+  });
   if(!Object.keys(limpos).length) return { ok:false, error:'palpites inválidos' };
+
+  /* obrigatório palpitar em TODAS as peças: meio bolão não vale, senão quem
+     palpita pouco leva vantagem no erro médio do desempate */
+  if(exigidas.size){
+    const faltam = [...exigidas].filter(k => limpos[k] === undefined).length;
+    if(faltam) return { ok:false, error:'falta palpitar em ' + faltam + ' peça(s) — o bolão só vale preenchido inteiro' };
+  }
+
   const { data } = await sb.from('palpites').select('id,usuario,year').eq('year', year);
   const existente = (data||[]).find(r => norm(r.usuario)===norm(usuario));
   if(existente) await sb.from('palpites').update({ palpites: limpos, ts: Date.now() }).eq('id', existente.id);
   else await sb.from('palpites').insert({ usuario, year, palpites: limpos, ts: Date.now() });
-  return { ok:true };
+  return { ok:true, pecas: Object.keys(limpos).length };
 }
 
 async function apiPerfil(body){

@@ -153,13 +153,49 @@ async function lerEdicoesLista() {
   const { data } = await sb.from('edicoes').select('*').order('ordem', { ascending: false });
   return data || [];
 }
+/* ---- janela do bolão de uma edição ----
+   Resolvida aqui pra o cliente não precisar adivinhar:
+     abre   = junto com o Monte o Seu (monte_abre_em)
+     fecha  = horário da Noite 1, ou o `fechaEm` definido no painel
+     some   = 1 dia depois do fim da votação (aí sai do menu lateral)
+   A config fica em edicoes.extra.bolao — coluna jsonb que já existia, por
+   isso o bolão não precisou de migração de esquema. */
+function infoBolao(e, dataNoite1) {
+  const extra = (e.extra && typeof e.extra === 'object') ? e.extra : {};
+  const cfg = (extra.bolao && typeof extra.bolao === 'object') ? extra.bolao : {};
+  if (cfg.ativo === false) return null;                    // desligado no painel
+  const abreEm = e.monte_abre_em || null;
+  /* prazo: painel > Noite 1 > fim da votação. O último degrau é rede de
+     segurança pras edições antigas sem data de noite cadastrada — a mesma
+     ordem usada no estadoBolao() do api/db.js, senão cliente e servidor
+     discordariam sobre quando o palpite fecha. */
+  const fechaEm = cfg.fechaEm || dataNoite1 || e.fim_votacao || null;
+  if (!abreEm && !fechaEm) return null;                    // edição sem datas: sem bolão
+  const someEm = e.fim_votacao
+    ? new Date(new Date(e.fim_votacao).getTime() + 24 * 60 * 60 * 1000).toISOString()
+    : null;
+  return { abreEm, fechaEm, someEm };
+}
+// data/hora da Noite 1 de cada ano — o prazo padrão do palpite
+async function mapaNoite1() {
+  const m = {};
+  try {
+    const { data } = await sb.from('noites').select('ano,data').eq('noite', 1);
+    (data || []).forEach(n => { if (n.data) m[Number(n.ano)] = n.data; });
+  } catch (e) { /* sem noites cadastradas: o bolão fica sem prazo padrão */ }
+  return m;
+}
+
 // monta o EDICOES do config.js (só os campos do menu)
-function edicoesParaMenu(rows) {
+function edicoesParaMenu(rows, noite1 = {}) {
   return rows.map(e => {
     const o = { ano: e.ano, noites: e.noites || 5 };
     if (e.abre_em) o.abreEm = e.abre_em;
     if (e.monte_abre_em) o.monteAbreEm = e.monte_abre_em;
     if (e.em_breve) o.emBreve = true;
+    /* o menu lateral decide sozinho se mostra o link do bolão, e ele precisa
+       disso em TODA página — por isso a janela viaja no config.js */
+    if (!e.em_breve) { const b = infoBolao(e, noite1[Number(e.ano)]); if (b) o.bolao = b; }
     /* O poster viaja junto do menu porque paginas fora da pasta do ano
        (perfil, busca, home) precisam dele e nao carregam o edicao.js daquela
        edicao. Antes elas montavam "ANO/poster.jpg" na mao — o que quebrou
@@ -175,8 +211,11 @@ function mensagemFimPadrao(ano) {
 }
 
 // monta o objeto EDICAO (edicao.js) de um ano
-function edicaoObj(e) {
+function edicaoObj(e, dataNoite1) {
   if (!e) return null;
+  const extra = (e.extra && typeof e.extra === 'object') ? e.extra : {};
+  const cfgBolao = (extra.bolao && typeof extra.bolao === 'object') ? extra.bolao : {};
+  const janela = infoBolao(e, dataNoite1);
   return {
     ano: e.ano,
     titulo: e.titulo || ('Cetec Festival ' + e.ano),
@@ -187,7 +226,9 @@ function edicaoObj(e) {
     poster: e.poster || '',
     mensagemFim: (e.mensagem_fim && String(e.mensagem_fim).trim()) || mensagemFimPadrao(e.ano),
     sobre: e.sobre || {},
-    abertura: e.abertura || {}
+    abertura: e.abertura || {},
+    /* a página do bolão precisa do texto das regras além da janela */
+    bolao: janela ? Object.assign({}, janela, { regras: String(cfgBolao.regras || '') }) : null
   };
 }
 
@@ -204,7 +245,7 @@ async function handleGet(req, res) {
   // ----- JS pro site -----
   if (q.file === 'config') {
     const cfg = await lerConfig();
-    const edicoes = edicoesParaMenu(await lerEdicoesLista());
+    const edicoes = edicoesParaMenu(await lerEdicoesLista(), await mapaNoite1());
     // curiosidades UNIFICADAS (Home + Hall): usa cfg.curiosidades; se ainda não
     // existir, junta as antigas de HOME_DADOS + HALL (sem duplicar por texto)
     let curios = Array.isArray(cfg.curiosidades) ? cfg.curiosidades : null;
@@ -240,9 +281,10 @@ async function handleGet(req, res) {
     const ano = Number(q.ano);
     const { data } = await sb.from('edicoes').select('*').eq('ano', ano).limit(1);
     const e = data && data[0];
+    const { data: n1 } = await sb.from('noites').select('data').eq('ano', ano).eq('noite', 1).limit(1);
     const js =
       `/* gerado por /api/content (edicao ${ano}) */\n` +
-      `const EDICAO = ${JSON.stringify(edicaoObj(e))};\n` +
+      `const EDICAO = ${JSON.stringify(edicaoObj(e, n1 && n1[0] && n1[0].data))};\n` +
       `const NOITES = {};\n`;
     return jsResp(res, js);
   }

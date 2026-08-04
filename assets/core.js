@@ -297,6 +297,41 @@ function noiteLiberada(n){ const d = dataNoite(n); return d ? agora() >= d : tru
 function votacaoEncerrada(){ return serverSaysClosed || (FIM_VOTACAO && agora() >= FIM_VOTACAO); }
 function podeVotar(){ return horarioSincronizado() && edicaoComecou() && !votacaoEncerrada(); }
 
+/* ---------------------- janela do bolão ----------------------
+   Vem pronta do servidor (config.js pro menu, edicao.js pra página do ano),
+   porque quem sabe a hora da Noite 1 e o que o painel configurou é o banco:
+
+     abre   junto com o Monte o Seu
+     fecha  no horário da Noite 1 — daí em diante ninguém edita palpite
+     some   1 dia depois do fim da votação (sai do menu, mas a URL continua
+            servindo de histórico do ano)
+
+   `cfgEd` é um item do EDICOES (menu) ou o próprio EDICAO (página do ano). */
+function estadoBolaoDe(cfgEd){
+  const b = cfgEd && cfgEd.bolao;
+  if(!b) return { existe:false };
+  const abre  = b.abreEm  ? new Date(b.abreEm)  : null;
+  const fecha = b.fechaEm ? new Date(b.fechaEm) : null;
+  const some  = b.someEm  ? new Date(b.someEm)  : null;
+  const n = agora();
+  const liberado = !abre || isNaN(abre) || n >= abre;
+  const fechado  = !!(fecha && !isNaN(fecha) && n >= fecha);
+  return {
+    existe: true, abre, fecha, some, regras: b.regras || '',
+    liberado,
+    aberto: liberado && !fechado,     // dá pra palpitar agora
+    fechado,                          // palpite travado, placar rolando
+    sumiu: !!(some && !isNaN(some) && n >= some)
+  };
+}
+/* estado do bolão DESTA página de edição */
+function estadoBolao(){ return estadoBolaoDe(ED); }
+/* a edição em destaque é a que manda no link do menu lateral */
+function edicaoDestaque(){
+  if(typeof EDICOES === 'undefined' || typeof EDICAO_EM_DESTAQUE === 'undefined') return null;
+  return EDICOES.find(e => e.ano === EDICAO_EM_DESTAQUE) || null;
+}
+
 function fmtData(d){
   return d ? d.toLocaleString('pt-BR', { day:'2-digit', month:'2-digit', hour:'2-digit', minute:'2-digit' }) : '';
 }
@@ -543,12 +578,61 @@ async function apiEnviarPalpite(year, palpites){
   if(!s) return { ok:false, error:'faça login' };
   return apiPost({ action:'palpite', user:s.user, token:s.token, year, palpites });
 }
-async function fetchPalpites(year){
+/* ---- BOLÃO ---------------------------------------------------------
+   Pontuação linear, 0 a 5 por peça. Esta cópia existe só pra desenhar a
+   tabela de regras e a comparação na tela — a conta que VALE é a do
+   servidor, que é quem monta o placar. As faixas precisam bater com as do
+   api/db.js (BOLAO_FAIXAS).
+
+   O epsilon é porque 7,6 - 7,5 dá 0.10000000000000053 em ponto flutuante. */
+const BOLAO_FAIXAS = [
+  { ate: 0.1, pts: 5 },
+  { ate: 0.6, pts: 4 },
+  { ate: 1.2, pts: 3 },
+  { ate: 1.8, pts: 2 },
+  { ate: 3.0, pts: 1 }
+];
+const BOLAO_PONTOS_MAX = 5;
+function pontosBolao(palpite, real){
+  const p = Number(palpite), r = Number(real);
+  if(!isFinite(p) || !isFinite(r)) return 0;
+  const d = Math.abs(p - r);
+  for(const f of BOLAO_FAIXAS){ if(d <= f.ate + 1e-9) return f.pts; }
+  return 0;
+}
+
+/* placar público de um ano (só ranking — o servidor nunca devolve palpite de
+   terceiro). Cacheado por ano: o perfil e o hall pedem os mesmos anos. */
+const _placarCache = new Map();
+async function fetchPlacarBolao(year, forcar){
+  const y = Number(year);
+  if(!forcar && _placarCache.has(y)) return _placarCache.get(y);
+  const p = (async () => {
+    try{
+      const r = await fetch(API_URL + '?bolao=' + y + '&_=' + Date.now(), { cache:'no-store' });
+      const j = await r.json();
+      if(!j || j.ok === false) return null;
+      return { estado: j.estado || {}, placar: Array.isArray(j.placar) ? j.placar : [], pecasApuradas: j.pecasApuradas || 0 };
+    }catch(e){ return null; }
+  })();
+  _placarCache.set(y, p);
+  return p;
+}
+
+/* o SEU palpite daquele ano, com as médias reais e os pontos já calculados.
+   Exige token — é o que permite a comparação peça a peça no perfil sem
+   expor o palpite de ninguém. */
+async function fetchMeuPalpite(year){
+  const s = usuarioLogado();
+  if(!s) return null;
   try{
-    const r = await fetch(API_URL + '?palpites=' + year + '&_=' + Date.now(), { cache:'no-store' });
+    const url = API_URL + '?palpites=' + Number(year)
+      + '&user=' + encodeURIComponent(s.user)
+      + '&token=' + encodeURIComponent(s.token) + '&_=' + Date.now();
+    const r = await fetch(url, { cache:'no-store' });
     const j = await r.json();
-    return (j && Array.isArray(j.palpites)) ? j.palpites : [];
-  }catch(e){ return []; }
+    return (j && j.ok) ? j : null;
+  }catch(e){ return null; }
 }
 
 /* ---- APIs sociais (perfil / visitas / carimbos) ---- */
@@ -1199,6 +1283,21 @@ function htmlSidebar(){
   <button class="nav-link nav-parent" id="navMonte">Monte o Seu</button>
   <a class="nav-link nav-parent${PAGINA.tipo === 'busca' ? ' active' : ''}" href="${BASE}busca.html">Buscar</a>
   <a class="nav-link nav-parent${PAGINA.tipo === 'hall' ? ' active' : ''}" href="${BASE}hall.html">Hall da Fama</a>`;
+
+  /* ---- Bolão (logo abaixo do Hall) ----
+     Só aparece enquanto o bolão da edição em destaque está no ar: some 1 dia
+     depois de as notas fecharem. A URL continua servindo — cada ano guarda o
+     próprio bolão como sub-página, então dá pra rever 2024 quando quiser. */
+  {
+    const cfgD = edicaoDestaque();
+    const eb = cfgD ? estadoBolaoDe(cfgD) : { existe:false };
+    if(eb.existe && eb.liberado && !eb.sumiu){
+      const ativo = (PAGINA.tipo === 'bolao' && ANO === cfgD.ano);
+      const selo = eb.aberto ? '<span class="nav-selo">palpite aberto</span>' : '';
+      h += `
+  <a class="nav-link nav-parent nav-bolao${ativo ? ' active' : ''}" href="${BASE}${cfgD.ano}/bolao.html">🔮 Bolão${selo}</a>`;
+    }
+  }
 
   /* edição em foco: o ano da página atual ou, na home/hall, a edição em destaque.
      A década desse ano é a que começa aberta; as outras ficam recolhidas. */
@@ -2838,9 +2937,8 @@ function paginaEdicao(){
       <div class="grid-panel" id="grid-container"></div>
     </div>
 
-    ${FIM_VOTACAO ? `<div class="section" id="bolaoSection">
-      <h2>🔮 Bolão — palpite por episódio</h2>
-      <div class="sub">Chute a <b>nota média final de cada episódio</b> (de 0 a ${NOTA_MAXIMA}). Quando a votação fechar, quem tiver o menor erro médio ganha destaque no perfil. Dá pra ajustar até fechar.</div>
+    ${estadoBolao().existe ? `<div class="section" id="bolaoSection">
+      <h2>🔮 Bolão</h2>
       <div id="bolaoBox"><div class="empty-note">Carregando...</div></div>
     </div>` : ''}
 
@@ -3009,137 +3107,47 @@ function paginaEdicao(){
   }
   tickPagina = atualizarEstado;
 
-  /* ---------------------- bolão por episódio ----------------------
-     Só existe se a edição tem fimVotacao (FIM_VOTACAO). Libera junto com o
-     Monte o Seu (monteAbreEm). Aberto+logado: grade de palpite por episódio.
-     Fechado: placar por menor erro médio (palpite x média real de cada ep). */
-  const bolaoAbre = (CFG_EDICAO && CFG_EDICAO.monteAbreEm) ? new Date(CFG_EDICAO.monteAbreEm) : null;
+  /* ---------------------- bolão (chamada) ----------------------
+     O bolão mora numa sub-página do ano (/ANO/bolao.html): lá cabe a
+     explicação das regras, o placar e a comparação, e cada edição guarda o
+     seu, então dá pra rever os anos anteriores. Aqui na página da edição
+     fica só o convite, com o estado atual. */
   let bolaoModo = null;
-
-  function renderBolaoPlacar(box){
-    fetchPalpites(ANO).then(lista => {
-      const realPorKey = {};
-      for(let s = 1; s <= NUM_NOITES; s++){
-        for(let e = 1; e <= epsDaNoite(s); e++){
-          const key = `s${s}e${e}`;
-          const vals = valoresDaChave(key).map(Number).filter(v => !isNaN(v));
-          if(vals.length) realPorKey[key] = media(vals);
-        }
-      }
-      if(!Object.keys(realPorKey).length){ box.innerHTML = '<div class="empty-note">Ainda não há notas suficientes para apurar o bolão.</div>'; return; }
-      if(!lista.length){ box.innerHTML = '<div class="empty-note">Ninguém palpitou nesta edição.</div>'; return; }
-      const sess = usuarioLogado();
-      const alvo = sess ? sess.user.trim().toLowerCase() : null;
-      const ranking = lista.map(p => {
-        let soma = 0, n = 0;
-        Object.keys(p.palpites || {}).forEach(k => {
-          if(realPorKey[k] !== undefined){ soma += Math.abs(Number(p.palpites[k]) - realPorKey[k]); n++; }
-        });
-        return { user: String(p.user), erroMedio: n ? soma / n : Infinity, n };
-      }).filter(r => r.n > 0).sort((a,b) => a.erroMedio - b.erroMedio);
-      if(!ranking.length){ box.innerHTML = '<div class="empty-note">Ninguém palpitou episódios que já têm nota.</div>'; return; }
-      const medalhas = ['🥇','🥈','🥉'];
-      box.innerHTML = `<div class="bolao-real">Placar do bolão — <b>menor erro médio por episódio</b> vence · ${ranking.length} participante${ranking.length === 1 ? '' : 's'}</div>
-        <div class="record-list">${ranking.slice(0, 10).map((r, i) => {
-          const eu = alvo && r.user.trim().toLowerCase() === alvo;
-          return `<div class="record-item${eu ? ' bolao-eu' : ''}">
-            <span class="rec-emoji">${medalhas[i] || '•'}</span>
-            <div><div class="rec-title">${esc(r.user)}${eu ? ' (você)' : ''}</div>
-            <div class="rec-text">erro médio ${r.erroMedio.toFixed(2)} · ${r.n} episódio${r.n === 1 ? '' : 's'} palpitado${r.n === 1 ? '' : 's'}</div></div>
-          </div>`;
-        }).join('')}</div>`;
-    });
-  }
-
-  function renderBolaoForm(box, sess){
-    const chaveLocal = `cetec-bolao-${ANO}-${sess.user.toLowerCase()}`;
-    let salvos = {};
-    try{ salvos = JSON.parse(localStorage.getItem(chaveLocal) || '{}'); }catch(e){ salvos = {}; }
-    const bolaoValues = { ...salvos };
-
-    box.innerHTML = `<div class="grid-panel bolao-grid" id="bolaoGridPanel"></div>
-      <div class="bolao-actions">
-        <div class="bolao-msg" id="bolaoMsg">Preencha o palpite da nota final de cada episódio já liberado.</div>
-        <button class="submit-btn" id="bolaoSalvar">Salvar palpites</button>
-      </div>`;
-
-    let g = `<div class="grid-row"><div class="cell label"></div>`;
-    for(let s = 1; s <= NUM_NOITES; s++) g += `<div class="cell header">${cabecalhoNoite(s)}</div>`;
-    g += `</div>`;
-    for(let e = 1; e <= MAX_EPS; e++){
-      g += `<div class="grid-row"><div class="cell label">E${e}</div>`;
-      for(let s = 1; s <= NUM_NOITES; s++){
-        if(e > epsDaNoite(s)){ g += `<div class="cell cell-void"></div>`; continue; }
-        const key = `s${s}e${e}`;
-        if(!noiteLiberada(s)){ g += `<div class="cell cell-input locked" title="Libera em ${fmtData(dataNoite(s))}">🔒</div>`; continue; }
-        const val = bolaoValues[key];
-        g += `<div class="cell cell-input" id="bcell-${key}" style="${val !== undefined ? `background-color:${corDaNota(val)}` : ''}">
-          <input type="number" min="0" max="${NOTA_MAXIMA}" step="0.1" placeholder="?" data-key="${key}" value="${val !== undefined ? val : ''}">
-        </div>`;
-      }
-      g += `</div>`;
-    }
-    document.getElementById('bolaoGridPanel').innerHTML = g;
-
-    box.querySelectorAll('.cell-input input').forEach(inp => inp.addEventListener('input', () => {
-      const key = inp.dataset.key;
-      const cell = document.getElementById(`bcell-${key}`);
-      if(inp.value === ''){ delete bolaoValues[key]; cell.style.backgroundColor = 'var(--surface-2)'; return; }
-      let v = parseFloat(inp.value);
-      if(isNaN(v)) return;
-      if(v > NOTA_MAXIMA){ v = NOTA_MAXIMA; inp.value = NOTA_MAXIMA; }
-      if(v < 0){ v = 0; inp.value = 0; }
-      bolaoValues[key] = v;
-      cell.style.backgroundColor = corDaNota(v);
-    }));
-
-    document.getElementById('bolaoSalvar').addEventListener('click', async () => {
-      const msg = document.getElementById('bolaoMsg');
-      if(!Object.keys(bolaoValues).length){ msg.textContent = 'Preencha pelo menos um episódio.'; return; }
-      const bt = document.getElementById('bolaoSalvar');
-      const orig = bt.textContent;
-      bt.disabled = true;
-      bt.innerHTML = '<span class="spinner"></span>Salvando...';
-      const r = await apiEnviarPalpite(ANO, bolaoValues);
-      bt.disabled = false;
-      bt.textContent = orig;
-      if(r && r.ok){
-        localStorage.setItem(chaveLocal, JSON.stringify(bolaoValues));
-        msg.innerHTML = 'Palpites salvos ✓ — dá pra ajustar até a votação fechar.';
-      } else {
-        msg.textContent = (r && r.error) ? r.error : 'Não foi possível salvar. Tente de novo.';
-      }
-    });
-  }
 
   async function atualizarBolao(){
     const box = document.getElementById('bolaoBox');
-    if(!box) return; /* seção não existe se a edição não tem fimVotacao */
+    if(!box) return;                       /* edição sem bolão configurado */
+    const eb = estadoBolao();
+    if(!eb.existe) return;
 
-    if(votacaoEncerrada()){
-      bolaoModo = 'fechado';
-      renderBolaoPlacar(box);
-      return;
-    }
-    /* trava até liberar junto com o Monte o Seu */
-    if(bolaoAbre && agora() < bolaoAbre){
-      if(bolaoModo === 'travado') return;
-      bolaoModo = 'travado';
-      box.innerHTML = `<div class="bolao-locked">🔒 O bolão libera em <b>${fmtData(bolaoAbre)}</b> — junto com o "Monte o Seu" deste ano.</div>`;
-      return;
-    }
-    const sess = usuarioLogado();
-    const modo = sess ? 'aberto-in' : 'aberto-out';
-    if(modo === bolaoModo) return; /* já renderizado: não recria (não apaga o que a pessoa digita) */
+    const modo = !eb.liberado ? 'travado' : (eb.aberto ? 'aberto' : (eb.sumiu ? 'arquivado' : 'apurando'));
+    if(modo === bolaoModo) return;         /* já desenhado: não recria à toa */
     bolaoModo = modo;
 
-    if(!sess){
-      box.innerHTML = `<div class="bolao-login"><span>Entre para dar seus palpites no bolão.</span><button class="btn btn-solid" id="bolaoEntrar">Entrar / Criar conta</button></div>`;
-      const be = document.getElementById('bolaoEntrar');
-      if(be) be.addEventListener('click', () => { const e = document.getElementById('btnEntrar'); if(e) e.click(); });
+    const link = `${BASE}${ANO}/bolao.html`;
+    if(modo === 'travado'){
+      box.innerHTML = `<div class="bolao-locked">🔒 O bolão abre em <b>${fmtData(eb.abre)}</b> — junto com o "Monte o Seu" deste ano.</div>`;
       return;
     }
-    renderBolaoForm(box, sess);
+    if(modo === 'aberto'){
+      box.innerHTML = `<div class="bolao-cta">
+        <div>
+          <div class="bolao-cta-tit">O bolão está aberto!</div>
+          <div class="bolao-cta-sub">Palpite a nota final de cada peça${eb.fecha ? ` — o prazo vai até <b>${fmtData(eb.fecha)}</b>, quando a primeira noite começa` : ''}.</div>
+        </div>
+        <a class="btn btn-solid" href="${link}">🔮 Palpitar</a>
+      </div>`;
+      return;
+    }
+    box.innerHTML = `<div class="bolao-cta">
+      <div>
+        <div class="bolao-cta-tit">${modo === 'arquivado' ? 'Bolão encerrado' : 'Palpites travados — placar rolando'}</div>
+        <div class="bolao-cta-sub">${modo === 'arquivado'
+          ? 'Veja quem levou a melhor nesta edição.'
+          : 'O placar se forma conforme as notas de cada peça vão saindo.'}</div>
+      </div>
+      <a class="btn btn-ghost" href="${link}">Ver o placar</a>
+    </div>`;
   }
 
   /* carga inicial + atualização periódica */
@@ -3154,6 +3162,291 @@ function paginaEdicao(){
   }
   carregar();
   intervaloVisivel(carregar, 20000);
+}
+
+/* =====================================================================
+   PÁGINA: BOLÃO (/ANO/bolao.html)
+   =====================================================================
+   Sub-página de cada edição, então cada ano guarda o próprio bolão e os
+   anteriores continuam consultáveis pela URL.
+
+   Três estados:
+     travado   antes de abrir (abre junto com o Monte o Seu)
+     aberto    dá pra palpitar — obrigatório preencher TODAS as peças, e o
+               prazo morre no horário da Noite 1
+     apurando  palpite travado; o placar se forma conforme as notas saem
+   ===================================================================== */
+
+/* todas as chaves de peça da edição — é o que o palpite precisa cobrir */
+function chavesDaEdicao(){
+  const ks = [];
+  for(let s = 1; s <= NUM_NOITES; s++)
+    for(let e = 1; e <= epsDaNoite(s); e++) ks.push(`s${s}e${e}`);
+  return ks;
+}
+function tituloDaPeca(s, e){
+  const nd = ND[s];
+  const p = (nd && Array.isArray(nd.pecas)) ? nd.pecas[e-1] : null;
+  return p && p.titulo ? p.titulo : `Noite ${s} · Episódio ${e}`;
+}
+/* tabela de pontos, do jeito que ela é explicada na tela */
+function htmlTabelaPontos(){
+  const linhas = BOLAO_FAIXAS.map((f, i) => {
+    const de = i === 0 ? '0' : BOLAO_FAIXAS[i-1].ate.toFixed(1).replace('.', ',');
+    const ate = f.ate.toFixed(1).replace('.', ',');
+    const faixa = i === 0 ? `cravou (até ${ate} de diferença)` : `de ${de} a ${ate}`;
+    return `<div class="bpt-linha"><span class="bpt-pts">${f.pts}</span><span class="bpt-faixa">${faixa}</span></div>`;
+  }).join('');
+  return `<div class="bolao-pontos">${linhas}
+    <div class="bpt-linha zero"><span class="bpt-pts">0</span><span class="bpt-faixa">errou por mais de 3,0</span></div>
+  </div>`;
+}
+
+async function paginaBolao(){
+  document.title = `Bolão ${ANO} — CETECritic`;
+  const eb = estadoBolao();
+
+  if(!eb.existe){
+    montarShell(`<div class="perfil-head"><h1>🔮 Bolão ${ANO}</h1></div>
+      <div class="noite-card" style="text-align:center;">
+        <div class="perfil-vazio">Esta edição não tem bolão.</div>
+        <a class="btn btn-ghost" href="${BASE}${ANO}/index.html">Voltar para a edição</a>
+      </div>`);
+    return;
+  }
+
+  const regrasCustom = String(eb.regras || '').trim();
+  montarShell(`
+    <div class="perfil-head"><h1>🔮 Bolão ${ANO}</h1></div>
+
+    <div class="section" id="bolaoEstado"><div class="empty-note">Carregando...</div></div>
+
+    <div class="section">
+      <h2>Como funciona</h2>
+      <div class="sub">${regrasCustom ? esc(regrasCustom) : `Antes do festival começar, você chuta a <b>nota média final</b> de cada peça.
+        Quanto mais perto do resultado real, mais pontos. Quem somar mais pontos leva a taça —
+        e o pódio ganha badge no perfil.`}</div>
+      <h3 class="subhead">Pontos por peça</h3>
+      ${htmlTabelaPontos()}
+      <div class="sub" style="margin-top:10px;">
+        Empate se resolve pelo menor erro médio; persistindo, por quem palpitou primeiro.
+        Peça que ninguém avaliou fica fora da conta de todo mundo.
+      </div>
+    </div>
+
+    <div id="bolaoConteudo"><div class="empty-note">Carregando...</div></div>`);
+
+  const elEstado = document.getElementById('bolaoEstado');
+  const elConteudo = document.getElementById('bolaoConteudo');
+
+  /* ---- faixa de estado, com contador quando há prazo à vista ---- */
+  function pintarEstado(){
+    if(!eb.liberado){
+      elEstado.innerHTML = `<div class="bolao-locked">🔒 O bolão abre em <b>${fmtData(eb.abre)}</b>, junto com o "Monte o Seu".
+        ${eb.abre ? `<div class="grid-countdown-box" style="margin-top:10px;"><div class="lbl">Abre em</div><div class="val" data-count-to="${eb.abre.toISOString()}" data-reload="1">--:--:--</div></div>` : ''}</div>`;
+    } else if(eb.aberto){
+      elEstado.innerHTML = `<div class="bolao-aberto">✅ <b>Palpites abertos.</b> Dá pra ajustar quantas vezes quiser até o prazo.
+        ${eb.fecha ? `<div class="grid-countdown-box" style="margin-top:10px;"><div class="lbl">Fecha em</div><div class="val" data-count-to="${eb.fecha.toISOString()}" data-reload="1">--:--:--</div></div>` : ''}</div>`;
+    } else {
+      elEstado.innerHTML = `<div class="bolao-locked">🔒 <b>Palpites travados</b> desde ${fmtData(eb.fecha)}.
+        O placar se completa conforme as notas de cada peça vão saindo.</div>`;
+    }
+  }
+  pintarEstado();
+
+  /* ---- aberto: grade de palpite (todas as peças, obrigatório preencher) ---- */
+  function renderFormulario(sess){
+    const chaveLocal = `cetec-bolao-${ANO}-${sess.user.toLowerCase()}`;
+    let vals = {};
+    try{ vals = JSON.parse(localStorage.getItem(chaveLocal) || '{}'); }catch(e){ vals = {}; }
+    const chaves = chavesDaEdicao();
+
+    elConteudo.innerHTML = `<div class="section">
+      <h2>Seu palpite</h2>
+      <div class="sub">Preencha <b>todas as ${chaves.length} peças</b> — palpite pela metade não vale.
+        As notas vão de 0 a ${NOTA_MAXIMA}, com uma casa decimal.</div>
+      <div class="grid-panel bolao-grid" id="bolaoGridPanel"></div>
+      <div class="bolao-actions">
+        <div class="bolao-msg" id="bolaoMsg"></div>
+        <button class="submit-btn" id="bolaoSalvar" disabled>Salvar palpite</button>
+      </div>
+    </div>`;
+
+    /* grade destravada de propósito: o prazo acaba ANTES da primeira noite,
+       então travar por noite liberada deixaria tudo inacessível */
+    let g = `<div class="grid-row"><div class="cell label"></div>`;
+    for(let s = 1; s <= NUM_NOITES; s++) g += `<div class="cell header">S${s}</div>`;
+    g += `</div>`;
+    for(let e = 1; e <= MAX_EPS; e++){
+      g += `<div class="grid-row"><div class="cell label">E${e}</div>`;
+      for(let s = 1; s <= NUM_NOITES; s++){
+        if(e > epsDaNoite(s)){ g += `<div class="cell cell-void"></div>`; continue; }
+        const key = `s${s}e${e}`;
+        const v = vals[key];
+        g += `<div class="cell cell-input" id="bcell-${key}" title="${esc(tituloDaPeca(s, e))}" style="${v !== undefined ? `background-color:${corDaNota(v)}` : ''}">
+          <input type="number" min="0" max="${NOTA_MAXIMA}" step="0.1" placeholder="?" data-key="${key}" value="${v !== undefined ? v : ''}">
+        </div>`;
+      }
+      g += `</div>`;
+    }
+    document.getElementById('bolaoGridPanel').innerHTML = g;
+
+    const msg = document.getElementById('bolaoMsg');
+    const btn = document.getElementById('bolaoSalvar');
+    function revisar(){
+      const faltam = chaves.filter(k => vals[k] === undefined).length;
+      btn.disabled = faltam > 0;
+      msg.innerHTML = faltam
+        ? `Falta${faltam === 1 ? '' : 'm'} <b>${faltam}</b> de ${chaves.length} peça${faltam === 1 ? '' : 's'}.`
+        : `Tudo preenchido — <b>${chaves.length} peças</b>. Pode salvar!`;
+    }
+    revisar();
+
+    elConteudo.querySelectorAll('.cell-input input').forEach(inp => inp.addEventListener('input', () => {
+      const key = inp.dataset.key;
+      const cell = document.getElementById(`bcell-${key}`);
+      if(inp.value === ''){ delete vals[key]; cell.style.backgroundColor = 'var(--surface-2)'; revisar(); return; }
+      let v = parseFloat(inp.value);
+      if(isNaN(v)) return;
+      if(v > NOTA_MAXIMA){ v = NOTA_MAXIMA; inp.value = NOTA_MAXIMA; }
+      if(v < 0){ v = 0; inp.value = 0; }
+      vals[key] = v;
+      cell.style.backgroundColor = corDaNota(v);
+      revisar();
+    }));
+
+    btn.addEventListener('click', async () => {
+      const orig = btn.textContent;
+      btn.disabled = true;
+      btn.innerHTML = '<span class="spinner"></span>Salvando...';
+      const r = await apiEnviarPalpite(ANO, vals);
+      btn.textContent = orig;
+      if(r && r.ok){
+        try{ localStorage.setItem(chaveLocal, JSON.stringify(vals)); }catch(e){}
+        msg.innerHTML = 'Palpite salvo ✓ — dá pra ajustar até o prazo fechar.';
+        btn.disabled = false;
+      } else {
+        msg.textContent = (r && r.error) ? r.error : 'Não foi possível salvar. Tente de novo.';
+        revisar();
+      }
+    });
+  }
+
+  /* ---- travado: placar + a sua comparação peça a peça ---- */
+  async function renderApuracao(){
+    const [dados, meu] = await Promise.all([ fetchPlacarBolao(ANO, true), fetchMeuPalpite(ANO) ]);
+    const placar = (dados && dados.placar) ? dados.placar : [];
+    const sess = usuarioLogado();
+    const meuNome = sess ? sess.user.trim().toLowerCase() : null;
+
+    let html = '';
+
+    if(!placar.length){
+      html += `<div class="section"><h2>🏆 Placar</h2>
+        <div class="empty-note">${(dados && dados.pecasApuradas)
+          ? 'Ninguém palpitou nesta edição.'
+          : 'Nenhuma peça tem nota ainda — o placar começa a se formar assim que as avaliações chegarem.'}</div></div>`;
+    } else {
+      const medalha = p => p === 1 ? '🥇' : p === 2 ? '🥈' : p === 3 ? '🥉' : '•';
+      const lider = placar[0];
+      html += `<div class="section">
+        <h2>🏆 Placar</h2>
+        <div class="sub">${placar.length} participante${placar.length === 1 ? '' : 's'} ·
+          ${dados.pecasApuradas} peça${dados.pecasApuradas === 1 ? '' : 's'} apurada${dados.pecasApuradas === 1 ? '' : 's'}
+          · máximo possível até aqui: <b>${dados.pecasApuradas * BOLAO_PONTOS_MAX}</b> pontos</div>
+        <div class="bolao-lider">👑 Líder: <b>${esc(lider.user)}</b> com <b>${lider.pontos}</b> ponto${lider.pontos === 1 ? '' : 's'}</div>
+        <div class="record-list">${placar.slice(0, 20).map(r => {
+          const eu = meuNome && String(r.user).trim().toLowerCase() === meuNome;
+          return `<div class="record-item${eu ? ' bolao-eu' : ''}">
+            <span class="rec-emoji">${medalha(r.pos)}</span>
+            <div><div class="rec-title">${r.pos}º · ${esc(r.user)}${eu ? ' (você)' : ''}</div>
+            <div class="rec-text"><b style="color:var(--gold)">${r.pontos}</b> pontos · ${r.cravadas} cravada${r.cravadas === 1 ? '' : 's'} · erro médio ${r.erroMedio.toFixed(2)}</div></div>
+          </div>`;
+        }).join('')}</div>
+      </div>`;
+    }
+
+    /* comparação pessoal: palpite × nota oficial, peça a peça */
+    if(!sess){
+      html += `<div class="section"><h2>Seu palpite</h2>
+        <div class="bolao-login"><span>Entre para ver como você foi neste bolão.</span>
+        <button class="btn btn-solid" id="bolaoEntrar">Entrar / Criar conta</button></div></div>`;
+    } else if(meu && meu.temPalpite){
+      html += `<div class="section"><h2>Você × resultado oficial</h2>
+        <div class="sub">Seu palpite ao lado da nota que a peça realmente tirou, e o que aquilo rendeu.</div>
+        ${htmlComparacaoBolao(meu.palpites, meu.medias, meu.pontos)}</div>`;
+    } else {
+      html += `<div class="section"><h2>Seu palpite</h2>
+        <div class="empty-note">Você não palpitou nesta edição.</div></div>`;
+    }
+
+    elConteudo.innerHTML = html;
+    const be = document.getElementById('bolaoEntrar');
+    if(be) be.addEventListener('click', () => { const e = document.getElementById('btnEntrar'); if(e) e.click(); });
+  }
+
+  if(!eb.liberado){
+    elConteudo.innerHTML = `<div class="section"><div class="empty-note">Volte quando o bolão abrir para dar o seu palpite.</div></div>`;
+    return;
+  }
+  if(eb.aberto){
+    const sess = usuarioLogado();
+    if(!sess){
+      elConteudo.innerHTML = `<div class="section"><h2>Seu palpite</h2>
+        <div class="bolao-login"><span>Entre para palpitar no bolão.</span>
+        <button class="btn btn-solid" id="bolaoEntrar">Entrar / Criar conta</button></div></div>`;
+      const be = document.getElementById('bolaoEntrar');
+      if(be) be.addEventListener('click', () => { const e = document.getElementById('btnEntrar'); if(e) e.click(); });
+      return;
+    }
+    renderFormulario(sess);
+    return;
+  }
+  await renderApuracao();
+  /* a apuração muda conforme as notas chegam — mas só com a aba à vista */
+  intervaloVisivel(renderApuracao, 30000);
+}
+
+/* grade "palpite × real" reaproveitada pelo bolão e pelo perfil */
+function htmlComparacaoBolao(palpites, medias, pontos){
+  const pal = palpites || {}, med = medias || {}, pts = pontos || {};
+  const chaves = Object.keys(pal).sort((a, b) => {
+    const pa = /^s(\d+)e(\d+)$/.exec(a), pb = /^s(\d+)e(\d+)$/.exec(b);
+    if(!pa || !pb) return a.localeCompare(b);
+    return (Number(pa[1]) - Number(pb[1])) || (Number(pa[2]) - Number(pb[2]));
+  });
+  if(!chaves.length) return '<div class="empty-note">Sem palpites registrados.</div>';
+
+  const total = chaves.reduce((a, k) => a + (Number(pts[k]) || 0), 0);
+  const apuradas = chaves.filter(k => med[k] !== undefined).length;
+
+  const linhas = chaves.map(k => {
+    const m = /^s(\d+)e(\d+)$/.exec(k);
+    const nome = m ? tituloDaPecaSeguro(Number(m[1]), Number(m[2])) : k;
+    const p = Number(pal[k]);
+    const r = med[k];
+    const pt = Number(pts[k]) || 0;
+    const semNota = (r === undefined);
+    return `<div class="bcomp-linha">
+      <div class="bcomp-nome">${esc(nome)}</div>
+      <div class="bcomp-vals">
+        <span class="bcomp-chip" style="background:${corDaNota(p)}">${p.toFixed(1)}</span>
+        <span class="bcomp-seta">→</span>
+        ${semNota
+          ? '<span class="bcomp-chip vazio">sem nota</span>'
+          : `<span class="bcomp-chip" style="background:${corDaNota(r)}">${Number(r).toFixed(1)}</span>`}
+        <span class="bcomp-pts${pt === BOLAO_PONTOS_MAX ? ' cravou' : ''}${semNota ? ' vazio' : ''}">${semNota ? '–' : '+' + pt}</span>
+      </div>
+    </div>`;
+  }).join('');
+
+  return `<div class="bcomp-total">Total: <b>${total}</b> ponto${total === 1 ? '' : 's'} em ${apuradas} peça${apuradas === 1 ? '' : 's'} apurada${apuradas === 1 ? '' : 's'}</div>
+    <div class="bcomp">${linhas}</div>`;
+}
+/* o perfil abre bolões de OUTROS anos, onde o NOITES daquela edição não está
+   carregado — aí o nome da peça vira o rótulo genérico em vez de quebrar */
+function tituloDaPecaSeguro(s, e){
+  try{ return tituloDaPeca(s, e); }catch(err){ return `Noite ${s} · Episódio ${e}`; }
 }
 
 /* =====================================================================
@@ -4559,15 +4852,16 @@ async function paginaHall(){
       return { nome: r.nome, eps: r.eps, festivais: r.anos.size, streak: best, media: media(r.notas) };
     });
 
-    /* bolões vencidos (1º lugar por menor erro médio) */
-    const palAnos = await Promise.all(anos.map(async y => ({ y, pal: await fetchPalpites(y) })));
+    /* bolões vencidos — o ranking agora vem pronto do servidor (o cliente não
+       enxerga mais palpite alheio). Empate no 1º lugar dá vitória aos dois. */
+    const placares = await Promise.all(anos.map(y => fetchPlacarBolao(y)));
     const wins = {};
-    palAnos.forEach(o => {
-      if(!o.pal.length) return;
-      const acc = {}; (votos[o.y] || []).forEach(s => Object.keys(s.grid).forEach(k => { const v = Number(s.grid[k]); if(!isNaN(v)) (acc[k] = acc[k] || []).push(v); }));
-      const real = {}; Object.keys(acc).forEach(k => real[k] = media(acc[k]));
-      const rank = o.pal.map(p => { let so = 0, n = 0; Object.keys(p.palpites || {}).forEach(k => { if(real[k] !== undefined){ so += Math.abs(Number(p.palpites[k]) - real[k]); n++; } }); return { user: String(p.user), err: n ? so / n : Infinity, n }; }).filter(r => r.n > 0).sort((a,b) => a.err - b.err);
-      if(rank.length){ const w = rank[0].user.toLowerCase(); wins[w] = (wins[w] || 0) + 1; }
+    placares.forEach(d => {
+      if(!d || !d.placar || !d.placar.length) return;
+      d.placar.filter(r => r.pos === 1).forEach(r => {
+        const w = String(r.user).toLowerCase();
+        wins[w] = (wins[w] || 0) + 1;
+      });
     });
     const winList = Object.keys(wins).map(k => ({ nome: (U[k] && U[k].nome) || k, wins: wins[k] }));
 
@@ -4949,6 +5243,31 @@ function catalogoBadges(ctx){
   ctx.reais.map(e => e.ano).sort((a,b) => b - a).forEach(ano => {
     cat.push({ emoji: '🎖️', titulo: `Veterano de ${ano}`, texto: `Avaliar peças da edição ${ano}`, unlocked: ctx.anosSet.has(ano), cat: 'Presença' });
   });
+
+  /* dinâmicas: pódio do bolão de cada edição que teve bolão. Igual às
+     Veterano, nascem da lista de edições cruzada com o resultado apurado —
+     automáticas e retroativas, nada salvo no banco.
+
+     Só entram os anos que REALMENTE tiveram bolão: com 15 edições, gerar as
+     três colocações pra todas encheria o catálogo de 45 badges mortas e
+     ainda estragaria a conta do "Colecionador". */
+  const PODIO_BOLAO = [
+    { pos: 1, emoji: '🥇', nome: 'Campeão do bolão' },
+    { pos: 2, emoji: '🥈', nome: 'Vice do bolão' },
+    { pos: 3, emoji: '🥉', nome: 'Terceiro no bolão' }
+  ];
+  const posBolao = ctx.bolaoPos || {};
+  (ctx.anosComBolao || []).slice().sort((a, b) => b - a).forEach(ano => {
+    PODIO_BOLAO.forEach(p => {
+      cat.push({
+        emoji: p.emoji,
+        titulo: `${p.nome} ${ano}`,
+        texto: `Terminar em ${p.pos}º lugar no bolão de ${ano}`,
+        unlocked: posBolao[ano] === p.pos,
+        cat: 'Bolão'
+      });
+    });
+  });
   const S = (emoji, titulo, texto, cond, categoria) => cat.push({ emoji, titulo, texto, unlocked: !!cond, cat: categoria });
   /* Histórico e Presença */
   S('🎬','Primeira Curtain Call','Fazer login e enviar a sua primeira review', ctx.total >= 1, 'Presença');
@@ -5002,7 +5321,10 @@ function catalogoBadges(ctx){
    teste de verdade — campo ausente vira `false`, ou seja, badge bloqueada. */
 function catalogoBadgesPublico(){
   const reais = (typeof EDICOES !== 'undefined' ? EDICOES : []).filter(e => !e.emBreve);
-  return catalogoBadges({ reais, anosSet: new Set() });
+  /* pro pódio aparecer na vitrine, listamos os anos que TÊM bolão
+     configurado — sem precisar apurar resultado nenhum aqui */
+  const anosComBolao = reais.filter(e => e.bolao).map(e => e.ano);
+  return catalogoBadges({ reais, anosSet: new Set(), anosComBolao, bolaoPos: {} });
 }
 
 /* ---------------------------------------------------------------------
@@ -5446,50 +5768,69 @@ async function paginaPerfil(){
     const globalNotas = []; todosSubs.forEach(s => Object.values(s.grid).forEach(v => { const x = Number(v); if(!isNaN(x)) globalNotas.push(x); }));
     const globalAvg = media(globalNotas);
 
-    /* ---- bolão por episódio ---- */
-    const palpitesPorAno = await Promise.all(porAno.map(async o => ({ ano: o.ano, subs: o.subs, pal: await fetchPalpites(o.ano) })));
+    /* ---- bolão ----
+       O placar agora vem calculado do servidor: palpite de terceiro não sai
+       de lá, então os sinais que dependiam de ver a grade dos outros
+       (Visionário, por exemplo) chegam prontos junto do ranking.
+       A comparação peça a peça só monta no PRÓPRIO perfil — ela precisa do
+       token do dono pra buscar o palpite. */
+    const placares = await Promise.all(porAno.map(o => fetchPlacarBolao(o.ano)));
     const bolaoRes = [];
     let oraculo = false, apostaRisco = false, calculoExato = false, visionario = false;
-    palpitesPorAno.forEach(o => {
-      if(!o.pal.length) return;
-      const realPorKey = {};
-      for(const id in epStats){ if(id.indexOf(o.ano + '|') === 0) realPorKey[id.split('|')[1]] = epStats[id].avg; }
-      if(!Object.keys(realPorKey).length) return;
-      const rank = o.pal.map(p => {
-        let soma = 0, n = 0;
-        Object.keys(p.palpites || {}).forEach(k => { if(realPorKey[k] !== undefined){ soma += Math.abs(Number(p.palpites[k]) - realPorKey[k]); n++; } });
-        return { user: String(p.user), erroMedio: n ? soma / n : Infinity, n };
-      }).filter(r => r.n > 0).sort((a,b) => a.erroMedio - b.erroMedio);
-      const idx = rank.findIndex(r => r.user.trim().toLowerCase() === alvo);
-      if(idx >= 0) bolaoRes.push({ ano: o.ano, pos: idx + 1, total: rank.length, erroMedio: rank[idx].erroMedio, n: rank[idx].n });
-      /* sinais finos do dono do perfil */
-      const meuPal = o.pal.find(p => String(p.user).trim().toLowerCase() === alvo);
-      if(meuPal && meuPal.palpites){
-        const nOuro = noiteOuro[o.ano];
-        let somaO = 0, nO = 0;
-        Object.keys(meuPal.palpites).forEach(k => {
-          if(realPorKey[k] === undefined) return;
-          const pal = Number(meuPal.palpites[k]);
-          const err = Math.abs(pal - realPorKey[k]);
-          if(err < 0.05) oraculo = true;
-          if((pal <= 2 || pal >= 9) && err < 0.5) apostaRisco = true;
-          const m = k.match(/^s(\d+)e\d+$/);
-          if(m && Number(m[1]) === nOuro){ somaO += err; nO++; }
-          let melhor = Infinity; o.pal.forEach(p => { const pv = Number((p.palpites || {})[k]); if(!isNaN(pv)){ const er = Math.abs(pv - realPorKey[k]); if(er < melhor) melhor = er; } });
-          if(o.pal.length >= 3 && err <= melhor + 1e-9) visionario = true;
-        });
-        if(nO && somaO / nO < 0.1) calculoExato = true;
-      }
+    placares.forEach((d, i) => {
+      if(!d || !d.placar || !d.placar.length) return;
+      const ano = porAno[i].ano;
+      const linha = d.placar.find(r => String(r.user).trim().toLowerCase() === alvoMatch);
+      if(!linha) return;
+      bolaoRes.push({
+        ano, pos: linha.pos, total: d.placar.length,
+        pontos: linha.pontos, apuradas: linha.apuradas,
+        cravadas: linha.cravadas, erroMedio: linha.erroMedio
+      });
+      if(linha.oraculo)      oraculo = true;
+      if(linha.apostaRisco)  apostaRisco = true;
+      if(linha.visionario)   visionario = true;
+      if(linha.calculoExato) calculoExato = true;
     });
     bolaoRes.sort((a,b) => b.ano - a.ano);
+
     const bEl = document.getElementById('perfilBolao');
     if(bEl) bEl.innerHTML = bolaoRes.length
       ? bolaoRes.map(b => {
           const medal = b.pos === 1 ? '🥇' : b.pos === 2 ? '🥈' : b.pos === 3 ? '🥉' : '🔮';
-          return htmlItemSimples({ emoji: medal, titulo: `Bolão ${b.ano} — ${b.pos}º de ${b.total}`,
-            texto: `Erro médio ${b.erroMedio.toFixed(2)} em ${b.n} episódio${b.n === 1 ? '' : 's'}` });
+          const max = b.apuradas * BOLAO_PONTOS_MAX;
+          return `<div class="record-item bolao-linha${ehMeu ? ' clicavel' : ''}" data-bolao-ano="${b.ano}">
+            <span class="rec-emoji">${medal}</span>
+            <div style="flex:1;">
+              <div class="rec-title">Bolão ${b.ano} — ${b.pos}º de ${b.total}</div>
+              <div class="rec-text"><b style="color:var(--gold)">${b.pontos}</b> de ${max} pontos ·
+                ${b.cravadas} cravada${b.cravadas === 1 ? '' : 's'} · erro médio ${b.erroMedio.toFixed(2)}</div>
+              <div class="bolao-detalhe" id="bolaoDet-${b.ano}" hidden></div>
+            </div>
+            ${ehMeu ? '<span class="chevron">▾</span>' : ''}
+          </div>`;
         }).join('')
-      : `<div class="empty-note">${ehMeu ? 'Você ainda não palpitou. Entre no bolão de uma edição com votação aberta e tente prever as notas — dá badge.' : 'Sem palpites de bolão ainda.'}</div>`;
+      : `<div class="empty-note">${ehMeu ? 'Você ainda não palpitou. Entre no bolão de uma edição aberta e tente prever as notas — dá badge.' : 'Sem palpites de bolão ainda.'}</div>`;
+
+    /* clicar numa linha abre a comparação com o resultado oficial */
+    if(bEl && ehMeu) bEl.querySelectorAll('.bolao-linha.clicavel').forEach(el => {
+      el.addEventListener('click', async () => {
+        const ano = Number(el.dataset.bolaoAno);
+        const det = document.getElementById('bolaoDet-' + ano);
+        if(!det) return;
+        const abrir = det.hasAttribute('hidden');
+        el.classList.toggle('aberto', abrir);
+        if(!abrir){ det.setAttribute('hidden', ''); return; }
+        det.removeAttribute('hidden');
+        if(det.dataset.pronto) return;                 // já carregado antes
+        det.innerHTML = '<div class="empty-note">Carregando...</div>';
+        const meu = await fetchMeuPalpite(ano);
+        det.innerHTML = (meu && meu.temPalpite)
+          ? htmlComparacaoBolao(meu.palpites, meu.medias, meu.pontos)
+          : '<div class="empty-note">Não foi possível carregar o seu palpite.</div>';
+        det.dataset.pronto = '1';
+      });
+    });
 
     /* ---- sinais de comportamento (badges) ---- */
     let maratonaNoturna = false, polemicoNoite = false, selopurista = false, revelacao = false, gostoPeculiar = 0, caos = false, dedoPodre = false, noiteOuroAv = false;
@@ -5536,6 +5877,10 @@ async function paginaPerfil(){
       oraculo, apostaRisco, calculoExato, visionario,
       bolaCristal: bolaoRes.some(b => b.pos <= 3),
       participouBolao: bolaoRes.length,
+      /* pódio do bolão: quais anos tiveram bolão apurado e em que lugar a
+         pessoa ficou em cada um — vira "Campeão do bolão 2026" e afins */
+      anosComBolao: placares.map((d, i) => (d && d.placar && d.placar.length) ? porAno[i].ano : null).filter(Boolean),
+      bolaoPos: bolaoRes.reduce((m, b) => { m[b.ano] = b.pos; return m; }, {}),
       lenda: (nivel.nivel >= metaPerfil('lendaNivel', 5) && edicoesComVotos.length > 0 && edicoesComVotos.every(y => anosPart.includes(y)))
     };
     /* ---- exceções do admin -------------------------------------------
@@ -6908,6 +7253,7 @@ switch(PAGINA.tipo){
   case 'resumo':   paginaResumo(); break;
   case 'noite':    paginaNoite(PAGINA.noite); break;
   case 'monte':    paginaMonte(); break;
+  case 'bolao':    paginaBolao(); break;
   case 'hall':     paginaHall(); break;
   case 'home':     paginaHome(); break;
   case 'emBreve':  paginaEmBreve(); break;

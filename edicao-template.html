@@ -25,6 +25,7 @@
   else if(_f === 'sobre') PAGINA = { tipo: 'sobre', ano: Number(_ano) };
   else if(_f === 'abertura') PAGINA = { tipo: 'abertura', ano: Number(_ano) };
   else if(_f === 'monte') PAGINA = { tipo: 'monte', ano: Number(_ano) };
+  else if(_f === 'bolao') PAGINA = { tipo: 'bolao', ano: Number(_ano) };
   else if(/^noite-\d+$/.test(_f)) PAGINA = { tipo: 'noite', noite: Number(_f.split('-')[1]), ano: Number(_ano) };
   else PAGINA = { tipo: 'edicao', ano: Number(_ano) };
 </script>
