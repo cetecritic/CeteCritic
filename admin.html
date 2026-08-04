@@ -62,6 +62,27 @@
   .u-tags{ display:inline-flex; gap:4px; flex-wrap:wrap; vertical-align:middle; margin-left:4px; }
   .pill{ font-size:10px; font-weight:800; border-radius:20px; padding:1px 8px; color:#fff; }
 
+  /* ---- votos expansíveis (aba Conteúdo → Votos) ----
+     .ed-item é uma linha horizontal (space-between) e não comporta o painel
+     de detalhe embaixo, por isso os votos têm o próprio bloco. */
+  .v-item{ border-bottom:1px solid var(--border); padding:8px 0; }
+  .v-item:last-child{ border-bottom:0; }
+  .v-head{ display:flex; align-items:center; gap:10px; }
+  .v-exp{ background:transparent; border:0; color:var(--muted); cursor:pointer;
+          font-size:12px; padding:2px 5px; width:auto; line-height:1; }
+  .v-item.aberto .v-exp{ color:var(--gold); }
+  .v-info{ flex:1; min-width:0; }
+  .v-sub{ color:var(--muted); font-size:11.5px; }
+  .v-det{ margin:10px 0 2px 32px; padding:10px; background:var(--surface2); border-radius:8px; }
+  .v-noite{ margin-bottom:10px; }
+  .v-noite-lbl{ font-size:11px; font-weight:800; color:var(--muted); margin-bottom:4px; }
+  .v-notas{ display:flex; gap:8px; flex-wrap:wrap; }
+  .v-nota{ font-size:11px; color:var(--muted); display:flex; flex-direction:column; gap:2px; }
+  .v-nota input{ width:64px; padding:4px 6px; font-size:12px; }
+  .v-anon{ background:#6b7280; }
+  .v-conta{ background:#2563eb; }
+  .v-digitado{ background:#7c3aed; }
+
   /* ---- modal do usuário ---- */
   .modal-bg{ position:fixed; inset:0; background:rgba(0,0,0,.72); z-index:200; display:flex;
              align-items:flex-start; justify-content:center; padding:24px 14px; overflow:auto; }
@@ -337,10 +358,11 @@
     <!-- MODERAR / EXCLUIR NOTAS -->
     <div class="card" id="secVotos" data-papel="admin">
       <h2>🗑️ Excluir notas (votos)</h2>
-      <p class="sub" style="margin:0 0 10px;">Filtre e apague votos. Deixe um filtro vazio pra ignorá-lo. Noite + episódio localizam a nota daquela peça.</p>
+      <p class="sub" style="margin:0 0 10px;">Filtre, veja e apague votos. Deixe um filtro vazio pra ignorá-lo. Noite + episódio localizam a nota daquela peça.
+        Clique na setinha (▸) de um voto pra abrir as notas e a data do envio.</p>
       <div class="row3">
         <div><label>Edição (ano)</label><input id="vfAno" type="number" placeholder="ex: 2026"></div>
-        <div><label>Usuário</label><input id="vfUser" type="text" placeholder="ex: maria"></div>
+        <div><label>Usuário ou nome</label><input id="vfUser" type="text" placeholder="conta ou nome digitado"></div>
         <div><label>Nota</label><input id="vfNota" type="number" step="0.1" placeholder="ex: 10"></div>
       </div>
       <div class="row2">
@@ -1867,6 +1889,30 @@ $('buscaAdmin').addEventListener('input', () => {
 
 /* ---------- MODERAR / EXCLUIR VOTOS ---------- */
 let VOTOS = [];
+let VOTOS_HIST_OK = true;      // banco já tem as colunas usuario_antigo/name_antigo?
+const VOTOS_ABERTOS = new Set();   // row_ids expandidos — sobrevive ao re-render
+
+const vData = ms => {
+  const n = Number(ms);
+  if(!n) return 'data desconhecida';
+  const d = new Date(n);
+  return isNaN(d) ? 'data desconhecida' : d.toLocaleString('pt-BR');
+};
+
+/* Quem é o autor do voto, na ordem em que importa:
+     usuario  -> votou logado, o voto conta no perfil dela
+     name     -> votou sem conta, só digitou o nome no formulário
+     nenhum   -> anônimo de verdade
+   O painel antigo só olhava `usuario`, por isso TODO voto sem login aparecia
+   como "(anônimo)" mesmo com o nome preenchido. */
+function autorDoVoto(v){
+  const conta = String(v.usuario || '').trim();
+  if(conta) return { nome: conta, tipo: 'conta', pill: 'CONTA', cls: 'v-conta' };
+  const digitado = String(v.name || '').trim();
+  if(digitado) return { nome: digitado, tipo: 'digitado', pill: 'NOME DIGITADO', cls: 'v-digitado' };
+  return { nome: '(anônimo)', tipo: 'anonimo', pill: 'ANÔNIMO', cls: 'v-anon' };
+}
+
 async function buscarVotos(){
   $('vMsg').textContent = 'Buscando…';
   const r = await post('listarVotos', {
@@ -1874,23 +1920,86 @@ async function buscarVotos(){
     noite: $('vfNoite').value.trim(), episodio: $('vfEp').value.trim(), nota: $('vfNota').value.trim()
   });
   VOTOS = (r && r.votos) || [];
-  if(r && r.ok) $('vMsg').textContent = r.total + ' voto(s)' + (r.total > VOTOS.length ? ' (mostrando ' + VOTOS.length + ')' : '');
-  else $('vMsg').textContent = 'Erro: ' + ((r&&r.error)||'');
+  VOTOS_HIST_OK = !(r && r.historicoDisponivel === false);
+  VOTOS_ABERTOS.clear();
+  if(r && r.ok){
+    $('vMsg').textContent = r.total + ' voto(s)' + (r.total > VOTOS.length ? ' (mostrando ' + VOTOS.length + ')' : '')
+      + (VOTOS_HIST_OK ? '' : ' · ⚠️ rode a migração no Supabase pra poder tirar nomes');
+  } else {
+    $('vMsg').textContent = 'Erro: ' + ((r&&r.error)||'');
+  }
   renderVotos();
 }
+
+/* grade do voto agrupada por noite. `editavel` false = só leitura (moderador) */
+function gradeDoVotoHtml(v, editavel){
+  const grid = (v.grid && typeof v.grid === 'object') ? v.grid : {};
+  const porNoite = {};
+  Object.keys(grid).forEach(k => {
+    const m = /^s(\d+)e(\d+)$/i.exec(k);
+    const noite = m ? Number(m[1]) : 0;      // chave fora do padrão cai no grupo 0
+    (porNoite[noite] = porNoite[noite] || []).push({ k, ep: m ? Number(m[2]) : 0 });
+  });
+  const noites = Object.keys(porNoite).map(Number).sort((a,b) => a-b);
+  if(!noites.length) return '<div class="m-vazio" style="font-size:12px;">Este voto não tem notas.</div>';
+
+  return noites.map(n => {
+    const itens = porNoite[n].sort((a,b) => a.ep - b.ep).map(x =>
+      `<label class="v-nota">${x.ep ? ('Ep. ' + x.ep) : escH(x.k)}
+         <input type="number" min="0" max="10" step="0.5" data-k="${escH(x.k)}"
+                value="${escH(String(grid[x.k]))}"${editavel ? '' : ' disabled'}>
+       </label>`).join('');
+    return `<div class="v-noite">
+      <div class="v-noite-lbl">${n ? ('NOITE ' + n) : 'OUTRAS CHAVES'}</div>
+      <div class="v-notas">${itens}</div>
+    </div>`;
+  }).join('');
+}
+
 function renderVotos(){
   const box = $('vLista');
   if(!VOTOS.length){ box.innerHTML = '<div class="msg">Nenhum voto com esses filtros.</div>'; return; }
+  /* No servidor, só `listarVotos` é liberado pro moderador — editar, apagar e
+     tirar nome são de admin. Esconder os botões evita oferecer uma ação que
+     sempre voltaria "seu papel não permite". */
+  const podeAlterar = ehAdmin();
+
   box.innerHTML =
-    `<div class="toolbar" style="align-items:center;">
-       <label style="font-size:12px;display:flex;align-items:center;gap:6px;"><input type="checkbox" id="vMarcarTodos" style="width:auto;"> marcar todos</label>
-       <button class="danger small" id="btnDelSelec">Excluir selecionados (0)</button>
-       <button class="danger small" id="btnDelTodos">Excluir os ${VOTOS.length} mostrados</button>
-     </div>` +
-    VOTOS.map(v => `<div class="ed-item">
-      <div style="display:flex;align-items:center;gap:10px;"><input type="checkbox" class="v-chk" data-rid="${v.row_id}" style="width:auto;">
-        <div><b>${escH(v.usuario)}</b> <span style="color:var(--muted);font-size:12px;">· ${v.year}${v.nota != null ? (' · nota <b style="color:var(--gold)">' + v.nota + '</b>') : ''} · ${v.notas} nota(s) neste voto</span></div></div>
-      <button class="danger small" data-rid="${v.row_id}">Excluir</button></div>`).join('');
+    (podeAlterar
+      ? `<div class="toolbar" style="align-items:center;">
+           <label style="font-size:12px;display:flex;align-items:center;gap:6px;"><input type="checkbox" id="vMarcarTodos" style="width:auto;"> marcar todos</label>
+           <button class="danger small" id="btnDelSelec">Excluir selecionados (0)</button>
+           <button class="danger small" id="btnDelTodos">Excluir os ${VOTOS.length} mostrados</button>
+         </div>`
+      : `<div class="msg">Seu papel permite consultar os votos, mas não alterá-los.</div>`) +
+    VOTOS.map(v => {
+      const a = autorDoVoto(v);
+      const rid = escH(String(v.row_id));
+      const aberto = VOTOS_ABERTOS.has(String(v.row_id));
+      const guardado = String(v.nomeGuardado || '').trim();
+      return `<div class="v-item${aberto ? ' aberto' : ''}" data-rid="${rid}">
+        <div class="v-head">
+          ${podeAlterar ? `<input type="checkbox" class="v-chk" data-rid="${rid}" style="width:auto;">` : ''}
+          <button class="v-exp" data-exp="${rid}" title="Ver as notas deste voto" aria-expanded="${aberto}">${aberto ? '▾' : '▸'}</button>
+          <div class="v-info">
+            <b>${escH(a.nome)}</b> <span class="pill ${a.cls}">${a.pill}</span>
+            ${guardado ? `<span class="pill v-anon" title="Nome removido pela moderação: ${escH(guardado)}">NOME REMOVIDO</span>` : ''}
+            <div class="v-sub">Festival ${escH(String(v.year))} · ${vData(v.ts)} · ${v.notas} nota(s)${v.nota != null ? ' · nota filtrada <b style="color:var(--gold)">' + escH(String(v.nota)) + '</b>' : ''}</div>
+          </div>
+          ${podeAlterar ? `<button class="danger small" data-del="${rid}">Excluir</button>` : ''}
+        </div>
+        <div class="v-det" data-det="${rid}"${aberto ? '' : ' hidden'}>
+          ${gradeDoVotoHtml(v, podeAlterar)}
+          ${podeAlterar ? `<div class="toolbar" style="margin-top:4px;">
+            <button class="ghost small" data-salvar="${rid}">Salvar notas</button>
+            ${guardado
+              ? `<button class="ghost small" data-restaurar="${rid}">Restaurar nome (${escH(guardado)})</button>`
+              : (a.tipo === 'anonimo' ? '' : `<button class="ghost small" data-anon="${rid}">Tirar o nome</button>`)}
+          </div>` : ''}
+        </div>
+      </div>`;
+    }).join('');
+
   const atualizarContador = () => {
     const n = box.querySelectorAll('.v-chk:checked').length;
     const bs = $('btnDelSelec'); if(bs) bs.textContent = 'Excluir selecionados (' + n + ')';
@@ -1898,12 +2007,91 @@ function renderVotos(){
   box.querySelectorAll('.v-chk').forEach(c => c.addEventListener('change', atualizarContador));
   const marcarTodos = $('vMarcarTodos');
   if(marcarTodos) marcarTodos.addEventListener('change', () => { box.querySelectorAll('.v-chk').forEach(c => c.checked = marcarTodos.checked); atualizarContador(); });
-  box.querySelectorAll('button[data-rid]').forEach(b => b.onclick = async () => {
-    if(!confirm('Excluir este voto? (apaga a linha inteira daquele envio)')) return;
-    await post('deletarVotos', { row_ids: [Number(b.dataset.rid)] });
-    VOTOS = VOTOS.filter(v => String(v.row_id) !== b.dataset.rid); renderVotos();
+
+  /* expandir / recolher */
+  box.querySelectorAll('[data-exp]').forEach(b => b.onclick = () => {
+    const rid = b.dataset.exp;
+    const item = box.querySelector(`.v-item[data-rid="${rid}"]`);
+    const det  = box.querySelector(`[data-det="${rid}"]`);
+    if(!item || !det) return;
+    const abrir = det.hasAttribute('hidden');
+    if(abrir){ det.removeAttribute('hidden'); VOTOS_ABERTOS.add(rid); }
+    else { det.setAttribute('hidden', ''); VOTOS_ABERTOS.delete(rid); }
+    item.classList.toggle('aberto', abrir);
+    b.textContent = abrir ? '▾' : '▸';
+    b.setAttribute('aria-expanded', String(abrir));
   });
-  $('btnDelSelec').onclick = async () => {
+
+  /* salvar as notas editadas */
+  box.querySelectorAll('[data-salvar]').forEach(b => b.onclick = async () => {
+    const rid = b.dataset.salvar;
+    const det = box.querySelector(`[data-det="${rid}"]`);
+    if(!det) return;
+    const grid = {};
+    det.querySelectorAll('input[data-k]').forEach(inp => {
+      if(inp.value === '') return;                 // campo esvaziado = remove a nota
+      const n = Number(inp.value);
+      if(Number.isFinite(n)) grid[inp.dataset.k] = n;
+    });
+    b.disabled = true; b.textContent = 'Salvando…';
+    const r = await post('editarVoto', { row_id: rid, grid });
+    b.disabled = false;
+    b.textContent = (r && r.ok) ? 'Salvo ✓' : 'Falhou';
+    if(r && r.ok){
+      const v = VOTOS.find(x => String(x.row_id) === rid);
+      if(v){ v.grid = grid; v.notas = Object.keys(grid).length; }
+    } else if(r && r.error){ $('vMsg').textContent = 'Erro: ' + r.error; }
+    setTimeout(() => { b.textContent = 'Salvar notas'; }, 1500);
+  });
+
+  /* tirar o nome (vira anônimo, mas dá pra restaurar) */
+  box.querySelectorAll('[data-anon]').forEach(b => b.onclick = async () => {
+    const rid = b.dataset.anon;
+    const v = VOTOS.find(x => String(x.row_id) === rid);
+    const a = v ? autorDoVoto(v) : { nome: 'este voto' };
+    if(!VOTOS_HIST_OK){
+      alert('O banco ainda não tem as colunas usuario_antigo/name_antigo.\nRode a migração no Supabase antes de usar esta opção.');
+      return;
+    }
+    if(!confirm(`Tirar o nome de "${a.nome}" deste voto?\n\nO voto continua contando na média, mas fica anônimo e sai do perfil da pessoa. Dá pra restaurar depois.`)) return;
+    b.disabled = true; b.textContent = 'Aplicando…';
+    const r = await post('anonimizarVoto', { row_id: rid });
+    if(r && r.ok){
+      if(v){ v.nomeGuardado = r.nomeGuardado || a.nome; v.anonimizado = true; v.usuario = ''; v.name = ''; }
+      VOTOS_ABERTOS.add(rid);            // mantém aberto pra ver o resultado
+      renderVotos();
+      $('vMsg').textContent = 'Nome removido ✓';
+    }else{
+      b.disabled = false; b.textContent = 'Tirar o nome';
+      $('vMsg').textContent = 'Erro: ' + ((r&&r.error)||'falhou');
+    }
+  });
+
+  /* devolver o nome guardado */
+  box.querySelectorAll('[data-restaurar]').forEach(b => b.onclick = async () => {
+    const rid = b.dataset.restaurar;
+    b.disabled = true; b.textContent = 'Restaurando…';
+    const r = await post('restaurarNomeVoto', { row_id: rid });
+    if(r && r.ok){
+      const v = VOTOS.find(x => String(x.row_id) === rid);
+      if(v){ v.usuario = r.usuario || ''; v.name = r.name || ''; v.nomeGuardado = ''; v.anonimizado = false; }
+      VOTOS_ABERTOS.add(rid);
+      renderVotos();
+      $('vMsg').textContent = 'Nome restaurado ✓';
+    }else{
+      b.disabled = false; b.textContent = 'Restaurar nome';
+      $('vMsg').textContent = 'Erro: ' + ((r&&r.error)||'falhou');
+    }
+  });
+
+  box.querySelectorAll('button[data-del]').forEach(b => b.onclick = async () => {
+    if(!confirm('Excluir este voto? (apaga a linha inteira daquele envio)')) return;
+    await post('deletarVotos', { row_ids: [Number(b.dataset.del)] });
+    VOTOS = VOTOS.filter(v => String(v.row_id) !== b.dataset.del); renderVotos();
+  });
+  /* estes dois só existem no HTML quando o papel pode alterar */
+  const bSelec = $('btnDelSelec'), bTodos = $('btnDelTodos');
+  if(bSelec) bSelec.onclick = async () => {
     const ids = [...box.querySelectorAll('.v-chk:checked')].map(c => Number(c.dataset.rid));
     if(!ids.length){ $('vMsg').textContent = 'Selecione ao menos um voto.'; return; }
     if(!confirm('Excluir os ' + ids.length + ' votos selecionados? Permanente.')) return;
@@ -1911,7 +2099,7 @@ function renderVotos(){
     const set = new Set(ids.map(String));
     VOTOS = VOTOS.filter(v => !set.has(String(v.row_id))); renderVotos(); $('vMsg').textContent = ids.length + ' excluído(s) ✓';
   };
-  $('btnDelTodos').onclick = async () => {
+  if(bTodos) bTodos.onclick = async () => {
     if(!confirm('Excluir os ' + VOTOS.length + ' votos mostrados? Permanente.')) return;
     await post('deletarVotos', { row_ids: VOTOS.map(v => v.row_id) });
     VOTOS = []; renderVotos(); $('vMsg').textContent = 'Excluídos ✓';

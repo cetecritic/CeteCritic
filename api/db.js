@@ -549,10 +549,21 @@ async function handleGet(req, res){
   const year = q.year ? Number(q.year) : CURRENT_EDITION_YEAR;
   const { data } = await sb.from('submissions').select('*').eq('year', year);
   const pmap = await lerPerfisMap();
-  const submissions = (data||[]).filter(r => r.sub_id).map(r => ({
-    id:String(r.sub_id), ts:Number(r.ts), name:String(r.name||''), grid: asObj(r.grid),
-    year: r.year?Number(r.year):CURRENT_EDITION_YEAR, user: displayFeed(String(r.usuario||''), pmap)
-  })).filter(s => !hasInvalidRating(s.grid)).filter(s => s.year === year);
+  const submissions = (data||[]).filter(r => r.sub_id).map(r => {
+    const dono = String(r.usuario || '');
+    /* `user` já saía mascarado pelo displayFeed, mas `name` ia cru — e é o
+       `name` que a lista "Avaliações recebidas" mostra na tela. Como quem
+       vota logado grava o nome real NAS DUAS colunas, o modo anônimo (e o
+       nome bloqueado pela moderação) não escondia nada ali: o pseudônimo
+       aparecia no feed e o nome verdadeiro logo abaixo, na mesma página.
+       Agora o pseudônimo vale nos dois lugares. */
+    const p = dono ? pmap[norm(dono)] : null;
+    const nomeExib = (p && p.anonimo) ? p.display : String(r.name || '');
+    return {
+      id:String(r.sub_id), ts:Number(r.ts), name: nomeExib, grid: asObj(r.grid),
+      year: r.year?Number(r.year):CURRENT_EDITION_YEAR, user: displayFeed(dono, pmap)
+    };
+  }).filter(s => !hasInvalidRating(s.grid)).filter(s => s.year === year);
   return res.json({ serverNow: Date.now(), votingClosed: await votingClosed(year), submissions });
 }
 
@@ -853,13 +864,19 @@ async function apiDeletarConta(body){
   const avisos = [];
   const anota = (etapa, error) => { if(error) avisos.push(etapa + ': ' + (error.message || String(error))); };
 
-  /* 1) anonimiza os votos (as médias das peças continuam) */
+  /* 1) anonimiza os votos (as médias das peças continuam)
+
+     `name` PRECISA ir junto com `usuario`. Quem vota logado grava o próprio
+     nome nas DUAS colunas (ver apiEnviarVoto), e é o `name` que aparece na
+     lista pública de avaliações. Zerando só o `usuario`, a conta sumia do
+     perfil mas o nome continuava estampado no site — ou seja, apagar a
+     conta não apagava o nome de verdade. */
   {
     const { data, error } = await sb.from('submissions').select('row_id,usuario').ilike('usuario', usuario);
     anota('ler submissions', error);
     const ids = (data||[]).filter(r => norm(r.usuario)===nu).map(r => r.row_id);
     if(ids.length){
-      const { error: e2 } = await sb.from('submissions').update({ usuario: null }).in('row_id', ids);
+      const { error: e2 } = await sb.from('submissions').update({ usuario: null, name: '' }).in('row_id', ids);
       anota('anonimizar votos', e2);
     }
   }

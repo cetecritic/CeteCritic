@@ -253,6 +253,10 @@ const ACOES_POR_PAPEL = {
     apagarItemUsuario: 1,         // tipos destrutivos filtrados abaixo
     lerReputacao: 1,
     listarVotos: 1                // pode investigar, não pode alterar
+    /* anonimizarVoto / restaurarNomeVoto ficam FORA de propósito: apesar de
+       serem reversíveis, mexem na linha de `submissions`, e votos são
+       território de admin aqui (ver ITENS_SO_ADMIN.voto logo abaixo). Para
+       liberar pro moderador, basta adicionar as duas nesta lista. */
   },
   historiador: {
     ping: 1,

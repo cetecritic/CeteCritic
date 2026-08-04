@@ -3706,7 +3706,7 @@ async function paginaHall(){
      não estiver na lista aparece no final, na ordem padrão. */
   const CNT = Object.assign({ topPecas: 10, topNoites: 10, rankUsuarios: 10 },
     (typeof HALL !== 'undefined' && HALL.contagens) || {});
-  const ORDEM_PADRAO = ['badges','topPecas','topNoites','topFestivais','mediaTurmas','comparacaoDestaque','compararEdicoes','evolucao','distribuicao','heatmap','recPecas','recNoites','recEdicoes','recComunidade','rankUsuarios','topReputacao','curiosidades'];
+  const ORDEM_PADRAO = ['badges','badgesPerfil','topPecas','topNoites','topFestivais','mediaTurmas','comparacaoDestaque','compararEdicoes','evolucao','distribuicao','heatmap','recPecas','recNoites','recEdicoes','recComunidade','rankUsuarios','topReputacao','curiosidades'];
   const ordemCfg = (typeof HALL !== 'undefined' && Array.isArray(HALL.ordemSecoes) && HALL.ordemSecoes.length) ? HALL.ordemSecoes : ORDEM_PADRAO;
   const ordemFinal = [...ordemCfg, ...ORDEM_PADRAO.filter(k => !ordemCfg.includes(k))];
 
@@ -3724,6 +3724,42 @@ async function paginaHall(){
         </div>`).join('')}
       </div>
     </div>`,
+
+    /* Vitrine das badges de PERFIL. A seção acima é das peças; estas são das
+       pessoas e, até aqui, só existiam escondidas dentro do próprio perfil —
+       não dava pra saber o que havia pra conquistar sem já ter conquistado.
+
+       A lista sai do mesmo catalogoBadges que o perfil usa, então cada edição
+       criada no painel aparece aqui como "Veterano de {ano}" sozinha. */
+    badgesPerfil: (() => {
+      /* esta seção é montada na hora, dentro do template do Hall inteiro:
+         se ela lançar, a página toda fica em branco. Só esta some. */
+      let cat = [];
+      try{ cat = catalogoBadgesPublico() || []; }
+      catch(e){ console.warn('Hall: não foi possível listar as badges de perfil', e); return ''; }
+      if(!cat.length) return '';
+      const ORDEM_CAT = ['Presença', 'Crítico', 'Bolão', 'Comunidade', 'Especial'];
+      const grupos = {};
+      cat.forEach(b => (grupos[b.cat] = grupos[b.cat] || []).push(b));
+      /* categorias conhecidas primeiro, na ordem escolhida; qualquer categoria
+         nova que alguém adicione ao catálogo cai no fim em vez de sumir */
+      const cats = [
+        ...ORDEM_CAT.filter(c => grupos[c]),
+        ...Object.keys(grupos).filter(c => ORDEM_CAT.indexOf(c) < 0)
+      ];
+      const nVet = cat.filter(b => /^Veterano de /.test(b.titulo)).length;
+      return `<div class="section">
+        <h2>🎖️ Badges de perfil <span class="badge-count">${cat.length} no total</span></h2>
+        <div class="sub">Estas são das <b>pessoas</b>, não das peças. O site calcula sozinho a partir das avaliações de cada um, e elas ficam na aba “Badges” do perfil.${nVet ? ` ${nVet} são de veterania: <b>toda edição do festival cria a sua</b> — basta avaliar qualquer peça daquele ano pra desbloquear, inclusive de festivais antigos.` : ''}</div>
+        ${cats.map(c => `
+          <h3 class="subhead">${esc(c)}</h3>
+          <div class="badge-legend">${grupos[c].map(b => `
+            <div class="badge-item">
+              <span class="badge-big">${b.emoji}</span>
+              <div><div class="rec-title">${esc(b.titulo)}</div><div class="rec-text">${esc(b.texto || '')}</div></div>
+            </div>`).join('')}</div>`).join('')}
+      </div>`;
+    })(),
 
     topPecas: `<div class="section">
       <h2>🏆 Top ${CNT.topPecas} Peças</h2>
@@ -3777,6 +3813,9 @@ async function paginaHall(){
       <div class="hall-filtros">De <select class="hall-select" id="hallDe"></select> até <select class="hall-select" id="hallAte"></select></div>
       <div style="height:240px"><canvas id="chartEvolucao"></canvas></div>
       <div style="height:200px; margin-top:18px"><canvas id="chartP9"></canvas></div>
+      <h3 class="subhead">Cada nota, edição por edição</h3>
+      <div class="sub">Quanto cada nota de 0 a ${NOTA_MAXIMA} representou do total daquele ano. Clique numa nota da legenda para mostrar ou esconder a linha dela.</div>
+      <div style="height:280px"><canvas id="chartNotas"></canvas></div>
     </div>`,
 
     distribuicao: `<div class="section">
@@ -3803,7 +3842,7 @@ async function paginaHall(){
   montarShell(`
     <div class="noite-intro">
       <h1>Hall da Fama</h1>
-      <p>Recordes, rankings e estatísticas de todas as ediçõe. <span class="hall-stamp" id="hallAtualizado"></span></p>
+      <p>Recordes, rankings e estatísticas de todas as edições. <span class="hall-stamp" id="hallAtualizado"></span></p>
     </div>
 
     <div class="hall-cards" id="hallCards"><div class="empty-note">Carregando estatísticas...</div></div>
@@ -3961,11 +4000,18 @@ async function paginaHall(){
         subs.forEach(su => Object.values(su.grid).forEach(v => { const x = Number(v); if(!isNaN(x)) valsAno.push(x); }));
         const avgs = pecasDoAno.map(p => p.st.avg);
         const ordN = [...noitesDoAno].sort((a,b) => a.noite - b.noite);
+        /* quantas notas de cada valor (0 a 10) esta edição recebeu — é o que
+           alimenta o gráfico de linhas por nota. Arredonda igual à rosquinha
+           da "Distribuição das notas", pra os dois contarem a mesma história. */
+        const distAno = Array(11).fill(0);
+        valsAno.forEach(v => distAno[Math.max(0, Math.min(10, Math.round(v)))]++);
         anos.push({
           ano: d.cfg.ano,
           avg: somaAno/nAno,
           nVals: nAno,
           subs: subs.length,
+          dist: distAno,
+          nNotas: valsAno.length,
           polar: avgs.length > 1 ? Math.max(...avgs) - Math.min(...avgs) : null,
           p9: valsAno.length ? valsAno.filter(v => v >= 9).length / valsAno.length : 0,
           cresc: ordN.length > 1 ? { d: ordN[ordN.length-1].avg - ordN[0].avg, de: ordN[0], para: ordN[ordN.length-1] } : null,
@@ -4163,6 +4209,52 @@ async function paginaHall(){
       type: 'line',
       data: { labels: lista.map(a => a.ano), datasets: [{ label: '% de notas 9+', data: lista.map(a => Math.round(a.p9 * 1000) / 10), borderColor: '#31b96e', backgroundColor: 'rgba(49,185,110,.15)', fill: true, tension: .3, pointRadius: 4, pointBackgroundColor: '#31b96e' }] },
       options: { responsive: true, maintainAspectRatio: false, plugins: { legend: { display: true } }, scales: { y: { min: 0, max: 100, ticks: { callback: v => v + '%' } } } }
+    });
+
+    /* ---- uma linha por nota (0 a 10) ----------------------------------
+       Mesmo formato do gráfico de cima, só que com uma linha para cada
+       nota, na cor que ela tem no resto do site (CORES_DIST é a mesma
+       paleta da rosquinha "Distribuição das notas").
+
+       Sem `fill`: onze áreas translúcidas empilhadas viram uma mancha e
+       ninguém distingue nada. Linha limpa + ponto colorido + legenda
+       clicável deixa isolar a nota que interessa.
+
+       As notas que ficaram em 0% no período inteiro nascem escondidas —
+       continuam na legenda pra ligar quando quiser, mas não poluem o
+       gráfico com dez linhas coladas no chão. */
+    const pctDaNota = (a, nota) => (a.nNotas && a.dist) ? Math.round((a.dist[nota] / a.nNotas) * 1000) / 10 : 0;
+    const datasetsNotas = CORES_DIST.map((cor, nota) => {
+      const serie = lista.map(a => pctDaNota(a, nota));
+      return {
+        label: 'Nota ' + nota,
+        data: serie,
+        borderColor: cor,
+        backgroundColor: cor,
+        pointBackgroundColor: cor,
+        pointBorderColor: cor,
+        hidden: serie.every(v => v === 0),       // nota que ninguém deu no período
+        fill: false, tension: .3, borderWidth: 2.5,
+        pointRadius: 3, pointHoverRadius: 6
+      };
+    });
+    desenhar('chartNotas', {
+      type: 'line',
+      data: { labels: lista.map(a => a.ano), datasets: datasetsNotas },
+      options: {
+        responsive: true, maintainAspectRatio: false,
+        /* passar o mouse mostra TODAS as notas daquele ano de uma vez —
+           é assim que dá pra ler a composição da edição num relance */
+        interaction: { mode: 'index', intersect: false },
+        plugins: {
+          legend: { display: true, position: 'bottom', labels: { boxWidth: 12, padding: 10, usePointStyle: true } },
+          tooltip: {
+            itemSort: (a, b) => b.parsed.y - a.parsed.y,   // maior fatia primeiro
+            callbacks: { label: c => `${c.dataset.label}: ${c.parsed.y}%` }
+          }
+        },
+        scales: { y: { min: 0, ticks: { callback: v => v + '%' } } }
+      }
     });
   }
 
@@ -4896,6 +4988,21 @@ function catalogoBadges(ctx){
   const desbloq = cat.filter(b => b.unlocked).length;
   cat.push({ emoji: '🧷', titulo: 'Colecionador', texto: `Ter ${metaPerfil('colecionador',15)}+ badges diferentes`, unlocked: desbloq >= metaPerfil('colecionador',15), cat: 'Comunidade' });
   return cat;
+}
+
+/* catálogo SEM contexto de usuário — para vitrine pública (Hall da Fama).
+   Volta tudo bloqueado de propósito: ali a lista responde "o que dá pra
+   ganhar", não "o que fulano ganhou".
+
+   Reaproveita o catalogoBadges em vez de repetir a lista: assim a vitrine
+   nunca envelhece em relação às badges de verdade, e as "Veterano de {ano}"
+   entram sozinhas conforme edições novas são criadas no painel.
+
+   O ctx mínimo basta porque todo o resto do catálogo só faz comparação ou
+   teste de verdade — campo ausente vira `false`, ou seja, badge bloqueada. */
+function catalogoBadgesPublico(){
+  const reais = (typeof EDICOES !== 'undefined' ? EDICOES : []).filter(e => !e.emBreve);
+  return catalogoBadges({ reais, anosSet: new Set() });
 }
 
 /* ---------------------------------------------------------------------

@@ -298,7 +298,7 @@ const ACOES_CONHECIDAS = {
   postarFeed: 1, deletarEdicao: 1, salvarEdicaoCompleta: 1, enviarNotif: 1,
   listarVotos: 1, deletarVotos: 1, uploadImagem: 1, agendar: 1,
   listarAgendados: 1, cancelarAgendado: 1, listarBanners: 1, criarBanner: 1,
-  deletarBanner: 1
+  deletarBanner: 1, anonimizarVoto: 1, restaurarNomeVoto: 1
 };
 
 async function handlePost(req, res) {
@@ -323,7 +323,7 @@ async function handlePost(req, res) {
   if (action === 'ping') return res.status(200).json({
     ok: true, admin: true,
     papel: eu.papel,
-    versao: 4,
+    versao: 5,
     acoes: Object.keys(ACOES_CONHECIDAS).filter(a => podeExecutar(eu.papel, a))
   });
 
@@ -825,13 +825,18 @@ async function handlePost(req, res) {
     if (op.notificacoes) await limpar('notificacoes', 'usuario');
     if (op.push)         await limpar('push', 'usuario');
     /* votos: anonimizamos em vez de apagar, senão as médias das peças mudam
-       retroativamente e o histórico do festival fica errado */
+       retroativamente e o histórico do festival fica errado.
+
+       `name` vai junto com `usuario`: quem vota logado grava o próprio nome
+       nas DUAS colunas, e é o `name` que a lista pública de avaliações
+       mostra. Zerando só o `usuario`, o voto saía do perfil mas o nome
+       continuava aparecendo no site — a limpeza não limpava de fato. */
     if (op.votos) {
       const { data, error } = await sb.from('submissions').select('row_id,usuario').ilike('usuario', alvo);
       if (error) avisos.push('ler submissions: ' + error.message);
       const ids = (data || []).filter(r => norm(r.usuario) === nu).map(r => r.row_id);
       for (let i = 0; i < ids.length; i += 200) {
-        const { error: e2 } = await sb.from('submissions').update({ usuario: null }).in('row_id', ids.slice(i, i + 200));
+        const { error: e2 } = await sb.from('submissions').update({ usuario: null, name: '' }).in('row_id', ids.slice(i, i + 200));
         if (e2) avisos.push('anonimizar votos: ' + e2.message);
       }
     }
@@ -1052,22 +1057,114 @@ async function handlePost(req, res) {
     const ep = body.episodio ? Number(body.episodio) : null;
     const notaF = (body.nota !== '' && body.nota != null) ? Number(body.nota) : null;
     const chave = (noite && ep) ? ('s' + noite + 'e' + ep) : null;
-    let q = sb.from('submissions').select('row_id,sub_id,usuario,year,grid,ts');
-    if (ano) q = q.eq('year', ano);
-    const { data } = await q.limit(3000);
+
+    /* `name` é o nome DIGITADO no formulário (quem votou sem conta) e
+       `usuario` é o vínculo com a conta logada. O painel só lia `usuario`,
+       por isso TODO voto sem conta aparecia como "(anônimo)" mesmo tendo
+       nome preenchido. Agora os dois vêm, e o painel decide o que mostrar.
+
+       As colunas *_antigo guardam o nome removido pela moderação. Se ainda
+       não existirem no banco, o select falha inteiro — daí o fallback. */
+    const COLS_COM_HIST = 'row_id,sub_id,usuario,name,year,grid,ts,usuario_antigo,name_antigo';
+    const COLS_BASE     = 'row_id,sub_id,usuario,name,year,grid,ts';
+    let temHistorico = true;
+    let data = null;
+
+    {
+      let q = sb.from('submissions').select(COLS_COM_HIST);
+      if (ano) q = q.eq('year', ano);
+      const r1 = await q.limit(3000);
+      if (r1.error) {
+        temHistorico = false;
+        let q2 = sb.from('submissions').select(COLS_BASE);
+        if (ano) q2 = q2.eq('year', ano);
+        const r2 = await q2.limit(3000);
+        if (r2.error) return res.status(500).json({ ok: false, error: r2.error.message });
+        data = r2.data;
+      } else {
+        data = r1.data;
+      }
+    }
+
     let rows = (data || []);
-    if (usuarioF) rows = rows.filter(r => norm(r.usuario) === usuarioF);
+    /* o filtro por usuário agora também acha por nome digitado — antes, procurar
+       "Maria" não trazia nada se a Maria tivesse votado sem conta */
+    if (usuarioF) rows = rows.filter(r => norm(r.usuario) === usuarioF || norm(r.name) === usuarioF);
     rows = rows.filter(r => {
       const g = (r.grid && typeof r.grid === 'object') ? r.grid : {};
       if (chave) { if (!(chave in g)) return false; if (notaF != null && Number(g[chave]) !== notaF) return false; return true; }
       if (notaF != null) return Object.values(g).some(v => Number(v) === notaF);
       return true;
     });
+    /* mais recentes primeiro: é assim que se investiga um voto */
+    rows.sort((a, b) => (Number(b.ts) || 0) - (Number(a.ts) || 0));
+
     const votos = rows.slice(0, 400).map(r => {
       const g = (r.grid && typeof r.grid === 'object') ? r.grid : {};
-      return { row_id: r.row_id, sub_id: r.sub_id, usuario: r.usuario || '(anônimo)', year: r.year, ts: r.ts, nota: chave ? g[chave] : null, notas: Object.keys(g).length };
+      const nomeGuardado = temHistorico ? (r.usuario_antigo || r.name_antigo || '') : '';
+      return {
+        row_id: r.row_id, sub_id: r.sub_id, year: r.year, ts: r.ts,
+        usuario: r.usuario || '',            // vínculo com a conta (vazio = votou sem login)
+        name: r.name || '',                  // nome digitado no formulário
+        grid: g,                             // grade completa, pro painel expandir
+        nota: chave ? g[chave] : null,
+        notas: Object.keys(g).length,
+        anonimizado: !!nomeGuardado,         // já teve o nome removido pela moderação
+        nomeGuardado                         // o que volta se restaurar
+      };
     });
-    return res.status(200).json({ ok: true, votos, total: rows.length });
+    return res.status(200).json({ ok: true, votos, total: rows.length, historicoDisponivel: temHistorico });
+  }
+
+  /* ---- tirar o nome de UM voto (deixa anônimo) / devolver o nome ----
+     O nome sai do voto mas fica guardado em usuario_antigo/name_antigo, então
+     a ação é reversível — mesma lógica do anonimizarUsuario/removerAnonimato
+     que já existe para perfis. Zerar `usuario` também desliga o voto do perfil
+     da pessoa, que é justamente o efeito esperado. */
+  if (action === 'anonimizarVoto' || action === 'restaurarNomeVoto') {
+    const rowId = body.row_id;
+    if (!rowId) return res.status(400).json({ ok: false, error: 'informe o voto' });
+
+    const { data: linhas, error: erroLer } = await sb.from('submissions')
+      .select('row_id,usuario,name,usuario_antigo,name_antigo').eq('row_id', rowId).limit(1);
+    if (erroLer) {
+      /* erro de coluna inexistente = migração não rodou */
+      return res.status(500).json({
+        ok: false,
+        error: 'o banco ainda não tem as colunas usuario_antigo/name_antigo — rode a migração no Supabase'
+      });
+    }
+    const linha = (linhas || [])[0];
+    if (!linha) return res.status(404).json({ ok: false, error: 'voto não encontrado' });
+
+    if (action === 'anonimizarVoto') {
+      const temNome = !!(String(linha.usuario || '').trim() || String(linha.name || '').trim());
+      if (!temNome) return res.status(400).json({ ok: false, error: 'este voto já está anônimo' });
+      /* não sobrescreve um histórico anterior: se já foi anonimizado antes, o
+         primeiro nome guardado é o que vale */
+      const patch = {
+        usuario: null,
+        name: '',
+        usuario_antigo: linha.usuario_antigo || linha.usuario || null,
+        name_antigo: linha.name_antigo || linha.name || null
+      };
+      const { error } = await sb.from('submissions').update(patch).eq('row_id', rowId);
+      if (error) return res.status(500).json({ ok: false, error: error.message });
+      return res.status(200).json({ ok: true, nomeGuardado: patch.usuario_antigo || patch.name_antigo || '' });
+    }
+
+    // restaurarNomeVoto
+    const temHist = !!(String(linha.usuario_antigo || '').trim() || String(linha.name_antigo || '').trim());
+    if (!temHist) return res.status(400).json({ ok: false, error: 'não há nome guardado para este voto' });
+    const patch = {
+      usuario: linha.usuario_antigo || null,
+      name: linha.name_antigo || '',
+      usuario_antigo: null,
+      name_antigo: null
+    };
+    const { error } = await sb.from('submissions').update(patch).eq('row_id', rowId);
+    if (error) return res.status(500).json({ ok: false, error: error.message });
+    return res.status(200).json({ ok: true, usuario: patch.usuario || '', name: patch.name || '' });
   }
 
   // ----- upload de imagem (poster / banner) pro Supabase Storage -----
