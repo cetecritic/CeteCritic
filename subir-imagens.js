@@ -25,8 +25,16 @@ const BUCKET = 'conteudo';
 const ehUrl = v => /^https?:\/\//.test(String(v || ''));
 
 async function comprimir(arquivo) {
-  // rotate() respeita a orientação EXIF; WebP q80 é o melhor equilíbrio qualidade/tamanho
-  return await sharp(arquivo).rotate().resize({ width: 1400, withoutEnlargement: true }).webp({ quality: 80, effort: 6 }).toBuffer();
+  /* rotate() respeita a orientação EXIF.
+     1600px @ q88 (era 1400 @ q80) pra bater com o que o painel admin passou
+     a gerar — o pôster é exportado no card de compartilhamento perto de
+     1080px de largura, então 1400 já entregava a imagem no limite.
+     `kernel: lanczos3` é o reamostrador mais nítido do sharp. */
+  return await sharp(arquivo)
+    .rotate()
+    .resize({ width: 1600, withoutEnlargement: true, kernel: 'lanczos3' })
+    .webp({ quality: 88, effort: 6 })
+    .toBuffer();
 }
 async function subir(buffer, dest) {
   const { error } = await sb.storage.from(BUCKET).upload(dest, buffer, { contentType: 'image/webp', upsert: true });
@@ -69,5 +77,6 @@ async function subir(buffer, dest) {
       }
     }
   }
-  console.log('\\nPronto! Imagens comprimidas, subidas e edições atualizadas.');
+  // era '\\n' (barra + n literal, não quebra de linha)
+  console.log('\nPronto! Imagens comprimidas, subidas e edições atualizadas.');
 })().catch(e => { console.error(e); process.exit(1); });

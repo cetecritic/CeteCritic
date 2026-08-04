@@ -1072,14 +1072,41 @@ async function handlePost(req, res) {
 
   // ----- upload de imagem (poster / banner) pro Supabase Storage -----
   if (action === 'uploadImagem') {
+    /* Só formatos de imagem. Sem isto, um data: URL com qualquer content-type
+       (text/html, image/svg+xml) subia pro bucket público e era servido de
+       volta com esse tipo — SVG aceita <script> dentro, então virava XSS
+       hospedado no nosso próprio domínio. */
+    const TIPOS_OK = { 'image/webp': '.webp', 'image/jpeg': '.jpg', 'image/jpg': '.jpg', 'image/png': '.png', 'image/gif': '.gif' };
+    /* 3 MB de imagem = ~4 MB depois do base64, que é o teto de corpo de
+       requisição do Vercel. Barrar aqui devolve um erro legível em vez do
+       413 cru da plataforma. O painel manda bem menos que isso. */
+    const LIMITE_BYTES = 3 * 1024 * 1024;
+
     const b64 = String(body.data || '');
-    const m = b64.match(/^data:(.+?);base64,(.*)$/);
-    const contentType = m ? m[1] : 'image/jpeg';
-    const raw = m ? m[2] : b64;
+    const m = b64.match(/^data:([a-zA-Z0-9.+/-]+);base64,([A-Za-z0-9+/=\s]*)$/);
+    if (!m) return res.status(400).json({ ok: false, error: 'imagem em formato inesperado' });
+
+    const contentType = m[1].toLowerCase();
+    if (!TIPOS_OK[contentType]) return res.status(400).json({ ok: false, error: 'tipo de imagem não aceito: ' + contentType });
+
+    const raw = m[2].replace(/\s/g, '');
     if (!raw) return res.status(400).json({ ok: false, error: 'sem imagem' });
+
     const buffer = Buffer.from(raw, 'base64');
-    const nomeLimpo = String(body.nome || 'img.jpg').replace(/[^a-zA-Z0-9._-]/g, '_');
-    const pasta = String(body.pasta || 'geral').replace(/[^a-zA-Z0-9_-]/g, '');
+    if (!buffer.length) return res.status(400).json({ ok: false, error: 'sem imagem' });
+    if (buffer.length > LIMITE_BYTES) return res.status(413).json({ ok: false, error: 'imagem grande demais (máx. 8 MB)' });
+
+    /* nome do arquivo: colapsa pontos seguidos (senão "..%2F" viraria ".." e
+       daria pra escapar da pasta) e garante a extensão certa pro tipo */
+    let nomeLimpo = String(body.nome || 'img')
+      .replace(/[^a-zA-Z0-9._-]/g, '_')
+      .replace(/\.{2,}/g, '.')
+      .replace(/^\.+/, '')
+      .slice(0, 80) || 'img';
+    const extEsperada = TIPOS_OK[contentType];
+    if (!nomeLimpo.toLowerCase().endsWith(extEsperada)) nomeLimpo = nomeLimpo.replace(/\.[a-z0-9]+$/i, '') + extEsperada;
+
+    const pasta = String(body.pasta || 'geral').replace(/[^a-zA-Z0-9_-]/g, '') || 'geral';
     const path = pasta + '/' + Date.now() + '_' + nomeLimpo;
     const { error } = await sb.storage.from('conteudo').upload(path, buffer, { contentType, upsert: true });
     if (error) return res.status(500).json({ ok: false, error: error.message });

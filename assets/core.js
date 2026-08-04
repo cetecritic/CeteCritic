@@ -395,26 +395,73 @@ async function idbApagarPoster(chave){
   try{ const db = await idbAbrir(); return await new Promise((res) => { const tx = db.transaction('posters', 'readwrite'); tx.objectStore('posters').delete(chave); tx.oncomplete = () => res(true); tx.onerror = () => res(false); }); }
   catch(e){ return false; }
 }
-/* reduz a imagem enviada para no máx. `maxLargura`px em JPEG — de vários MB
-   para poucas centenas de KB, sem estourar cota nem travar o navegador */
-function reduzirImagem(file, maxLargura, qualidade){
-  return new Promise((res, rej) => {
+/* reduz a imagem enviada para no máx. `maxLargura`px — de vários MB para
+   poucas centenas de KB, sem estourar cota nem travar o navegador.
+
+   Três cuidados que faltavam e é onde a qualidade estava indo embora:
+   1. limitava só a LARGURA — uma foto em pé passava com 4000px de altura
+      (ou, ao contrário, era espremida à toa);
+   2. reduzia de uma vez só: cair de 4000px para 700px num único drawImage
+      serrilha a imagem, porque o filtro do navegador só amostra 2x2;
+   3. gravava sempre em JPEG. WebP na mesma qualidade percebida ocupa perto
+      da metade, então dá pra guardar MAIS pixels no mesmo espaço.
+   `createImageBitmap` ainda resolve a orientação EXIF: foto de celular
+   deitada não chega mais girada. */
+async function reduzirImagem(file, maxLado, qualidade){
+  const maxL = Number(maxLado) || 1400;
+  const q = (qualidade === undefined) ? 0.86 : qualidade;
+
+  const dataUrlOriginal = await new Promise((res, rej) => {
     const reader = new FileReader();
-    reader.onload = () => {
-      const img = new Image();
-      img.onload = () => {
-        const escala = Math.min(1, maxLargura / img.width);
-        const w = Math.round(img.width * escala), h = Math.round(img.height * escala);
-        const cv = document.createElement('canvas'); cv.width = w; cv.height = h;
-        cv.getContext('2d').drawImage(img, 0, 0, w, h);
-        try{ res(cv.toDataURL('image/jpeg', qualidade)); }catch(e){ res(reader.result); }
-      };
-      img.onerror = () => res(reader.result);
-      img.src = reader.result;
-    };
-    reader.onerror = () => rej(reader.error);
+    reader.onload = () => res(reader.result);
+    reader.onerror = () => rej(reader.error || new Error('leitura falhou'));
     reader.readAsDataURL(file);
   });
+
+  /* fonte: bitmap (respeita EXIF) com fallback pra <img> em navegador antigo */
+  let fonte = null, largura = 0, altura = 0;
+  try{
+    if(typeof createImageBitmap === 'function'){
+      fonte = await createImageBitmap(file, { imageOrientation: 'from-image' });
+      largura = fonte.width; altura = fonte.height;
+    }
+  }catch(e){ fonte = null; }
+  if(!fonte){
+    fonte = await new Promise(res => {
+      const im = new Image();
+      im.onload = () => res(im.naturalWidth ? im : null);
+      im.onerror = () => res(null);
+      im.src = dataUrlOriginal;
+    });
+    if(!fonte) return dataUrlOriginal;
+    largura = fonte.naturalWidth; altura = fonte.naturalHeight;
+  }
+  if(!largura || !altura) return dataUrlOriginal;
+
+  try{
+    const escala = Math.min(1, maxL / Math.max(largura, altura));   // limita os DOIS lados
+    const w = Math.max(1, Math.round(largura * escala));
+    const h = Math.max(1, Math.round(altura * escala));
+    const cv = document.createElement('canvas');
+    cv.width = w; cv.height = h;
+    const ctx = cv.getContext('2d');
+    if(!ctx) return dataUrlOriginal;
+    desenharSuave(ctx, fonte, 0, 0, largura, altura, 0, 0, w, h);   // downscale em etapas
+
+    let out = '';
+    try{
+      out = cv.toDataURL('image/webp', q);
+      if(out.indexOf('data:image/webp') !== 0) out = '';
+    }catch(e){ out = ''; }
+    if(!out) out = cv.toDataURL('image/jpeg', q);
+    /* se a "compressão" engordou o arquivo (PNG pequeno, imagem já enxuta),
+       o original é melhor negócio */
+    return (out && out.length < dataUrlOriginal.length) ? out : dataUrlOriginal;
+  }catch(e){
+    return dataUrlOriginal;
+  }finally{
+    if(fonte && typeof fonte.close === 'function') fonte.close();   // libera o bitmap
+  }
 }
 
 /* =====================================================================
@@ -1719,12 +1766,40 @@ function fecharOverlay(el){
   setTimeout(() => el.classList.remove('open'), 200);
 }
 
+/* ---------------------- polling que respeita a aba ----------------------
+   Todo o site atualiza sozinho a cada 20s. Só que `setInterval` continua
+   disparando com a aba escondida: quem deixa o CETECritic aberto num pino
+   do navegador ficava com um cronjob de rede rodando o dia inteiro,
+   gastando bateria e dados à toa.
+
+   Este envelope pula o trabalho enquanto a aba está oculta e dispara UMA
+   vez quando a pessoa volta, se já tiver passado do intervalo. */
+function intervaloVisivel(fn, ms){
+  let ultimo = Date.now();
+  let rodando = false;
+  async function executar(){
+    if(rodando) return;                 // não empilha se a chamada anterior demorou
+    rodando = true;
+    ultimo = Date.now();
+    try{ await fn(); }catch(e){ console.warn('atualização periódica falhou', e); }
+    finally{ rodando = false; }
+  }
+  const id = setInterval(() => { if(!document.hidden) executar(); }, ms);
+  document.addEventListener('visibilitychange', () => {
+    if(!document.hidden && Date.now() - ultimo >= ms) executar();
+  });
+  return id;
+}
+
 /* ---------------------- countdowns (tick global) ----------------------
    Qualquer elemento com data-count-to="ISO" é atualizado a cada segundo.
    Se tiver data-reload="1", a página recarrega quando o tempo zera
    (é assim que noites/edições "abrem" sozinhas). */
 let tickPagina = null;
 setInterval(() => {
+  /* aba escondida: ninguém está vendo o contador, e o texto é recalculado
+     do zero quando ela volta. Poupa um querySelectorAll por segundo. */
+  if(document.hidden) return;
   document.querySelectorAll('[data-count-to]').forEach(el => {
     const resto = new Date(el.dataset.countTo) - agora();
     el.textContent = formatDuracao(resto);
@@ -2048,12 +2123,20 @@ function neutralizarAnimacoes(clonedDoc, rootId){
   });
 }
 
-function aguardarImagens(container){
+/* espera as <img> do container carregarem — com teto de tempo, senão uma
+   imagem que nunca dispara load/error (rede pendurada, CDN fora do ar)
+   deixa o botão "Gerando..." travado pra sempre */
+function aguardarImagens(container, limiteMs){
+  if(!container) return Promise.resolve();
+  const teto = Number(limiteMs) || 15000;
   return Promise.all(Array.from(container.querySelectorAll('img')).map(img => {
     if(img.complete) return Promise.resolve();
     return new Promise(res => {
-      img.addEventListener('load', res, { once:true });
-      img.addEventListener('error', res, { once:true });
+      let feito = false;
+      const fim = () => { if(feito) return; feito = true; clearTimeout(t); res(); };
+      const t = setTimeout(fim, teto);
+      img.addEventListener('load', fim, { once:true });
+      img.addEventListener('error', fim, { once:true });
     });
   }));
 }
@@ -2063,34 +2146,143 @@ function aguardarImagens(container){
    ===================================================================== */
 
 /* 1) object-fit não é implementado pelo html2canvas: a imagem aparece
-   recortada na tela e ESTICADA no PNG. A saída é trocar cada <img> por um
-   <div> do mesmo tamanho usando background-size, que ele suporta.
+   recortada na tela e ESTICADA no PNG.
 
-   Fazemos a troca no DOM real logo antes de capturar e desfazemos no
-   finally. Como o substituto renderiza igualzinho, não pisca. */
-async function comImagensRecortadas(area, tarefa){
-  const trocas = [];
-  if(area) area.querySelectorAll('img').forEach(img => {
-    let cs; try{ cs = getComputedStyle(img); }catch(e){ return; }
-    const fit = cs.objectFit;
-    if(fit !== 'cover' && fit !== 'contain') return;
-    const src = img.currentSrc || img.src;
-    if(!src) return;
-    const r = img.getBoundingClientRect();
-    if(!r.width || !r.height) return;
+   A primeira versão disto trocava cada <img> por um <div> com
+   background-size — e era exatamente aí que a qualidade morria. O
+   html2canvas rasteriza `background-image` num canvas do tamanho em CSS px
+   e SÓ DEPOIS amplia tudo pela `scale`: um pôster de 204px virava 204px
+   esticados para 734px no PNG final. Daí o card sair borrado.
 
-    const div = document.createElement('div');
-    div.style.cssText =
-      `width:${r.width}px;height:${r.height}px;flex:none;display:block;` +
-      `border-radius:${cs.borderRadius};` +
-      `background-image:url("${src.replace(/"/g, '\\"')}");background-size:${fit};` +
-      `background-position:center;background-repeat:no-repeat;`;
-    img.parentNode.insertBefore(div, img);
-    trocas.push({ img, div, displayAntes: img.style.display });
-    img.style.display = 'none';
+   Agora recortamos a imagem num canvas já na resolução FINAL (tamanho na
+   tela × escala da exportação) e trocamos por um <img> na proporção exata
+   do elemento. Como <img>, o html2canvas usa drawImage direto da fonte,
+   sem passo intermediário — sai nítido. O <div> continua existindo só como
+   plano B para imagem de outra origem sem CORS (canvas "tainted"). */
+
+/* cópia da imagem com CORS habilitado, pra poder ler os pixels no canvas.
+   Se o servidor não liberar CORS, resolve null e caímos no plano B. */
+const _imgCorsCache = new Map();
+function carregarImagemCors(src){
+  if(_imgCorsCache.has(src)) return _imgCorsCache.get(src);
+  const p = new Promise(resolve => {
+    const im = new Image();
+    im.crossOrigin = 'anonymous';
+    let pronto = false;
+    const fim = v => { if(!pronto){ pronto = true; resolve(v); } };
+    im.onload  = () => fim(im.naturalWidth ? im : null);
+    im.onerror = () => fim(null);
+    setTimeout(() => fim(null), 15000);   // nunca deixa a exportação pendurada
+    im.src = src;
   });
+  if(_imgCorsCache.size > 40) _imgCorsCache.clear();   // teto simples de memória
+  _imgCorsCache.set(src, p);
+  return p;
+}
+
+/* Downscale em etapas. Reduzir 4x de uma vez no canvas serrilha a imagem
+   (o filtro do navegador só amostra 2x2); cortar pela metade a cada passo
+   dá o mesmo resultado de um resample de verdade. */
+function desenharSuave(ctx, fonte, sx, sy, sw, sh, dx, dy, dw, dh){
+  let orig = fonte, ox = sx, oy = sy, ow = sw, oh = sh;
+  while(ow > dw * 2 && oh > dh * 2){
+    const nw = Math.max(dw, Math.round(ow / 2)), nh = Math.max(dh, Math.round(oh / 2));
+    const tmp = document.createElement('canvas');
+    tmp.width = nw; tmp.height = nh;
+    const tctx = tmp.getContext('2d');
+    if(!tctx) break;
+    tctx.imageSmoothingEnabled = true; tctx.imageSmoothingQuality = 'high';
+    tctx.drawImage(orig, ox, oy, ow, oh, 0, 0, nw, nh);
+    orig = tmp; ox = 0; oy = 0; ow = nw; oh = nh;
+  }
+  ctx.imageSmoothingEnabled = true; ctx.imageSmoothingQuality = 'high';
+  ctx.drawImage(orig, ox, oy, ow, oh, dx, dy, dw, dh);
+}
+
+/* recorta `src` no formato do elemento (cover/contain) já na resolução final */
+async function recortarNaResolucao(src, destW, destH, fit, escala){
+  const fonte = await carregarImagemCors(src);
+  if(!fonte) return null;
+  const nw = fonte.naturalWidth, nh = fonte.naturalHeight;
+  if(!nw || !nh) return null;
+
+  const k = Math.max(1, Number(escala) || 1);
+  let cw = Math.round(destW * k), ch = Math.round(destH * k);
+  /* teto de 4096px por lado: acima disso o iOS devolve canvas em branco */
+  const maior = Math.max(cw, ch);
+  if(maior > 4096){ const f = 4096 / maior; cw = Math.round(cw * f); ch = Math.round(ch * f); }
+  if(cw < 1 || ch < 1) return null;
+
+  const cv = document.createElement('canvas');
+  cv.width = cw; cv.height = ch;
+  const ctx = cv.getContext('2d');
+  if(!ctx) return null;
+
+  if(fit === 'contain'){
+    const e = Math.min(cw / nw, ch / nh);
+    const w = Math.max(1, Math.round(nw * e)), h = Math.max(1, Math.round(nh * e));
+    desenharSuave(ctx, fonte, 0, 0, nw, nh, Math.round((cw - w) / 2), Math.round((ch - h) / 2), w, h);
+  }else{                                            // cover
+    const e = Math.max(cw / nw, ch / nh);
+    const sw = Math.max(1, Math.min(nw, Math.round(cw / e)));
+    const sh = Math.max(1, Math.min(nh, Math.round(ch / e)));
+    desenharSuave(ctx, fonte, Math.round((nw - sw) / 2), Math.round((nh - sh) / 2), sw, sh, 0, 0, cw, ch);
+  }
+  /* PNG: o recorte ainda vai ser reamostrado pelo html2canvas, então
+     recomprimir em JPEG aqui só somaria artefato em cima de artefato */
+  try{ return cv.toDataURL('image/png'); }
+  catch(e){ return null; }                          // canvas "tainted" (sem CORS)
+}
+
+async function comImagensRecortadas(area, tarefa, escala){
+  const trocas = [];
+  const alvos = area ? Array.from(area.querySelectorAll('img')) : [];
+
+  for(const img of alvos){
+    let cs; try{ cs = getComputedStyle(img); }catch(e){ continue; }
+    const fit = cs.objectFit;
+    if(fit !== 'cover' && fit !== 'contain') continue;
+    const src = img.currentSrc || img.src;
+    if(!src) continue;
+    /* offsetWidth/Height em vez do rect: não é afetado por transform de
+       animação, então o substituto nasce do tamanho certo mesmo se o modal
+       ainda estiver no meio da transição de entrada */
+    const r = img.getBoundingClientRect();
+    const w = img.offsetWidth || r.width, h = img.offsetHeight || r.height;
+    if(!w || !h) continue;
+
+    let sub = null;
+    let recorte = null;
+    try{ recorte = await recortarNaResolucao(src, w, h, fit, escala); }catch(e){ recorte = null; }
+
+    if(recorte){
+      /* caminho bom: <img> já na proporção do elemento e em alta resolução.
+         Bônus: sendo data: URL, não "tainta" o canvas do html2canvas. */
+      sub = new Image();
+      sub.src = recorte;
+      sub.style.cssText =
+        `width:${w}px;height:${h}px;flex:none;display:block;object-fit:fill;` +
+        `border-radius:${cs.borderRadius};`;
+      try{ if(sub.decode) await sub.decode(); }catch(e){ /* segue: html2canvas espera de novo */ }
+    }else{
+      /* plano B (imagem de outra origem sem CORS): perde nitidez, mas não
+         estica nem derruba a exportação */
+      sub = document.createElement('div');
+      sub.style.cssText =
+        `width:${w}px;height:${h}px;flex:none;display:block;` +
+        `border-radius:${cs.borderRadius};` +
+        `background-image:url("${src.replace(/"/g, '\\"')}");background-size:${fit};` +
+        `background-position:center;background-repeat:no-repeat;`;
+    }
+
+    if(!img.parentNode) continue;
+    img.parentNode.insertBefore(sub, img);
+    trocas.push({ img, sub, displayAntes: img.style.display });
+    img.style.display = 'none';
+  }
+
   try{ return await tarefa(); }
-  finally{ trocas.forEach(t => { t.div.remove(); t.img.style.display = t.displayAntes; }); }
+  finally{ trocas.forEach(t => { t.sub.remove(); t.img.style.display = t.displayAntes; }); }
 }
 
 /* 2) Cores dominantes da capa, pro fundo do compartilhamento (a ideia é a
@@ -2171,11 +2363,15 @@ async function baixarImagem(areaId, nomeArquivo, btn){
   try{
     const area = document.getElementById(areaId);
     await aguardarImagens(area);
+    /* mira ~1600px de largura em vez de escala fixa: num celular estreito a
+       escala 2 fixa gerava um PNG de ~700px, que é o que deixava a grade
+       do "Monte o Seu" pixelada ao abrir no computador */
+    const escala = Math.min(4, Math.max(2, 1600 / (area.offsetWidth || 800)));
     /* sem isto, o pôster sai esticado no PNG do "Monte o Seu" */
     const canvas = await comImagensRecortadas(area, () => html2canvas(area, {
-      backgroundColor: '#17181c', scale: 2, useCORS: true, imageTimeout: 15000,
+      backgroundColor: '#17181c', scale: escala, useCORS: true, imageTimeout: 15000,
       onclone: doc => neutralizarAnimacoes(doc, areaId)
-    }));
+    }), escala);
     const link = document.createElement('a');
     link.download = nomeArquivo;
     link.href = canvas.toDataURL('image/png');
@@ -2376,10 +2572,10 @@ function abrirCompartilhamento(opts){
     /* mira 1080px de largura (padrão de story) em vez de uma escala fixa:
        assim o PNG sai na mesma resolução independente do tamanho que o card
        tiver na tela, inclusive no celular */
-    const escala = Math.min(5, Math.max(2, 1080 / (alvo.offsetWidth || 320)));
+    const escala = Math.min(6, Math.max(2, 1080 / (alvo.offsetWidth || 320)));
     const canvas = await comImagensRecortadas(alvo, () => html2canvas(alvo, {
       backgroundColor: null, scale: escala, useCORS: true, imageTimeout: 15000
-    }));
+    }), escala);
     return await new Promise(res => canvas.toBlob(res, 'image/png'));
   }
   bBaixar.addEventListener('click', async () => {
@@ -2497,6 +2693,46 @@ function htmlBadges(lista){
    O hall.html carrega o hall-dados.js direto; as páginas de noite buscam
    o arquivo sob demanda para as badges extras aparecerem lá também. */
 let HALL_CFG = (typeof HALL !== 'undefined') ? HALL : null;
+/* ---- carregador dos dados de uma edição (edicao.js + noites/*.js) ----
+   Hall, perfil e busca faziam exatamente isto, cada um com a sua cópia do
+   código e nenhum com cache. Num acervo de 15 edições de 5 noites, abrir o
+   Hall e depois a busca disparava ~180 requisições pros MESMOS arquivos —
+   e a busca ainda fazia em série (cada edição só começava quando a anterior
+   terminava). Agora a promessa fica guardada por ano e é reaproveitada.
+
+   De quebra, uma noite que falhe (404, arquivo ainda não publicado) não
+   derruba mais a edição inteira: antes o HTML da página de erro entrava no
+   texto concatenado e o `new Function` estourava com erro de sintaxe. */
+const _edicaoCache = new Map();
+function carregarDadosEdicao(cfg){
+  const ano = cfg && cfg.ano;
+  if(!ano) return Promise.resolve(null);
+  if(_edicaoCache.has(ano)) return _edicaoCache.get(ano);
+
+  const p = (async () => {
+    try{
+      const nNoites = Number(cfg.noites) || 0;
+      const textos = await Promise.all([
+        fetch(`${BASE}${ano}/edicao.js`).then(r => { if(!r.ok) throw new Error('HTTP ' + r.status); return r.text(); }),
+        ...Array.from({ length: nNoites }, (_, i) =>
+          fetch(`${BASE}${ano}/noites/noite-${i+1}.js`).then(r => r.ok ? r.text() : '').catch(() => ''))
+      ]);
+      const d = new Function(textos.join('\n') +
+        '\n;return { EDICAO: typeof EDICAO !== "undefined" ? EDICAO : null,' +
+        ' NOITES: typeof NOITES !== "undefined" ? NOITES : {} };')();
+      if(!d.EDICAO) throw new Error('edicao.js sem EDICAO');
+      return { cfg, ed: d.EDICAO, noites: d.NOITES || {} };
+    }catch(e){
+      console.warn('Falha ao carregar a edição', ano, e);
+      _edicaoCache.delete(ano);     // falha de rede não fica grudada no cache
+      return null;
+    }
+  })();
+
+  _edicaoCache.set(ano, p);
+  return p;
+}
+
 async function carregarHallDados(){
   if(HALL_CFG) return HALL_CFG;
   try{
@@ -2917,7 +3153,7 @@ function paginaEdicao(){
     atualizarBolao();
   }
   carregar();
-  setInterval(carregar, 20000);
+  intervaloVisivel(carregar, 20000);
 }
 
 /* =====================================================================
@@ -2948,7 +3184,7 @@ function paginaResumo(){
   const contexto = String(s.contexto || '').trim();
   let curioHtml;
   if(contexto){
-    curioHtml = `<div class="noite-card-synopsis" style="margin-bottom:0;">${esc(contexto)}</div>`;
+    curioHtml = `<div class="noite-card-synopsis texto-quebras" style="margin-bottom:0;">${esc(contexto)}</div>`;
   } else {
     const curios = (typeof CURIOSIDADES !== 'undefined' && Array.isArray(CURIOSIDADES)) ? CURIOSIDADES : [];
     curioHtml = curios.length
@@ -2965,11 +3201,11 @@ function paginaResumo(){
         <div class="resumo-col-head">📖 Sobre</div>
         ${s.banner ? `<img class="sobre-banner" src="${esc(s.banner)}" alt="" onerror="this.style.display='none'">` : ''}
         <div class="noite-card-title" style="margin-bottom:10px; font-size:16px;">${esc(s.titulo || ED.titulo)}</div>
-        <div class="noite-card-synopsis" style="margin-bottom:0;">${esc(s.texto || 'Em breve.')}</div>
+        <div class="noite-card-synopsis texto-quebras" style="margin-bottom:0;">${esc(s.texto || 'Em breve.')}</div>
       </div>
       <div class="noite-card resumo-col">
         <div class="resumo-col-head">🎼 Abertura</div>
-        <div class="noite-card-synopsis" style="margin-bottom:${a.spotify ? '18px' : '0'};">${esc(a.texto || 'Em breve.')}</div>
+        <div class="noite-card-synopsis texto-quebras" style="margin-bottom:${a.spotify ? '18px' : '0'};">${esc(a.texto || 'Em breve.')}</div>
         ${a.spotify ? `<iframe style="border-radius:12px; border:none;" src="${esc(a.spotify)}" width="100%" height="352" allow="autoplay; clipboard-write; encrypted-media; fullscreen; picture-in-picture" loading="lazy"></iframe>` : ''}
       </div>
       <div class="noite-card resumo-col">
@@ -3001,7 +3237,7 @@ function paginaSobre(){
     <div class="noite-card">
       ${s.banner ? `<img class="sobre-banner" src="${esc(s.banner)}" alt="" onerror="this.style.display='none'">` : ''}
       <div class="noite-card-title" style="margin-bottom:10px; font-size:16px;">${esc(s.titulo || ED.titulo)}</div>
-      <div class="noite-card-synopsis" style="margin-bottom:0;">${esc(s.texto || 'Em breve.')}</div>
+      <div class="noite-card-synopsis texto-quebras" style="margin-bottom:0;">${esc(s.texto || 'Em breve.')}</div>
     </div>`);
 }
 
@@ -3027,7 +3263,7 @@ function paginaAbertura(){
     </div>
     <div class="noite-card">
       <div class="noite-card-title" style="margin-bottom:10px; font-size:16px;">Sobre a abertura</div>
-      <div class="noite-card-synopsis" style="margin-bottom:18px;">${esc(a.texto || 'Em breve.')}</div>
+      <div class="noite-card-synopsis texto-quebras" style="margin-bottom:18px;">${esc(a.texto || 'Em breve.')}</div>
       ${a.spotify ? `
       <div class="noite-card-title" style="margin-bottom:14px; font-size:16px;">Trilha sonora</div>
       <iframe style="border-radius:12px; border:none;" src="${esc(a.spotify)}" width="100%" height="352" allow="autoplay; clipboard-write; encrypted-media; fullscreen; picture-in-picture" loading="lazy"></iframe>` : ''}
@@ -3176,7 +3412,7 @@ function paginaNoite(n){
     checarMelhorHistoria().then(atualizarNotas);
     carregarHallDados().then(atualizarNotas); // badges extras do hall-dados.js
   });
-  setInterval(() => fetchVotos().then(atualizarNotas), 20000);
+  intervaloVisivel(() => fetchVotos().then(atualizarNotas), 20000);
 }
 
 /* =====================================================================
@@ -3283,7 +3519,11 @@ function paginaMonte(){
     const file = posterInput.files[0];
     if(!file) return;
     try{
-      const dataUrl = await reduzirImagem(file, 700, 0.82);
+      /* 700px era pouco: esse mesmo pôster é exportado no card de
+         compartilhamento a ~1080px de largura, então ele chegava lá já
+         ampliado (borrado). Em WebP, 1400px ocupa menos que os 700px em
+         JPEG de antes. */
+      const dataUrl = await reduzirImagem(file, 1400, 0.86);
       posterImg.src = dataUrl;
       idbSalvarPoster(posterIdbKey, dataUrl);
     }catch(e){ console.warn('Não foi possível processar a imagem', e); }
@@ -3591,7 +3831,7 @@ async function paginaHall(){
       }).join('')}</div>`;
     }
     renderTopRep();
-    setInterval(renderTopRep, 20000);
+    intervaloVisivel(renderTopRep, 20000);
   })();
 
   if(typeof Chart !== 'undefined'){
@@ -3605,17 +3845,7 @@ async function paginaHall(){
     /* Carrega TODAS as edições em paralelo (antes era um for serial: cada
        edição só começava depois da anterior terminar, deixando o Hall lento).
        Promise.all preserva a ordem do array, então o resultado é idêntico. */
-    const resultados = await Promise.all(EDICOES.map(async cfg => {
-      try{
-        const textos = await Promise.all([
-          fetch(`${BASE}${cfg.ano}/edicao.js`).then(r => r.text()),
-          ...Array.from({ length: cfg.noites }, (_, i) =>
-            fetch(`${BASE}${cfg.ano}/noites/noite-${i+1}.js`).then(r => r.text()))
-        ]);
-        const d = new Function(textos.join('\n') + '\n;return { EDICAO, NOITES };')();
-        return { cfg, ed: d.EDICAO, noites: d.NOITES };
-      }catch(e){ console.warn('Hall: falha ao carregar edição', cfg.ano, e); return null; }
-    }));
+    const resultados = await Promise.all(EDICOES.map(cfg => carregarDadosEdicao(cfg)));
     return resultados.filter(Boolean);
   }
 
@@ -4262,7 +4492,7 @@ async function paginaHall(){
   }
 
   await atualizar();
-  setInterval(atualizar, 20000); // atualiza sozinho a cada 20s (igual ao resto do site)
+  intervaloVisivel(atualizar, 20000); // atualiza sozinho a cada 20s (só com a aba à vista)
 }
 
 /* =====================================================================
@@ -4554,7 +4784,7 @@ async function paginaHome(){
     }
   }
   atualizarHome();
-  setInterval(atualizarHome, 20000);
+  intervaloVisivel(atualizarHome, 20000);
 }
 
 /* =====================================================================
@@ -5462,21 +5692,19 @@ async function paginaPerfil(){
   async function carregarOpcoesShowcase(){
     if(opcoesShowcaseCache) return opcoesShowcaseCache;
     const pecas = [], noites = [], playlists = [];
-    for(const cfg of reais){
-      try{
-        const textos = await Promise.all([
-          fetch(`${BASE}${cfg.ano}/edicao.js`).then(r => r.text()),
-          ...Array.from({ length: cfg.noites }, (_, i) => fetch(`${BASE}${cfg.ano}/noites/noite-${i+1}.js`).then(r => r.text()))
-        ]);
-        const d = new Function(textos.join('\n') + '\n;return { EDICAO, NOITES };')();
-        if(d.EDICAO && d.EDICAO.abertura && d.EDICAO.abertura.spotify) playlists.push({ ano: cfg.ano, url: d.EDICAO.abertura.spotify });
-        for(let n = 1; n <= cfg.noites; n++){
-          noites.push({ label: `Noite ${n} de ${cfg.ano}` });
-          const nd = d.NOITES && d.NOITES[n];
-          if(nd && Array.isArray(nd.pecas)) nd.pecas.forEach(p => pecas.push({ label: `${p.titulo} — Turma ${p.turma} (${cfg.ano})` }));
-        }
-      }catch(e){ /* edição sem arquivos ainda: só não entra nas opções */ }
-    }
+    /* em paralelo e pelo cache compartilhado: era um for serial que refazia
+       o download de tudo mesmo se o Hall já tivesse baixado na mesma sessão */
+    const carregadas = await Promise.all(reais.map(cfg => carregarDadosEdicao(cfg)));
+    carregadas.forEach(d => {
+      if(!d) return;                       // edição sem arquivos ainda: fica de fora
+      const cfg = d.cfg, ed = d.ed || {};
+      if(ed.abertura && ed.abertura.spotify) playlists.push({ ano: cfg.ano, url: ed.abertura.spotify });
+      for(let n = 1; n <= cfg.noites; n++){
+        noites.push({ label: `Noite ${n} de ${cfg.ano}` });
+        const nd = d.noites && d.noites[n];
+        if(nd && Array.isArray(nd.pecas)) nd.pecas.forEach(p => pecas.push({ label: `${p.titulo} — Turma ${p.turma} (${cfg.ano})` }));
+      }
+    });
     opcoesShowcaseCache = { pecas, noites, playlists };
     return opcoesShowcaseCache;
   }
@@ -5860,8 +6088,44 @@ async function paginaPerfil(){
     const cs = document.getElementById('carimbosSection'); if(cs) cs.style.display = '';
   }
 
+  /* ---------------------------------------------------------------------
+     Carga ÚNICA — o `setInterval(carregar, 30000)` que existia aqui foi
+     removido de propósito.
+
+     Ele redesenhava o perfil inteiro a cada 30s e, junto, jogava fora o que
+     a pessoa estava fazendo: a aba aberta voltava pra "Atividade", a
+     avaliação expandida fechava, a lista "ver todas as badges" recolhia, o
+     menu de reação fechava e a página pulava de scroll no meio de uma
+     leitura. E cobrava caro: uma requisição POR EDIÇÃO a cada 30 segundos,
+     em toda aba aberta, pra dados que quase não mudam.
+
+     No lugar, atualizamos só quando a pessoa VOLTA pra aba depois de um
+     tempo fora — e mesmo assim só se ela não estiver no meio de nada. */
   carregar();
-  setInterval(carregar, 30000);
+
+  const INTERVALO_REVALIDACAO = 5 * 60 * 1000;   // 5 min fora da aba
+  let ultimaCarga = Date.now();
+  let recarregando = false;
+
+  /* "está mexendo em algo?" — se estiver, a atualização espera a próxima
+     oportunidade em vez de puxar o tapete */
+  function estaOcupado(){
+    const a = document.activeElement;
+    if(a && (a.tagName === 'INPUT' || a.tagName === 'TEXTAREA' || a.tagName === 'SELECT' || a.isContentEditable)) return true;
+    if(document.querySelector('.share-overlay, .modal-overlay.open, .cropper-container')) return true;
+    if(window.getSelection && String(window.getSelection()).trim().length > 0) return true;
+    return false;
+  }
+
+  document.addEventListener('visibilitychange', async () => {
+    if(document.hidden || recarregando) return;
+    if(Date.now() - ultimaCarga < INTERVALO_REVALIDACAO) return;
+    if(estaOcupado()) return;
+    recarregando = true;
+    try{ await carregar(); ultimaCarga = Date.now(); }
+    catch(e){ /* rede caiu: fica com o que já está na tela */ }
+    finally{ recarregando = false; }
+  });
 }
 
 /* =====================================================================
@@ -5887,32 +6151,30 @@ async function paginaBusca(){
 
   /* carrega as peças/festivais de todas as edições (edicao.js + noites/*.js) */
   const pecas = [], festivais = [];
-  for(const cfg of reais){
-    try{
-      const textos = await Promise.all([
-        fetch(`${BASE}${cfg.ano}/edicao.js`).then(r => r.text()),
-        ...Array.from({ length: cfg.noites }, (_, i) => fetch(`${BASE}${cfg.ano}/noites/noite-${i+1}.js`).then(r => r.text()))
-      ]);
-      const d = new Function(textos.join('\n') + '\n;return { EDICAO, NOITES };')();
-      const ed = d.EDICAO || {};
-      /* ed.poster hoje costuma ser URL absoluta do bucket — concatenar com a
-         pasta do ano geraria "/2026/https://..." */
-      const poster = posterDaEdicao(cfg.ano, ed.poster);
-      const tema = (ed.sobre && ed.sobre.titulo) || '';   // a "mostra"/tema da edição
-      /* texto pesquisável do festival: nome + tema + descrição + texto do sobre */
-      const buscaFest = [ed.titulo, tema, ed.descricao, ed.sobre && ed.sobre.texto].filter(Boolean).join(' ').toLowerCase();
-      festivais.push({ ano: cfg.ano, titulo: ed.titulo || `Cetec Festival ${cfg.ano}`, tema, poster, url: `${BASE}${cfg.ano}/index.html`, busca: buscaFest });
-      for(let n = 1; n <= cfg.noites; n++){
-        const nd = d.NOITES && d.NOITES[n];
-        if(nd && Array.isArray(nd.pecas)) nd.pecas.forEach((p, i) => {
-          const sinopse = p.sinopse || '';
-          /* texto pesquisável da peça: título + turma + sinopse (o "tema" da peça) */
-          const buscaPeca = [p.titulo, p.turma, sinopse].filter(Boolean).join(' ').toLowerCase();
-          pecas.push({ ano: cfg.ano, noite: n, key: `s${n}e${i+1}`, titulo: p.titulo || '', turma: p.turma || '', sinopse, poster, url: `${BASE}${cfg.ano}/noite-${n}.html`, busca: buscaPeca });
-        });
-      }
-    }catch(e){ /* edição sem arquivos ainda: fica de fora */ }
-  }
+  /* em paralelo e pelo cache compartilhado: este laço era serial — com 15
+     edições, a busca só terminava de montar depois de 15 idas e voltas
+     encadeadas, e ainda rebaixava tudo o que o Hall já tinha buscado */
+  const carregadas = await Promise.all(reais.map(cfg => carregarDadosEdicao(cfg)));
+  carregadas.forEach(d => {
+    if(!d) return;                        // edição sem arquivos ainda: fica de fora
+    const cfg = d.cfg, ed = d.ed || {};
+    /* ed.poster hoje costuma ser URL absoluta do bucket — concatenar com a
+       pasta do ano geraria "/2026/https://..." */
+    const poster = posterDaEdicao(cfg.ano, ed.poster);
+    const tema = (ed.sobre && ed.sobre.titulo) || '';   // a "mostra"/tema da edição
+    /* texto pesquisável do festival: nome + tema + descrição + texto do sobre */
+    const buscaFest = [ed.titulo, tema, ed.descricao, ed.sobre && ed.sobre.texto].filter(Boolean).join(' ').toLowerCase();
+    festivais.push({ ano: cfg.ano, titulo: ed.titulo || `Cetec Festival ${cfg.ano}`, tema, poster, url: `${BASE}${cfg.ano}/index.html`, busca: buscaFest });
+    for(let n = 1; n <= cfg.noites; n++){
+      const nd = d.noites && d.noites[n];
+      if(nd && Array.isArray(nd.pecas)) nd.pecas.forEach((p, i) => {
+        const sinopse = p.sinopse || '';
+        /* texto pesquisável da peça: título + turma + sinopse (o "tema" da peça) */
+        const buscaPeca = [p.titulo, p.turma, sinopse].filter(Boolean).join(' ').toLowerCase();
+        pecas.push({ ano: cfg.ano, noite: n, key: `s${n}e${i+1}`, titulo: p.titulo || '', turma: p.turma || '', sinopse, poster, url: `${BASE}${cfg.ano}/noite-${n}.html`, busca: buscaPeca });
+      });
+    }
+  });
 
   /* votos → média por peça, média por festival, e lista de usuários */
   const votosPorAno = await Promise.all(reais.map(async e => {

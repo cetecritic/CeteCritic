@@ -15,7 +15,7 @@
    Ao publicar uma versão nova do site, troque o número em CACHE_VERSION
    para forçar a limpeza do cache antigo. */
  
-const CACHE_VERSION = 'cetecritic-v25';
+const CACHE_VERSION = 'cetecritic-v26';
  
 /* Lê o config.js para saber qual é o festival "em destaque" (EDICAO_EM_DESTAQUE)
    agora — assim, quando esse número mudar no config.js, o service worker passa
@@ -164,9 +164,12 @@ self.addEventListener('push', event => {
   try { dados = event.data ? event.data.json() : {}; }
   catch (e) { dados = { title: 'CETECritic', body: event.data ? event.data.text() : '' }; }
   const titulo = dados.title || 'CETECritic';
+  /* o arquivo é icon.JPG (é o que existe em /assets e o que o manifest usa).
+     Apontar pra icon.png dava 404 e a notificação saía com o ícone genérico
+     do navegador em vez da marca. */
   const opcoes = {
     body: dados.body || '',
-    icon: dados.icon || '/assets/icon.png',
+    icon: dados.icon || '/assets/icon.jpg',
     badge: '/assets/favicon.png',
     data: { url: dados.url || '/index.html' }
   };
@@ -178,8 +181,18 @@ self.addEventListener('notificationclick', event => {
   const destino = (event.notification.data && event.notification.data.url) || '/index.html';
   event.waitUntil((async () => {
     const clientes = await self.clients.matchAll({ type: 'window', includeUncontrolled: true });
-    for (const c of clientes) { if ('focus' in c) { c.navigate(destino); return c.focus(); } }
-    if (self.clients.openWindow) return self.clients.openWindow(destino);
+    const alvo = new URL(destino, self.location.origin).href;
+    /* se já existe uma aba NA PÁGINA certa, só foca. Antes o navigate()
+       rodava sempre e recarregava a aba à toa — se a pessoa estivesse
+       preenchendo uma avaliação, perdia o que tinha digitado. */
+    for (const c of clientes) { if (c.url === alvo && 'focus' in c) return c.focus(); }
+    for (const c of clientes) {
+      if ('focus' in c) {
+        try { if (c.navigate) await c.navigate(alvo); } catch (e) { /* aba de outra origem */ }
+        return c.focus();
+      }
+    }
+    if (self.clients.openWindow) return self.clients.openWindow(alvo);
   })());
 });
 
