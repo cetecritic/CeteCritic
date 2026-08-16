@@ -406,6 +406,15 @@ async function fetchVotos(){
   }catch(e){ console.error('Falha ao carregar avaliações', e); }
 }
 
+/* id de uma avaliação. Vira também o id do post no feed social (`sub:<id>`),
+   então precisa ser único de verdade — duas avaliações com o mesmo id
+   compartilhariam as reações. `randomUUID` existe em todo navegador que o
+   site já exige; o fallback cobre contexto sem HTTPS (dev local por IP). */
+function idAvaliacao(){
+  try{ if(crypto && typeof crypto.randomUUID === 'function') return crypto.randomUUID(); }catch(e){}
+  return Date.now() + '-' + Math.random().toString(36).slice(2,10) + Math.random().toString(36).slice(2,10);
+}
+
 async function postVoto(sub){
   if(!API_URL || API_URL.startsWith('COLE_AQUI')){
     alert('A planilha ainda não foi configurada (API_URL no config.js).');
@@ -3106,7 +3115,11 @@ function paginaEdicao(){
     const anon = !!(document.getElementById('reviewAnon') && document.getElementById('reviewAnon').checked);
     const logadoNaoAnon = sessAtual && !anon;
     const submission = {
-      id: Date.now() + '-' + Math.random().toString(36).slice(2,7),
+      /* `crypto.randomUUID()` no lugar de Date.now()+Math.random(): o id
+         antigo tinha cinco caracteres de aleatoriedade e não é único no
+         banco — e ele vira o id do post reagível no feed social, onde uma
+         colisão junta as reações de duas avaliações diferentes. */
+      id: idAvaliacao(),
       ts: Date.now(),
       name: (logadoNaoAnon ? sessAtual.user : (anon ? 'Anônimo' : reviewerNameEl.value.trim())).slice(0, 40),
       grid: { ...formValues },
@@ -7294,7 +7307,60 @@ function abrirTrocaNomeObrigatoria(m){
 
 checarModeracaoConta();
 
-/* ---------------------- dispatcher ---------------------- */
+/* =====================================================================
+   REDE DE SEGURANÇA — o site não pode virar uma página em branco
+   =====================================================================
+   `config.js` não é um arquivo estático: é gerado pelo /api/content, que
+   lê o banco. Quando ele falha (função caindo, Supabase fora do ar,
+   variável de ambiente errada), `EDICOES` e `EDICAO_EM_DESTAQUE` não
+   existem — e a primeira linha de `paginaHome()` que os usa lança
+   ReferenceError. A execução morre ANTES do `montarShell`, então não sai
+   nem sidebar, nem rodapé, nem mensagem: tela branca, sem nenhuma pista
+   pra quem está do outro lado.
+
+   Duas defesas aqui:
+
+   1. Se os globais essenciais não chegaram, mostramos uma tela de erro
+      honesta com botão de recarregar, em vez de tentar renderizar.
+   2. Se a página falhar por qualquer outro motivo, o try/catch em volta do
+      dispatcher transforma o erro numa tela legível — e ainda registra no
+      console pra quem for investigar. */
+function telaDeErro(titulo, detalhe){
+  document.body.innerHTML = `
+    <div style="min-height:100vh;display:flex;align-items:center;justify-content:center;padding:24px;
+                font-family:Inter,system-ui,sans-serif;background:#0e0f12;color:#eceef2;text-align:center;">
+      <div style="max-width:420px;">
+        <img src="${BASE}assets/logo.png" alt="CETECritic" style="max-width:150px;margin-bottom:20px;opacity:.9"
+             onerror="this.style.display='none'">
+        <h1 style="font-size:20px;margin:0 0 10px;color:#f5c518;">${esc(titulo)}</h1>
+        <p style="color:#b9bdc6;font-size:14px;line-height:1.6;margin:0 0 20px;">${esc(detalhe)}</p>
+        <button onclick="location.reload()"
+                style="background:#f5c518;color:#0b0c0f;border:0;border-radius:10px;padding:11px 26px;
+                       font-weight:800;cursor:pointer;font-size:14px;">Tentar de novo</button>
+        <p style="color:#6e727a;font-size:12px;margin:22px 0 0;">
+          Se continuar assim, avise em
+          <a href="mailto:cetecritic@gmail.com" style="color:#f5c518;">cetecritic@gmail.com</a>.
+        </p>
+      </div>
+    </div>`;
+}
+
+if(typeof EDICOES === 'undefined' || !Array.isArray(EDICOES)){
+  console.error('[cetecritic] config.js não carregou — EDICOES ausente. Confira /config.js no navegador.');
+  telaDeErro('Não conseguimos carregar o site',
+    'Os dados do festival não chegaram. Costuma ser passageiro — tente recarregar em alguns instantes.');
+}else{
+  try{
+    /* ---------------------- dispatcher ---------------------- */
+    despachar();
+  }catch(e){
+    console.error('[cetecritic] falha ao montar a página', PAGINA && PAGINA.tipo, e);
+    telaDeErro('Algo deu errado ao montar esta página',
+      'O erro foi registrado no console do navegador. Recarregar costuma resolver.');
+  }
+}
+
+function despachar(){
 switch(PAGINA.tipo){
   case 'edicao':   paginaEdicao(); break;
   case 'sobre':    paginaResumo(); break;
@@ -7312,6 +7378,7 @@ switch(PAGINA.tipo){
   case 'config':   paginaConfig(); break;
   case 'redefinir': paginaRedefinir(); break;
   default: console.error('PAGINA.tipo desconhecido:', PAGINA.tipo);
+}
 }
 
 /* =====================================================================
@@ -7344,9 +7411,11 @@ function mostrarOnboarding(){
   if(btn) btn.addEventListener('click', fechar);
   ov.addEventListener('click', ev => { if(ev.target === ov) fechar(); });
 }
-/* dispara só na HOME e DEPOIS que a página já pintou (não bloqueia o carregamento) */
+/* dispara só na HOME e DEPOIS que a página já pintou (não bloqueia o
+   carregamento). A checagem do `.sidebar` garante que a página montou de
+   verdade: se caiu na tela de erro, não faz sentido dar boas-vindas. */
 try{
   if(PAGINA.tipo === 'home' && !localStorage.getItem('cc_onboarded')){
-    setTimeout(mostrarOnboarding, 500);
+    setTimeout(() => { if(document.querySelector('.sidebar')) mostrarOnboarding(); }, 500);
   }
 }catch(e){ /* modo privado sem storage: simplesmente não mostra */ }

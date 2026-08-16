@@ -16,6 +16,34 @@ const norm = u => String(u || '').trim().toLowerCase();
 
 function asObj(v){ if(!v) return {}; if(typeof v === 'object') return v; try{ return JSON.parse(v); }catch(e){ return {}; } }
 
+/* ---------------------------------------------------------------------
+   apagarPorNome — DELETE por nome de usuário, do jeito seguro.
+
+   NUNCA use `.delete().ilike('usuario', nome)`. Em SQL, `_` é curinga de um
+   caractere em LIKE/ILIKE, e o regex de nome de usuário aceita `_`:
+
+       /^[A-Za-z0-9_.\- ]+$/
+
+   Ou seja: existindo `joao_silva` e `joaoXsilva`, apagar as sessões do
+   primeiro derrubava também as do segundo, que era deslogado sem entender
+   por quê. Com `deslogarTudo` e `definirBanimento`, um moderador acabava
+   derrubando a sessão de uma conta que nem selecionou.
+
+   O padrão correto — o mesmo que `migrarNomeUsuario` já usava nos UPDATEs —
+   é: ler com `ilike` (que é só um filtro amplo), conferir com `norm()`, e
+   apagar pelos valores EXATOS observados.
+   --------------------------------------------------------------------- */
+async function apagarPorNome(sb, tabela, coluna, nome){
+  const alvo = norm(nome);
+  if(!alvo) return { error: null, apagados: 0 };
+  const { data, error } = await sb.from(tabela).select(coluna).ilike(coluna, String(nome));
+  if(error) return { error, apagados: 0 };
+  const exatos = [...new Set((data || []).filter(r => norm(r[coluna]) === alvo).map(r => r[coluna]))];
+  if(!exatos.length) return { error: null, apagados: 0 };
+  const { error: e2 } = await sb.from(tabela).delete().in(coluna, exatos);
+  return { error: e2 || null, apagados: exatos.length };
+}
+
 /* mesmas regras do cadastro (apiRegistrar) — mantidas em UM lugar só para
    não divergirem com o tempo */
 const NOME_RE = /^[A-Za-z0-9_.\- ]+$/;
@@ -141,7 +169,7 @@ async function migrarNomeUsuario(sb, nomeAntigo, nomeNovo, opcoes){
 
   /* login_codes tem o usuário como chave primária: em vez de migrar, apaga —
      é só um código de 2FA de 5 minutos, pedir outro é trivial */
-  { const { error } = await sb.from('login_codes').delete().ilike('usuario', antigo); anota('apagar login_codes', error); }
+  { const { error } = await apagarPorNome(sb, 'login_codes', 'usuario', antigo); anota('apagar login_codes', error); }
 
   /* 3) apaga a linha antiga — só se as referências foram todas movidas,
      senão a FK barra e/ou sobram rastros apontando pro nome que sumiu */
@@ -155,7 +183,7 @@ async function migrarNomeUsuario(sb, nomeAntigo, nomeNovo, opcoes){
 
   /* 4) lista de amigos de terceiros ------------------------------------ */
   try{
-    const { data: todos } = await sb.from('usuarios').select('usuario,perfil');
+    const { data: todos } = await sb.from('usuarios').select('usuario,perfil').limit(10000);
     for(const r of (todos || [])){
       const p = asObj(r.perfil);
       if(!Array.isArray(p.amigos)) continue;
@@ -281,5 +309,6 @@ function podeExecutar(papel, acao){
 
 module.exports = {
   norm, asObj, validarNome, migrarNomeUsuario, estadoConta, mensagemBloqueio, REFERENCIAS,
-  PAPEIS, MAX_DIAS_BAN_MODERADOR, LIMPEZAS_SO_ADMIN, ITENS_SO_ADMIN, podeExecutar
+  PAPEIS, MAX_DIAS_BAN_MODERADOR, LIMPEZAS_SO_ADMIN, ITENS_SO_ADMIN, podeExecutar,
+  apagarPorNome
 };

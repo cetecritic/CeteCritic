@@ -50,5 +50,56 @@ module.exports = async (req, res) => {
   } catch (e) {
     res.status(500).json({ ok: false, error: String((e && e.message) || e) }); return;
   }
-  res.status(200).json({ ok: true, processados, falhas });
+
+  const limpeza = await faxina(agora);
+  res.status(200).json({ ok: true, processados, falhas, limpeza });
 };
+
+/* =====================================================================
+   FAXINA — retenção das tabelas que só crescem
+   =====================================================================
+   `resets`, `broadcasts`, `agendados`, `notificacoes`, `sessoes` e
+   `rate_limite` nunca eram limpas. `resets` era a mais incômoda: guardava
+   tokens de redefinição usados e expirados para sempre.
+
+   A limpeza vive aqui, pendurada no cron que já existe, porque o plano
+   Hobby da Vercel permite UM agendamento — não dá pra ter um cron próprio
+   de manutenção. Roda uma vez por dia, junto com os agendamentos.
+
+   CUIDADO com `broadcasts`: as linhas `bolao-%` são a memória de "este
+   aviso já saiu". Apagá-las faz o servidor recriar o banner e reenviar o
+   push pra base inteira. Elas ficam de fora de propósito.
+
+   Cada passo é isolado: um erro numa tabela não impede a limpeza das
+   outras, e nada aqui pode derrubar o processamento dos agendamentos, que
+   já aconteceu antes. */
+const DIA = 24 * 60 * 60 * 1000;
+async function faxina(agora) {
+  const feito = {};
+  const passo = async (nome, fn) => {
+    try { await fn(); feito[nome] = 'ok'; }
+    catch (e) { feito[nome] = 'erro: ' + ((e && e.message) || e); }
+  };
+
+  await passo('resets', async () => {
+    await sb.from('resets').delete().or('usado.eq.true,exp.lt.' + agora);
+  });
+  await passo('broadcasts', async () => {
+    await sb.from('broadcasts').delete()
+      .not('bc_id', 'like', 'bolao-%')
+      .lt('ts', agora - 90 * DIA);
+  });
+  await passo('agendados', async () => {
+    await sb.from('agendados').delete().eq('enviado', true).lt('quando', agora - 90 * DIA);
+  });
+  await passo('notificacoes', async () => {
+    await sb.from('notificacoes').delete().eq('lida', true).lt('ts', agora - 180 * DIA);
+  });
+  await passo('sessoes', async () => {
+    await sb.from('sessoes').delete().lt('ultimo_uso', agora - 180 * DIA);
+  });
+  await passo('rate_limite', async () => {
+    await sb.from('rate_limite').delete().lt('janela_ate', agora - DIA);
+  });
+  return feito;
+}

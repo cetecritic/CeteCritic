@@ -22,11 +22,16 @@ const { createClient } = require('@supabase/supabase-js');
 const webpush = require('web-push');
 const {
   migrarNomeUsuario, estadoConta, validarNome,
-  PAPEIS, MAX_DIAS_BAN_MODERADOR, LIMPEZAS_SO_ADMIN, ITENS_SO_ADMIN, podeExecutar
+  PAPEIS, MAX_DIAS_BAN_MODERADOR, LIMPEZAS_SO_ADMIN, ITENS_SO_ADMIN, podeExecutar,
+  apagarPorNome
 } = require('./_moderacao');
 const sb = createClient(process.env.SUPABASE_URL, process.env.SUPABASE_SECRET_KEY, { auth: { persistSession: false } });
 
 const norm = u => String(u || '').trim().toLowerCase();
+
+/* Teto explícito de linhas. O PostgREST corta em 1000 por padrão, em
+   silêncio — ver o bloco equivalente em api/db.js. */
+const LIMITE_ALTO = 10000;
 
 /* ---- push (para notificações direcionadas do admin) ---- */
 function limparSubject(s) {
@@ -149,6 +154,46 @@ async function lerConfig() {
   const { data } = await sb.from('config_site').select('dados').eq('id', 1).limit(1);
   return (data && data[0] && data[0].dados) ? data[0].dados : {};
 }
+/* ---------------------------------------------------------------------
+   GRAVAÇÃO DO CONFIG COM CONCORRÊNCIA OTIMISTA
+
+   Toda a configuração do site é UMA linha de jsonb, e salvar é
+   ler-alterar-regravar. ANTES não havia controle nenhum: dois admins
+   salvando ao mesmo tempo — coisa nada rara na véspera do festival, com
+   três pessoas mexendo — e um perdia a alteração, sem aviso.
+
+   A versão mora dentro do próprio jsonb (`dados._versao`), então não houve
+   migração: o filtro `dados->>_versao` é aplicado no UPDATE, e o Postgres
+   resolve a corrida. Se a linha mudou desde a leitura, o update não
+   encontra nada e devolvemos 409 pedindo pra recarregar.
+   --------------------------------------------------------------------- */
+async function gravarConfig(dados, versaoEsperada) {
+  const proxima = String(Date.now()) + '-' + Math.random().toString(36).slice(2, 8);
+  const novo = Object.assign({}, dados, { _versao: proxima });
+
+  /* linha ainda não existe: cria */
+  const atualQ = await sb.from('config_site').select('dados').eq('id', 1).limit(1);
+  const atual = atualQ.data && atualQ.data[0];
+  if (!atual) {
+    const { error } = await sb.from('config_site').insert({ id: 1, dados: novo });
+    return { ok: !error, error: error ? error.message : null, versao: proxima };
+  }
+
+  const versaoAtual = (atual.dados && atual.dados._versao) ? String(atual.dados._versao) : null;
+
+  /* sem versão esperada = chamada antiga (ou primeira depois desta mudança):
+     grava sem conferir, pra não travar ninguém */
+  let q = sb.from('config_site').update({ dados: novo }).eq('id', 1);
+  if (versaoEsperada && versaoAtual) q = q.eq('dados->>_versao', String(versaoEsperada));
+
+  const { data, error } = await q.select('id');
+  if (error) return { ok: false, error: error.message };
+  if (versaoEsperada && versaoAtual && (!data || !data.length)) {
+    return { ok: false, conflito: true, error: 'alguém salvou a configuração enquanto você editava. Recarregue o painel e refaça a alteração — o que você digitou NÃO foi gravado.' };
+  }
+  return { ok: true, versao: proxima };
+}
+
 async function lerEdicoesLista() {
   const { data } = await sb.from('edicoes').select('*').order('ordem', { ascending: false });
   return data || [];
@@ -273,6 +318,51 @@ async function handleGet(req, res) {
     return jsResp(res, js);
   }
 
+  /* ---------------------------------------------------------------------
+     SITEMAP GERADO A PARTIR DO BANCO
+
+     O `sitemap.xml` do repositório é escrito à mão. Como uma edição criada
+     no painel já fica navegável sem deploy, ela nascia invisível pro Google
+     até alguém lembrar de editar o XML — e ninguém lembra.
+
+     Esta rota monta o sitemap a partir de `edicoes` e `noites`, então ele
+     nunca envelhece. Para ativá-la, apague o `sitemap.xml` estático do
+     repositório: na Vercel os rewrites só valem DEPOIS da checagem do
+     sistema de arquivos, então enquanto o arquivo existir ele é quem
+     responde, e esta rota fica dormindo sem atrapalhar nada.
+     --------------------------------------------------------------------- */
+  if (q.file === 'sitemap') {
+    const base = (process.env.RESET_SITE_URL || 'https://cetecritic.xyz').replace(/\/$/, '');
+    const { data: eds } = await sb.from('edicoes').select('ano,noites,em_breve').order('ano', { ascending: false }).limit(LIMITE_ALTO);
+    const url = (caminho, freq, prio) =>
+      '  <url><loc>' + base + caminho + '</loc><changefreq>' + freq + '</changefreq><priority>' + prio + '</priority></url>';
+
+    const linhas = [
+      url('/', 'weekly', '1.0'),
+      url('/hall.html', 'weekly', '0.9'),
+      url('/busca.html', 'monthly', '0.6')
+    ];
+    (eds || []).forEach(e => {
+      const ano = Number(e.ano);
+      if (!ano) return;
+      if (e.em_breve) { linhas.push(url('/em-breve.html?ano=' + ano, 'weekly', '0.5')); return; }
+      linhas.push(url('/' + ano, 'monthly', '0.8'));
+      linhas.push(url('/' + ano + '/sobre.html', 'yearly', '0.6'));
+      linhas.push(url('/' + ano + '/abertura.html', 'yearly', '0.5'));
+      const n = Number(e.noites) || 5;
+      for (let i = 1; i <= n; i++) linhas.push(url('/' + ano + '/noite-' + i + '.html', 'yearly', '0.6'));
+    });
+
+    const xml = '<?xml version="1.0" encoding="UTF-8"?>\n'
+      + '<!-- gerado por /api/content (sitemap) a partir da tabela `edicoes` -->\n'
+      + '<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">\n'
+      + linhas.join('\n') + '\n</urlset>\n';
+    res.setHeader('Content-Type', 'application/xml; charset=utf-8');
+    res.setHeader('Cache-Control', 'public, max-age=0, s-maxage=3600, must-revalidate');
+    res.status(200).send(xml);
+    return;
+  }
+
   if (q.file === 'hall') { const cfg = await lerConfig(); return jsResp(res, `/* gerado por /api/content (hall) */\nconst HALL = ${JSON.stringify(cfg.HALL || {})};\n`); }
   if (q.file === 'perfil') { const cfg = await lerConfig(); return jsResp(res, `/* gerado por /api/content (perfil) */\nconst PERFIL = ${JSON.stringify(cfg.PERFIL || {})};\n`); }
   if (q.file === 'home') { const cfg = await lerConfig(); return jsResp(res, `/* gerado por /api/content (home) */\nconst HOME_DADOS = ${JSON.stringify(cfg.HOME_DADOS || {})};\n`); }
@@ -307,7 +397,20 @@ async function handleGet(req, res) {
     return jsResp(res, js);
   }
 
-  // ----- JSON pro painel admin -----
+  /* ===================================================================
+     JSON pro painel admin — DAQUI PRA BAIXO, SÓ COM CREDENCIAL
+     ===================================================================
+     ANTES estas rotas não verificavam nada: `identificarEquipe` só era
+     chamado no handlePost. Um `curl .../api/content?q=config` devolvia o
+     `config_site.dados` inteiro pra qualquer pessoa — e é justamente esse o
+     balde onde um admin naturalmente cola uma chave, um webhook ou um texto
+     interno.
+
+     As rotas `?file=` acima continuam públicas de propósito: são elas que o
+     site carrega em toda visita, sem login. */
+  const eu = await identificarEquipe(q.user, q.token);
+  if (!eu) { res.status(403).json({ ok: false, error: 'acesso restrito à equipe' }); return; }
+
   if (q.q === 'config') { res.status(200).json({ ok: true, dados: await lerConfig() }); return; }
   if (q.q === 'indice') {   // índice de busca do admin: edições + todas as peças
     const { data: eds } = await sb.from('edicoes').select('ano,titulo,em_breve').order('ano', { ascending: false });
@@ -603,7 +706,7 @@ async function handlePost(req, res) {
        basta limpar a tabela `sessoes`: o token legado mora em usuarios.token
        e continuaria valendo sozinho. */
     if (valor) {
-      try { await sb.from('sessoes').delete().ilike('usuario', linha.usuario); } catch (e) { /* segue */ }
+      try { await apagarPorNome(sb, 'sessoes', 'usuario', linha.usuario); } catch (e) { /* segue */ }
       try { await sb.from('usuarios').update({ token: null }).eq('usuario', linha.usuario); } catch (e) { /* segue */ }
     }
     return res.status(200).json({ ok: true });
@@ -622,7 +725,7 @@ async function handlePost(req, res) {
   if (action === 'deslogarTudo') {
     const linha = await acharLinhaUsuario(String(body.alvo || ''));
     if (!linha) return res.status(404).json({ ok: false, error: 'usuário não encontrado' });
-    const { error } = await sb.from('sessoes').delete().ilike('usuario', linha.usuario);
+    const { error } = await apagarPorNome(sb, 'sessoes', 'usuario', linha.usuario);
     /* o token legado mora em usuarios.token — zerar também, senão a sessão
        antiga de quem nunca relogou continua valendo */
     await sb.from('usuarios').update({ token: null }).eq('usuario', linha.usuario);
@@ -928,7 +1031,7 @@ async function handlePost(req, res) {
     await delWhere('notificacoes', ['usuario']);
     await delWhere('sessoes',      ['usuario']);
 
-    { const { error } = await sb.from('login_codes').delete().ilike('usuario', alvo); anota('apagar login_codes', error); }
+    { const { error } = await apagarPorNome(sb, 'login_codes', 'usuario', alvo); anota('apagar login_codes', error); }
 
     {
       const { data, error } = await sb.from('push').select('endpoint,usuario').ilike('usuario', alvo);
@@ -948,14 +1051,13 @@ async function handlePost(req, res) {
 
   if (action === 'salvarConfig') {
     const dados = (body.dados && typeof body.dados === 'object') ? body.dados : {};
-    await sb.from('config_site').upsert({ id: 1, dados }, { onConflict: 'id' });
-    return res.status(200).json({ ok: true });
+    const r = await gravarConfig(dados, body.versao);
+    if (!r.ok) return res.status(r.conflito ? 409 : 500).json({ ok: false, error: r.error });
+    return res.status(200).json({ ok: true, versao: r.versao });
   }
 
   // ----- postar no FEED social (aparece na aba Social > Geral do perfil) -----
   if (action === 'postarFeed') {
-    const cfg = await lerConfig();
-    const feed = Array.isArray(cfg.feed) ? cfg.feed : [];
     const item = {
       autor: String(body.autor || 'CETECritic').slice(0, 40),
       emoji: String(body.emoji || '📣').slice(0, 4),
@@ -964,10 +1066,19 @@ async function handlePost(req, res) {
       ts: Date.now()
     };
     if (!item.texto) return res.status(400).json({ ok: false, error: 'escreva o texto do post' });
-    feed.unshift(item);
-    const novo = Object.assign({}, cfg, { feed: feed.slice(0, 40) });
-    await sb.from('config_site').upsert({ id: 1, dados: novo }, { onConflict: 'id' });
-    return res.status(200).json({ ok: true });
+
+    /* ler-alterar-regravar com retentativa: se outra gravação entrou no meio,
+       relemos e tentamos de novo em vez de sobrescrever o trabalho dela */
+    for (let tentativa = 0; tentativa < 3; tentativa++) {
+      const cfg = await lerConfig();
+      const feed = Array.isArray(cfg.feed) ? cfg.feed : [];
+      feed.unshift(item);
+      const novo = Object.assign({}, cfg, { feed: feed.slice(0, 40) });
+      const r = await gravarConfig(novo, cfg._versao);
+      if (r.ok) return res.status(200).json({ ok: true });
+      if (!r.conflito) return res.status(500).json({ ok: false, error: r.error });
+    }
+    return res.status(409).json({ ok: false, error: 'o painel está sendo salvo por outra pessoa agora — tente de novo em alguns segundos' });
   }
 
   if (action === 'deletarEdicao') {
@@ -1019,6 +1130,47 @@ async function handlePost(req, res) {
         }
       }
     }
+
+    /* ---- trava de remanejamento: vale pra TODO MUNDO, inclusive admin ----
+       A peça não tem id próprio — ela É a posição dela na grade (`sNeM`), e
+       essa string é a chave dos votos em `submissions.grid` e dos palpites.
+
+       Como esta rota reinsere as peças renumerando (`ordem: i + 1`), tirar
+       uma peça do meio faz todas as seguintes subirem uma posição, e cada
+       nota já dada passa a apontar para a peça errada. Em silêncio: sem
+       erro, sem log, sem nada. Alguém só estranha meses depois, quando o
+       campeão daquele ano "mudou".
+
+       A trava do historiador logo acima já cobria isso pra ele. Aqui a
+       mesma regra passa a valer pro admin — mas só quando há histórico em
+       jogo, isto é, quando aquele ano já tem votos. Editar uma edição que
+       ninguém votou continua livre.
+
+       Escape consciente: `body.confirmarRemanejamento === true` libera, pra
+       quando a remoção for mesmo o que se quer e as chaves já tiverem sido
+       remanejadas em SQL na mão. */
+    if (!body.confirmarRemanejamento && Array.isArray(body.noites)) {
+      const { data: votos } = await sb.from('submissions').select('row_id').eq('year', ano).limit(1);
+      if (votos && votos.length) {
+        const { data: pecasAtuais } = await sb.from('pecas').select('noite').eq('ano', ano).limit(LIMITE_ALTO);
+        const contaAtual = {};
+        (pecasAtuais || []).forEach(p => { const n = Number(p.noite); contaAtual[n] = (contaAtual[n] || 0) + 1; });
+        for (const n of Object.keys(contaAtual)) {
+          const nd = body.noites.find(x => Number(x.noite) === Number(n));
+          const qtd = (nd && Array.isArray(nd.pecas)) ? nd.pecas.length : 0;
+          if (qtd < contaAtual[n]) {
+            return res.status(409).json({
+              ok: false,
+              error: 'a noite ' + n + ' tem ' + contaAtual[n] + ' peça(s) e o envio traz ' + qtd +
+                     '. Esta edição JÁ TEM VOTOS: remover uma peça renumera as seguintes e faz as notas '
+                     + 'apontarem para a peça errada. Para corrigir o texto de uma peça que não aconteceu, '
+                     + 'esvazie o título em vez de tirá-la da lista.'
+            });
+          }
+        }
+      }
+    }
+
     const row = {
       ano,
       ordem: e.ordem != null ? Number(e.ordem) : ano,
@@ -1039,22 +1191,55 @@ async function handlePost(req, res) {
     };
     await sb.from('edicoes').upsert(row, { onConflict: 'ano' });
 
-    // noites + peças (substitui tudo do ano pelo que veio)
+    /* ---- noites + peças: substitui tudo do ano pelo que veio ----
+
+       O PostgREST não expõe transação, então DELETE seguido de INSERT tem
+       uma janela em que o ano fica sem conteúdo. ANTES essa janela era maior
+       do que precisava: as linhas eram montadas dentro do laço, DEPOIS do
+       delete, e nenhum erro de insert era conferido — se a função caísse no
+       meio (timeout da Vercel, hiccup do banco), a edição ficava sem noites
+       e sem peças, com os votos apontando pro vazio, e a resposta ainda era
+       `ok: true`.
+
+       Agora: monta e valida TUDO em memória primeiro, e só então apaga e
+       grava, em duas escritas em lote. A janela vira alguns milissegundos, e
+       qualquer erro é devolvido em vez de engolido. */
     if (Array.isArray(body.noites)) {
-      await sb.from('pecas').delete().eq('ano', ano);
-      await sb.from('noites').delete().eq('ano', ano);
+      const linhasNoites = [];
+      const linhasPecas = [];
       for (const nd of body.noites) {
         const noite = Number(nd.noite);
         if (!noite) continue;
-        await sb.from('noites').insert({ ano, noite, data: nd.data || null, subtitulo: nd.subtitulo || null });
-        const pecas = Array.isArray(nd.pecas) ? nd.pecas : [];
-        if (pecas.length) {
-          await sb.from('pecas').insert(pecas.map((p, i) => ({
+        linhasNoites.push({ ano, noite, data: nd.data || null, subtitulo: nd.subtitulo || null });
+        (Array.isArray(nd.pecas) ? nd.pecas : []).forEach((p, i) => {
+          linhasPecas.push({
             ano, noite, ordem: i + 1,
             titulo: p.titulo || '', turma: p.turma || '', sinopse: p.sinopse || '',
             youtube: p.youtube || '', youtube_inicio: Number(p.youtubeInicio ?? p.youtube_inicio) || 0
-          })));
-        }
+          });
+        });
+      }
+
+      const del1 = await sb.from('pecas').delete().eq('ano', ano);
+      if (del1.error) return res.status(500).json({ ok: false, error: 'não deu pra limpar as peças: ' + del1.error.message });
+      const del2 = await sb.from('noites').delete().eq('ano', ano);
+      if (del2.error) return res.status(500).json({ ok: false, error: 'não deu pra limpar as noites: ' + del2.error.message });
+
+      if (linhasNoites.length) {
+        const ins1 = await sb.from('noites').insert(linhasNoites);
+        if (ins1.error) return res.status(500).json({
+          ok: false,
+          error: 'AS NOITES NÃO FORAM GRAVADAS e as antigas já tinham sido apagadas: ' + ins1.error.message +
+                 ' — reenvie o formulário antes de sair da página.'
+        });
+      }
+      if (linhasPecas.length) {
+        const ins2 = await sb.from('pecas').insert(linhasPecas);
+        if (ins2.error) return res.status(500).json({
+          ok: false,
+          error: 'AS PEÇAS NÃO FORAM GRAVADAS e as antigas já tinham sido apagadas: ' + ins2.error.message +
+                 ' — reenvie o formulário antes de sair da página.'
+        });
       }
     }
     return res.status(200).json({ ok: true });

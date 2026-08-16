@@ -427,7 +427,14 @@ async function post(action, extra){
   const r = await fetch(API, { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify(body) });
   return r.json();
 }
-async function getJson(params){ const r = await fetch(API + '?' + params + '&_=' + Date.now(), { cache:'no-store' }); return r.json(); }
+/* As leituras `?q=` do painel exigem credencial desde 08/2026 (antes qualquer
+   um lia o config inteiro por GET). Por isso user+token viajam na querystring
+   — é um GET, não há corpo onde colocá-los. */
+async function getJson(params){
+  const cred = SESS ? ('&user=' + encodeURIComponent(SESS.user) + '&token=' + encodeURIComponent(SESS.token)) : '';
+  const r = await fetch(API + '?' + params + cred + '&_=' + Date.now(), { cache:'no-store' });
+  return r.json();
+}
 const $ = id => document.getElementById(id);
 
 /* ---------- papel de quem está usando o painel ----------
@@ -495,10 +502,20 @@ function carregarAvancado(){
 
 /* ---- editores amigáveis de lista (curiosidades, badges, neste dia) ---- */
 function escH(s){ return String(s == null ? '' : s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/"/g,'&quot;'); }
+/* ---- gravação do config, com concorrência otimista ----
+   Mandamos junto a versão que estava na tela quando carregamos. Se outra
+   pessoa salvou nesse meio-tempo, o servidor responde 409 e a alteração NÃO
+   é gravada — melhor um aviso do que sobrescrever o trabalho de alguém em
+   silêncio, que era o que acontecia antes. */
+async function salvarConfigSeguro(dados){
+  const r = await post('salvarConfig', { dados, versao: CFG._versao });
+  if(r && r.ok){ CFG = Object.assign({}, dados, { _versao: r.versao }); }
+  return r;
+}
 async function salvarSilencioso(dados){
   const el = $('edavMsg'); if(el) el.textContent = 'Salvando…';
-  const r = await post('salvarConfig', { dados });
-  if(r && r.ok){ CFG = dados; if(el){ el.textContent = 'Salvo ✓'; setTimeout(() => el.textContent = '', 1500); } }
+  const r = await salvarConfigSeguro(dados);
+  if(r && r.ok){ if(el){ el.textContent = 'Salvo ✓'; setTimeout(() => el.textContent = '', 1500); } }
   else if(el) el.textContent = 'Erro: ' + ((r&&r.error)||'');
 }
 /* editor genérico de uma lista de objetos */
@@ -577,8 +594,8 @@ function montarEditoresAvancados(){
 }
 async function salvarDados(dados, msgEl){
   if(msgEl) msgEl.textContent = 'Salvando…';
-  const r = await post('salvarConfig', { dados });
-  if(r && r.ok){ CFG = dados; if(msgEl) msgEl.textContent = 'Salvo ✓'; carregarAvancado(); }
+  const r = await salvarConfigSeguro(dados);
+  if(r && r.ok){ if(msgEl) msgEl.textContent = 'Salvo ✓'; carregarAvancado(); }
   else if(msgEl) msgEl.textContent = 'Erro: ' + ((r&&r.error)||'');
 }
 document.addEventListener('click', ev => {
@@ -605,8 +622,11 @@ $('btnSalvarConfig').addEventListener('click', async () => {
     RODAPE: $('cfgRodape').value
   });
   $('cfgMsg').textContent = 'Salvando…';
-  const r = await post('salvarConfig', { dados });
-  $('cfgMsg').textContent = (r && r.ok) ? 'Salvo ✓' : ('Erro: ' + ((r&&r.error)||'')); CFG = dados;
+  const r = await salvarConfigSeguro(dados);
+  /* CFG só é substituído quando a gravação passou — salvarConfigSeguro já
+     cuida disso. Antes a linha atualizava CFG mesmo em caso de erro, e o
+     painel passava a exibir um estado que não estava no banco. */
+  $('cfgMsg').textContent = (r && r.ok) ? 'Salvo ✓' : ('Erro: ' + ((r&&r.error)||''));
   if(r && r.ok) limparDirty('config');
 });
 

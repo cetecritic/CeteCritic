@@ -39,7 +39,9 @@ async function enviarParaTodos({ title, body, url, dur, semBroadcast }) {
   );
 
   // lê as inscrições direto do Supabase
-  const { data: rows } = await sb.from('push').select('endpoint,p256dh,auth');
+  /* limite explícito: sem ele o PostgREST corta em 1000 e o push simplesmente
+     não chega a parte da base, sem nenhum aviso */
+  const { data: rows } = await sb.from('push').select('endpoint,p256dh,auth').limit(10000);
   const subs = (rows || []).filter(r => r.endpoint).map(r => ({ endpoint: r.endpoint, keys: { p256dh: r.p256dh, auth: r.auth } }));
 
   const payload = JSON.stringify({ title: title || 'CETECritic', body: body || '', url: url || '/index.html' });

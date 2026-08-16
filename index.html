@@ -22,10 +22,21 @@
 <script src="config.js"></script>
 <script src="home-dados.js"></script>
 <script>
-/* carrega os dados da edição em destaque (definida no config.js) */
-document.write('<script src="' + EDICAO_EM_DESTAQUE + '/edicao.js"><\/script>');
-const _n = (EDICOES.find(e => e.ano === EDICAO_EM_DESTAQUE) || { noites: 5 }).noites;
-for(let n = 1; n <= _n; n++) document.write('<script src="' + EDICAO_EM_DESTAQUE + '/noites/noite-' + n + '.js"><\/script>');
+/* Carrega os dados da edição em destaque (definida no config.js).
+
+   O try/catch existe porque `config.js` NÃO é um arquivo estático: ele é
+   gerado pelo /api/content a partir do banco. Quando ele falha,
+   EDICAO_EM_DESTAQUE não existe, a linha abaixo lança ReferenceError e o
+   parser abandona o bloco inteiro — inclusive a tag do core.js, que nem
+   chega a ser inserida. Resultado: página branca, sem uma pista sequer.
+
+   Com o try/catch, o core.js sempre carrega, percebe que EDICOES não veio e
+   mostra a tela de erro com botão de recarregar (ver o fim do core.js). */
+try{
+  document.write('<script src="' + EDICAO_EM_DESTAQUE + '/edicao.js"><\/script>');
+  const _n = (EDICOES.find(e => e.ano === EDICAO_EM_DESTAQUE) || { noites: 5 }).noites;
+  for(let n = 1; n <= _n; n++) document.write('<script src="' + EDICAO_EM_DESTAQUE + '/noites/noite-' + n + '.js"><\/script>');
+}catch(e){ console.error('[cetecritic] config.js não carregou:', e); }
 </script>
 <script src="assets/core.js"></script>
 </body>

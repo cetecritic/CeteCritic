@@ -8,6 +8,8 @@
     { "source": "/hall-dados.js",  "destination": "/api/content?file=hall" },
     { "source": "/perfil.js",      "destination": "/api/content?file=perfil" },
 
+    { "source": "/sitemap.xml",    "destination": "/api/content?file=sitemap" },
+
     { "source": "/:ano(\\d{4})/edicao.js", "destination": "/api/content?file=edicao&ano=:ano" },
 
     { "source": "/:ano(\\d{4})/noites/noite-:noite(\\d+).js", "destination": "/api/content?file=noites&ano=:ano&noite=:noite" },

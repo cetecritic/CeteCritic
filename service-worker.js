@@ -15,7 +15,7 @@
    Ao publicar uma versão nova do site, troque o número em CACHE_VERSION
    para forçar a limpeza do cache antigo. */
  
-const CACHE_VERSION = 'cetecritic-v27';
+const CACHE_VERSION = 'cetecritic-v28';
 
 /* Cache SEPARADO para as imagens de outro domínio (os posters moram no
    Supabase Storage). Fica fora do CACHE_VERSION de propósito: um poster não

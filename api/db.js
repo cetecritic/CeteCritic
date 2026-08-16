@@ -15,7 +15,7 @@
    ===================================================================== */
 const { createClient } = require('@supabase/supabase-js');
 const crypto = require('crypto');
-const { migrarNomeUsuario, estadoConta, mensagemBloqueio, validarNome } = require('./_moderacao');
+const { migrarNomeUsuario, estadoConta, mensagemBloqueio, validarNome, apagarPorNome } = require('./_moderacao');
 /* usado pelos avisos automáticos do bolão (abertura/fechamento) */
 const { enviarParaTodos } = require('./enviar-push');
 
@@ -25,8 +25,34 @@ const sb = createClient(process.env.SUPABASE_URL, process.env.SUPABASE_SECRET_KE
 
 /* ---------------- constantes (iguais ao .gs) ---------------- */
 const MAX_RATING = 10;
-const CURRENT_EDITION_YEAR = 2026;
 const MAX_TENTATIVAS = 5;
+
+/* ---------------------------------------------------------------------
+   TETO DE LINHAS
+
+   O PostgREST corta o resultado em 1000 linhas por padrão — sem erro, sem
+   aviso. Você simplesmente recebe menos dados do que existe, e o código
+   segue calculando em cima do pedaço.
+
+   Isso já mordeu este projeto: uma versão do apiDeletarConta usava
+   select('*') sem filtro, as linhas do usuário não vinham, a FK barrava o
+   delete final, o erro era engolido e a função devolvia ok:true com a conta
+   ainda no banco.
+
+   `LIMITE_ALTO` existe para deixar o teto EXPLÍCITO, e `avisarSeTruncou`
+   grita no log quando o resultado volta exatamente cheio — que é o sinal de
+   que a hora de paginar chegou. Prefira sempre um filtro que garanta poucas
+   linhas; o limite é a rede de segurança, não a solução.
+   --------------------------------------------------------------------- */
+const LIMITE_ALTO = 10000;
+function avisarSeTruncou(nome, data, limite){
+  const n = (data || []).length;
+  if(n >= (limite || LIMITE_ALTO)){
+    console.warn('[cetecritic] ATENÇÃO: "' + nome + '" voltou com ' + n +
+      ' linhas (no limite). Há dados sendo ignorados — hora de paginar.');
+  }
+  return data || [];
+}
 /* uma mensagem só pra "não existe" e "senha errada" — ver apiLogin */
 const ERRO_LOGIN = 'usuário ou senha incorretos';
 const LOCK_MS = 10 * 60 * 1000;
@@ -52,12 +78,88 @@ let _fimCache = null, _fimCacheAt = 0;
 async function fimVotacaoMap(){
   if(_fimCache && (Date.now() - _fimCacheAt) < 30000) return _fimCache;
   try{
-    const { data } = await sb.from('edicoes').select('ano,fim_votacao');
+    const { data } = await sb.from('edicoes').select('ano,fim_votacao').limit(LIMITE_ALTO);
     const m = {};
     (data||[]).forEach(r => { m[Number(r.ano)] = r.fim_votacao || null; });
     _fimCache = m; _fimCacheAt = Date.now();
   }catch(e){ _fimCache = _fimCache || {}; }
   return _fimCache;
+}
+
+/* ---------------------------------------------------------------------
+   EDIÇÃO EM DESTAQUE — lida do banco, não fixada no código.
+
+   ANTES existia aqui um `const CURRENT_EDITION_YEAR = 2026`, usado como
+   `year` padrão do voto e do palpite quando o cliente não mandava. Todo o
+   resto do sistema já descobria a edição atual pelo `config_site`; só este
+   ponto não descobria. Resultado: no ano em que 2027 virasse destaque e
+   alguém esquecesse de trocar a constante, um voto sem `year` explícito ia
+   parar em 2026 — a classe de bug que aparece uma vez por ano e sempre na
+   pior hora.
+
+   O fallback existe para o caso de o banco não responder: melhor um ano
+   provavelmente certo do que `NaN` no meio de uma votação.
+   --------------------------------------------------------------------- */
+const ANO_FALLBACK = 2026;
+let _destaqueCache = null, _destaqueCacheAt = 0;
+async function anoEmDestaque(){
+  if(_destaqueCache && (Date.now() - _destaqueCacheAt) < 30000) return _destaqueCache;
+  try{
+    const { data } = await sb.from('config_site').select('dados').eq('id', 1).limit(1);
+    const y = Number(data && data[0] && data[0].dados && data[0].dados.EDICAO_EM_DESTAQUE);
+    if(y){ _destaqueCache = y; _destaqueCacheAt = Date.now(); return y; }
+  }catch(e){ /* cai no fallback */ }
+  return _destaqueCache || ANO_FALLBACK;
+}
+
+/* ---------------------------------------------------------------------
+   LIMITE DE TAXA (rate limit)
+
+   Janela fixa contada na tabela `rate_limite` (ver migracao-seguranca.sql).
+   É deliberadamente simples: uma linha por chave, com um contador e a hora
+   em que a janela expira. Não é um algoritmo preciso — duas instâncias da
+   Vercel podem incrementar juntas e deixar passar uma chamada a mais. Isso
+   é aceitável: o objetivo é impedir automação em massa, não contar de forma
+   exata.
+
+   Se a tabela não existir (migração não rodou), tudo é liberado e um aviso
+   vai pro log. É o mesmo padrão de degradação que o projeto já usa com as
+   colunas `papel` e `sessoes`: uma migração pendente não pode derrubar o
+   site no meio do festival.
+   --------------------------------------------------------------------- */
+let _rateIndisponivel = false;
+function hashCurto(s){
+  return crypto.createHash('sha256').update(String(s || '')).digest('hex').slice(0, 32);
+}
+/* o IP de quem chamou, do jeito que a Vercel entrega. Guardamos só o HASH:
+   serve pra contar sem virar um cadastro de endereços de quem votou. */
+function ipDe(req){
+  const xf = String((req && req.headers && req.headers['x-forwarded-for']) || '');
+  const ip = xf.split(',')[0].trim() || String((req && req.headers && req.headers['x-real-ip']) || '') || 'sem-ip';
+  return hashCurto(ip + '|' + (process.env.RATE_SALT || 'cetecritic'));
+}
+/* devolve { ok } ou { ok:false, esperar } com os segundos que faltam */
+async function limiteTaxa(chave, maximo, janelaMs){
+  if(_rateIndisponivel) return { ok: true };
+  const agora = Date.now();
+  try{
+    const { data, error } = await sb.from('rate_limite').select('chave,contagem,janela_ate').eq('chave', chave).limit(1);
+    if(error){ _rateIndisponivel = true; console.warn('[cetecritic] rate_limite indisponível — rode migracao-seguranca.sql'); return { ok: true }; }
+    const linha = (data || [])[0];
+    if(!linha || Number(linha.janela_ate) <= agora){
+      await sb.from('rate_limite').upsert({ chave, contagem: 1, janela_ate: agora + janelaMs }, { onConflict: 'chave' });
+      return { ok: true };
+    }
+    if(Number(linha.contagem) >= maximo){
+      return { ok: false, esperar: Math.ceil((Number(linha.janela_ate) - agora) / 1000) };
+    }
+    await sb.from('rate_limite').update({ contagem: Number(linha.contagem) + 1 }).eq('chave', chave);
+    return { ok: true };
+  }catch(e){ return { ok: true }; }   // limite nunca derruba a ação
+}
+function textoEspera(seg){
+  if(seg >= 60) return Math.ceil(seg / 60) + ' minuto(s)';
+  return seg + ' segundo(s)';
 }
 async function votingClosed(year){
   const y = Number(year);
@@ -110,7 +212,7 @@ let _edCache = null, _edCacheAt = 0;
 async function lerEdicoesBolao(){
   if(_edCache && (Date.now() - _edCacheAt) < 30000) return _edCache;
   try{
-    const { data } = await sb.from('edicoes').select('ano,monte_abre_em,fim_votacao,em_breve,extra');
+    const { data } = await sb.from('edicoes').select('ano,monte_abre_em,fim_votacao,em_breve,extra').limit(LIMITE_ALTO);
     _edCache = data || []; _edCacheAt = Date.now();
   }catch(e){ _edCache = _edCache || []; }
   return _edCache;
@@ -130,9 +232,15 @@ async function estadoBolao(year){
   const cfg = asObj(extra.bolao);
   const agora = new Date();
 
-  /* desligado explicitamente no painel, ou edição ainda "em breve" */
+  /* desligado explicitamente no painel, ou edição ainda "em breve".
+
+     `existe` reflete a LINHA, não o bolão. ANTES devolvia sempre false aqui,
+     e como o apiPalpite testa `existe` antes de `ativo`, quem tentasse
+     palpitar numa edição com o bolão desligado recebia "essa edição não
+     existe" — a mensagem certa ("o bolão desta edição está desativado")
+     ficava na linha seguinte, inalcançável. */
   if(cfg.ativo === false || (linha && linha.em_breve)) {
-    return { existe:false, ativo:false, aberto:false, palpiteFechado:true, encerrado:true };
+    return { existe: !!linha, ativo:false, aberto:false, palpiteFechado:true, encerrado:true };
   }
 
   const abre = (linha && linha.monte_abre_em) ? new Date(linha.monte_abre_em) : null;
@@ -168,7 +276,8 @@ async function estadoBolao(year){
 
 /* média real de cada peça do ano — é contra ela que o palpite é medido */
 async function mediasReaisDoAno(year){
-  const { data } = await sb.from('submissions').select('grid').eq('year', Number(year));
+  const { data } = await sb.from('submissions').select('grid').eq('year', Number(year)).limit(LIMITE_ALTO);
+  avisarSeTruncou('mediasReaisDoAno ' + year, data);
   const soma = {}, cont = {};
   (data||[]).forEach(r => {
     const g = asObj(r.grid);
@@ -279,7 +388,8 @@ async function dispararAvisosBolao(){
 async function placarBolao(year){
   const y = Number(year);
   const medias = await mediasReaisDoAno(y);
-  const { data } = await sb.from('palpites').select('usuario,palpites,ts').eq('year', y);
+  const { data } = await sb.from('palpites').select('usuario,palpites,ts').eq('year', y).limit(LIMITE_ALTO);
+  avisarSeTruncou('palpites do ano ' + y, data);
   const pmap = await lerPerfisMap();
   const linhasBrutas = (data || []).filter(r => r.usuario);
 
@@ -480,7 +590,8 @@ async function barreiraModeracao(usuario, nivel){
 
 // mapa normUser -> { user, display, anonimo, privado, email }
 async function lerPerfisMap(){
-  const { data } = await sb.from('usuarios').select('usuario,perfil');
+  const { data } = await sb.from('usuarios').select('usuario,perfil').limit(LIMITE_ALTO);
+  avisarSeTruncou('lerPerfisMap (usuarios)', data);
   const map = {};
   (data || []).forEach(r => {
     const usuario = String(r.usuario || ''); if(!usuario) return;
@@ -574,7 +685,12 @@ async function criarNotif(usuario, tipo, id, titulo, corpo, url){
   usuario = String(usuario || ''); if(!usuario) return false;
   if(!(await prefNotifAtiva(usuario, tipo))) return false;
   const chave = String(id || (String(tipo||'n') + ':' + Date.now()));
-  const { data } = await sb.from('notificacoes').select('id').ilike('usuario', usuario).eq('notif_id', chave).limit(1);
+  /* selecionamos `notif_id`, não `id`: em algumas instalações a tabela não
+     tem coluna `id` (o apiMarcarNotifLidas logo abaixo já contava com isso).
+     Com `select('id')` o PostgREST devolvia erro, `data` vinha indefinido, a
+     checagem de duplicata não acontecia — e as notificações duplicavam. */
+  const { data, error } = await sb.from('notificacoes').select('notif_id').ilike('usuario', usuario).eq('notif_id', chave).limit(1);
+  if(error){ console.warn('[cetecritic] criarNotif: não deu pra conferir duplicata —', error.message); }
   if(data && data.length) return false;
   await sb.from('notificacoes').insert({
     usuario, notif_id: chave, tipo: String(tipo||''), titulo: String(titulo||''),
@@ -785,7 +901,7 @@ async function handleGet(req, res){
     /* se PUSH_SECRET não estiver configurado, o `!==` de antes deixava passar
        quem mandasse a string vazia — agora sem segredo ninguém entra */
     if(!segredoOk(q.listaPush, PUSH_SECRET)) return res.json({ ok:false, error:'não autorizado' });
-    const { data } = await sb.from('push').select('endpoint,p256dh,auth');
+    const { data } = await sb.from('push').select('endpoint,p256dh,auth').limit(LIMITE_ALTO);
     const subs = (data||[]).filter(r => r.endpoint).map(r => ({ endpoint:r.endpoint, keys:{ p256dh:r.p256dh, auth:r.auth } }));
     return res.json({ ok:true, subs });
   }
@@ -810,7 +926,7 @@ async function handleGet(req, res){
 
   // ranking de reputação
   if(q.ranking === 'reputacao'){
-    const { data: rRows } = await sb.from('reputacao').select('profile_user,valor');
+    const { data: rRows } = await sb.from('reputacao').select('profile_user,valor').limit(LIMITE_ALTO);
     const pmap = await lerPerfisMap();
     const soma = {};
     (rRows||[]).forEach(r => { const key = norm(r.profile_user); if(!key) return; if(!soma[key]) soma[key] = { user:String(r.profile_user), rep:0 }; soma[key].rep += Number(r.valor)||0; });
@@ -843,7 +959,7 @@ async function handleGet(req, res){
     if(!y || !usuario) return res.json({ ok:false, palpites:{}, medias:{} });
     if(!(await verificarToken(usuario, q.token))) return res.json({ ok:false, error:'faça login', palpites:{}, medias:{} });
 
-    const { data } = await sb.from('palpites').select('usuario,palpites,ts').eq('year', y);
+    const { data } = await sb.from('palpites').select('usuario,palpites,ts').eq('year', y).limit(LIMITE_ALTO);
     const meu = (data || []).find(r => norm(r.usuario) === norm(usuario));
     if(!meu) return res.json({ ok:true, temPalpite:false, palpites:{}, medias:{}, pontos:{} });
 
@@ -862,8 +978,9 @@ async function handleGet(req, res){
      chama o tempo todo, e ela mesma se limita a 1 checagem por minuto */
   await dispararAvisosBolao();
 
-  const year = q.year ? Number(q.year) : CURRENT_EDITION_YEAR;
-  const { data } = await sb.from('submissions').select('*').eq('year', year);
+  const year = q.year ? Number(q.year) : await anoEmDestaque();
+  const { data } = await sb.from('submissions').select('*').eq('year', year).limit(LIMITE_ALTO);
+  avisarSeTruncou('submissions do ano ' + year, data);
   const pmap = await lerPerfisMap();
   const submissions = (data||[]).filter(r => r.sub_id).map(r => {
     const dono = String(r.usuario || '');
@@ -877,7 +994,7 @@ async function handleGet(req, res){
     const nomeExib = (p && p.anonimo) ? p.display : String(r.name || '');
     return {
       id:String(r.sub_id), ts:Number(r.ts), name: nomeExib, grid: asObj(r.grid),
-      year: r.year?Number(r.year):CURRENT_EDITION_YEAR, user: displayFeed(dono, pmap)
+      year: r.year?Number(r.year):year, user: displayFeed(dono, pmap)
     };
   }).filter(s => !hasInvalidRating(s.grid)).filter(s => s.year === year);
   return res.json({ serverNow: Date.now(), votingClosed: await votingClosed(year), submissions });
@@ -886,7 +1003,10 @@ async function handleGet(req, res){
 /* ==================================================================
    POST — ações
    ================================================================== */
-async function apiRegistrar(body){
+async function apiRegistrar(body, req){
+  /* teto por origem: sem isto, criar contas em massa é um laço de curl */
+  { const r = await limiteTaxa('reg:ip:' + ipDe(req), 5, 60*60*1000);
+    if(!r.ok) return { ok:false, error:'muitas contas criadas deste aparelho — espere ' + textoEspera(r.esperar) }; }
   const usuario = String(body.user||'').trim();
   const senha = String(body.senha||'');
   if(usuario.length<2||usuario.length>20) return { ok:false, error:'usuário deve ter de 2 a 20 caracteres' };
@@ -904,7 +1024,12 @@ async function apiRegistrar(body){
   return { ok:true, user:usuario, token };
 }
 
-async function apiLogin(body){
+async function apiLogin(body, req){
+  /* a trava por CONTA (5 erros -> 10 min) já existia, e continua logo abaixo.
+     Esta é por ORIGEM: sem ela, dava pra varrer a lista de contas testando
+     uma senha comum em cada, sem nunca esbarrar em nada. */
+  { const r = await limiteTaxa('login:ip:' + ipDe(req), 30, 10*60*1000);
+    if(!r.ok) return { ok:false, error:'muitas tentativas deste aparelho — espere ' + textoEspera(r.esperar) }; }
   const usuario = String(body.user||'').trim();
   const senha = String(body.senha||'');
   const u = await acharUsuario(usuario);
@@ -968,18 +1093,78 @@ async function apiLogin2fa(body){
   return { ok:true, user:u.usuario, token, admin: u.admin === true };
 }
 
-async function apiVoto(body){
+/* ---------------------------------------------------------------------
+   VOTO
+
+   Esta rota decide a única coisa que o site realmente produz: a nota de cada
+   peça. Por isso ela concentra três defesas que ANTES não existiam.
+
+   1. TRAVA DE ENVIO NO SERVIDOR.
+      O cooldown vivia só no localStorage do navegador. Limpar o storage —
+      ou simplesmente chamar a API com `curl` num laço — permitia enviar
+      milhares de avaliações e mover a média de qualquer peça para onde se
+      quisesse. Agora há dois tetos, um por conta e outro por origem.
+
+   2. NOME LIVRE.
+      `name` vinha do cliente sem conferência, e num voto sem login é ele
+      que aparece na lista pública. Dava pra enviar uma avaliação anônima
+      assinada com o nome de outra pessoa. Agora um nome que colide com uma
+      conta existente é recusado quando não há token que prove a identidade.
+
+   3. `ts` DO CLIENTE.
+      Era gravado como veio, então dava pra forjar a data de um voto (e, com
+      isso, o desempate de "quem chegou primeiro"). Agora o carimbo é do
+      servidor; só se aceita o do cliente quando ele é plausível.
+   --------------------------------------------------------------------- */
+const VOTO_MAX_POR_JANELA = 3;                 // por conta E por origem
+const VOTO_JANELA_MS = 5 * 60 * 1000;
+
+async function apiVoto(body, req){
   if(!body || !body.id || !body.grid) return { ok:false, error:'dados inválidos' };
-  const year = body.year ? Number(body.year) : CURRENT_EDITION_YEAR;
+  const year = body.year ? Number(body.year) : await anoEmDestaque();
   if(await votingClosed(year)) return { ok:false, error:'votação encerrada' };
   if(hasInvalidRating(body.grid)) return { ok:true };
+
   let usuario = null;
   if(body.user && await verificarToken(body.user, body.token)){
     const bloq = await barreiraModeracao(body.user, 'interagir');
     if(bloq) return { ok:false, error: bloq };
     usuario = String(body.user);
   }
-  await sb.from('submissions').insert({ sub_id:String(body.id), ts:Number(body.ts)||Date.now(), name:String(body.name||'').slice(0,40), grid:body.grid, year, usuario });
+
+  const nome = String(body.name||'').trim().slice(0,40);
+
+  /* --- defesa 2: nome de terceiro em voto sem login ---
+     Quem está logado pode usar o próprio nome à vontade. Quem não está não
+     pode assinar com um nome que pertence a alguém. */
+  if(!usuario && nome){
+    const dono = await acharUsuario(nome);
+    if(dono) return { ok:false, error:'esse nome pertence a uma conta do site — entre nela para avaliar com ele' };
+  }
+
+  /* --- defesa 1: teto de envios ---
+     Duas chaves independentes. A da conta é a que pega o caso comum; a da
+     origem pega o voto sem login, que não tem identidade nenhuma. */
+  if(usuario){
+    const r = await limiteTaxa('voto:u:' + norm(usuario) + ':' + year, VOTO_MAX_POR_JANELA, VOTO_JANELA_MS);
+    if(!r.ok) return { ok:false, error:'você enviou avaliações demais em pouco tempo — espere ' + textoEspera(r.esperar) };
+  }
+  {
+    const r = await limiteTaxa('voto:ip:' + ipDe(req) + ':' + year, VOTO_MAX_POR_JANELA, VOTO_JANELA_MS);
+    if(!r.ok) return { ok:false, error:'muitas avaliações deste aparelho em pouco tempo — espere ' + textoEspera(r.esperar) };
+  }
+
+  /* --- defesa 3: carimbo de tempo confiável ---
+     Aceita o do cliente só se estiver a menos de 5 min do relógio real; do
+     contrário usa o do servidor. Evita voto "do futuro" e voto antedatado. */
+  const tsCliente = Number(body.ts) || 0;
+  const tsServidor = Date.now();
+  const ts = (tsCliente && Math.abs(tsServidor - tsCliente) < 5*60*1000) ? tsCliente : tsServidor;
+
+  const { error } = await sb.from('submissions').insert({
+    sub_id: String(body.id).slice(0, 80), ts, name: nome, grid: body.grid, year, usuario
+  });
+  if(error) return { ok:false, error:'não deu pra registrar a avaliação — tente de novo' };
   return { ok:true };
 }
 
@@ -1023,7 +1208,7 @@ async function apiPalpite(body){
   const usuario = String(body.user||'');
   if(!(await verificarToken(usuario, body.token))) return { ok:false, error:'faça login para palpitar' };
   { const bloq = await barreiraModeracao(usuario, 'interagir'); if(bloq) return { ok:false, error: bloq }; }
-  const year = body.year ? Number(body.year) : CURRENT_EDITION_YEAR;
+  const year = body.year ? Number(body.year) : await anoEmDestaque();
 
   /* o prazo agora é o horário da Noite 1 (ou o que o painel definir), não mais
      o fim da votação: o bolão é uma aposta ANTES de ver qualquer peça */
@@ -1076,12 +1261,25 @@ async function apiPerfil(body){
   await sb.from('usuarios').update({ perfil: novo }).eq('usuario', u.usuario);
   const pmap = await lerPerfisMap();
   const dispU = (pmap[norm(usuario)] && pmap[norm(usuario)].display) || usuario;
-  for(const a of depois){
-    const na = norm(a);
-    if(na && na !== norm(usuario) && antes.indexOf(na) < 0 && await acharUsuario(a)){
-      await criarNotif(a, 'amigos', 'amigo:'+norm(usuario), '🤝 Novo amigo', dispU + ' adicionou você como amigo.', '/perfil.html?user=' + encodeURIComponent(dispU));
-    }
-  }
+
+  /* ---- notifica só os amigos RECÉM-adicionados ----
+     ANTES este laço fazia `await acharUsuario(a)` dentro do `for`, ou seja,
+     uma ida ao banco por amigo, em série. Como `amigos` aceita até 500
+     entradas, adicionar muitos de uma vez virava centenas de consultas
+     sequenciais dentro de um request com timeout.
+
+     Agora o `pmap` (que já foi carregado logo acima) responde quem existe
+     sem custo nenhum, e só as notificações de fato novas vão pro banco.
+     O teto de 30 evita que uma importação em massa vire enxurrada na caixa
+     de ninguém. */
+  const novos = depois
+    .map(a => norm(a))
+    .filter(na => na && na !== norm(usuario) && antes.indexOf(na) < 0 && pmap[na])
+    .slice(0, 30);
+  await Promise.all(novos.map(na => criarNotif(
+    pmap[na].user, 'amigos', 'amigo:'+norm(usuario), '🤝 Novo amigo',
+    dispU + ' adicionou você como amigo.', '/perfil.html?user=' + encodeURIComponent(dispU)
+  )));
   return { ok:true };
 }
 
@@ -1257,7 +1455,7 @@ async function apiDeletarConta(body){
   await delWhere('sessoes',      ['usuario']);
 
   /* login_codes tem a PK na própria coluna usuario */
-  { const { error } = await sb.from('login_codes').delete().ilike('usuario', usuario); anota('apagar login_codes', error); }
+  { const { error } = await apagarPorNome(sb, 'login_codes', 'usuario', usuario); anota('apagar login_codes', error); }
 
   /* push (a chave é o endpoint, não id) */
   {
@@ -1473,7 +1671,7 @@ async function apiTrocarNome(body){
   /* todas as sessões antigas migraram junto com a linha de `sessoes`, mas o
      token do aparelho atual agora aponta pro nome novo — devolvemos um token
      novo mesmo assim, para o localStorage do cliente ficar coerente */
-  await sb.from('sessoes').delete().ilike('usuario', novo);
+  await apagarPorNome(sb, 'sessoes', 'usuario', novo);
   const token = await criarSessao(novo, body.dispositivo);
   await criarNotif(novo, 'admin', 'nome:'+Date.now(), '✏️ Nome atualizado',
     'Seu nome de usuário agora é ' + novo + '.', '/perfil.html');
@@ -1505,8 +1703,17 @@ async function apiRemoverPushMorto(body){
   return { ok:true, removidos: eps.length };
 }
 
-async function apiPedirReset(body){
+async function apiPedirReset(body, req){
   const conta = String(body.conta||'').trim();
+  /* Esta rota DISPARA E-MAIL a cada chamada. Sem teto, um laço queima a cota
+     da Resend e transforma o site em ferramenta de spam contra a caixa da
+     vítima. Dois tetos: um por origem, outro pela conta pedida. */
+  { const r = await limiteTaxa('reset:ip:' + ipDe(req), 5, 60*60*1000);
+    if(!r.ok) return { ok:false, error:'muitos pedidos deste aparelho — espere ' + textoEspera(r.esperar) }; }
+  if(conta){
+    const r = await limiteTaxa('reset:c:' + hashCurto(norm(conta)), 3, 60*60*1000);
+    if(!r.ok) return { ok:true, msg:'Se houver um e-mail cadastrado para essa conta, enviamos um link de redefinição.' };
+  }
   const generico = { ok:true, msg:'Se houver um e-mail cadastrado para essa conta, enviamos um link de redefinição.' };
   if(!conta) return { ok:false, error:'informe seu usuário ou e-mail' };
   const map = await lerPerfisMap();
@@ -1542,7 +1749,7 @@ async function apiRedefinirSenha(body){
   await sb.from('usuarios').update({ senha_hash: hashSenha(nova,salt), salt, token: null, tentativas:0, lock_until:0 }).eq('usuario', u.usuario);
   /* abriu o link que só chegou naquela caixa de entrada => e-mail provado */
   await marcarEmailVerificado(u);
-  try{ await sb.from('sessoes').delete().ilike('usuario', u.usuario); }catch(e){}   // desloga todos os dispositivos
+  try{ await apagarPorNome(sb, 'sessoes', 'usuario', u.usuario); }catch(e){}   // desloga todos os dispositivos
   await sb.from('resets').update({ usado:true }).eq('id', linha.id);
   const novoTok = await criarSessao(u.usuario, body.dispositivo);
   return { ok:true, user:u.usuario, token:novoTok };
@@ -1652,7 +1859,9 @@ async function handlePost(req, res){
     reagir: apiReagir, apagarAvaliacao: apiApagarAvaliacao
   };
   const fn = rotas[action] || apiVoto;
-  return res.json(await fn(body));
+  /* `req` vai junto porque as rotas com limite de taxa precisam da origem da
+     chamada (apiVoto, apiRegistrar, apiPedirReset). As demais ignoram. */
+  return res.json(await fn(body, req));
 }
 
 module.exports = async (req, res) => {
