@@ -1276,9 +1276,18 @@ async function handlePost(req, res) {
   }
 
   // ----- banners (broadcasts) -----
+  /* Avisos automáticos (hoje só os do bolão) usam o próprio broadcast como
+     memória de "já enviei este aviso" — ver avisarUmaVez em /api/db.js. Eles
+     não podem ser excluídos de verdade, então são ARQUIVADOS: `fim` no
+     passado tira o banner do ar e da lista, e a linha continua servindo de
+     comprovante. */
+  const ehAvisoAutomatico = id => /^bolao-(abre|fecha):/.test(String(id || ''));
+  const estaArquivado = b => ehAvisoAutomatico(b.bc_id) && b.fim && Number(b.fim) < Date.now();
+
   if (action === 'listarBanners') {
     const { data } = await sb.from('broadcasts').select('*').order('ts', { ascending: false }).limit(50);
-    return res.status(200).json({ ok: true, banners: data || [] });
+    /* arquivado, pro painel, é o mesmo que apagado: não volta pra lista */
+    return res.status(200).json({ ok: true, banners: (data || []).filter(b => !estaArquivado(b)) });
   }
   if (action === 'criarBanner') {
     const titulo = String(body.titulo || '').trim(), corpo = String(body.corpo || '').trim();
@@ -1291,7 +1300,18 @@ async function handlePost(req, res) {
     return res.status(200).json({ ok: true });
   }
   if (action === 'deletarBanner') {
-    await sb.from('broadcasts').delete().eq('bc_id', String(body.bc_id || ''));
+    const bcId = String(body.bc_id || '');
+    /* ANTES este DELETE era o bug: ele apagava a memória do aviso automático
+       junto com o banner. Na visita seguinte de qualquer pessoa, o servidor
+       conferia, não achava a linha, concluía que nunca tinha avisado — e
+       recriava o banner E disparava o push de novo pra base inteira. Do lado
+       do painel a impressão era de que o "Apagar" não funcionava; do lado de
+       quem usa o site, o aviso voltava sozinho. */
+    if (ehAvisoAutomatico(bcId)) {
+      await sb.from('broadcasts').update({ fim: Date.now() - 1 }).eq('bc_id', bcId);
+      return res.status(200).json({ ok: true, arquivado: true });
+    }
+    await sb.from('broadcasts').delete().eq('bc_id', bcId);
     return res.status(200).json({ ok: true });
   }
 

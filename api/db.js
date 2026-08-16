@@ -193,7 +193,13 @@ async function mediasReaisDoAno(year){
    O `bc_id` determinístico é o que garante o "uma vez só": gravamos o
    broadcast ANTES de enviar o push, então uma segunda instância que entre
    junto encontra a linha e desiste. O índice único em broadcasts(bc_id)
-   (ver migracao-bolao.sql) fecha a janela de corrida de vez. */
+   (ver migracao-bolao.sql) fecha a janela de corrida de vez.
+
+   CUIDADO: a linha do broadcast é a ÚNICA memória de "este aviso já saiu".
+   Excluí-la de verdade faz o servidor achar que nunca avisou — ele recria o
+   banner e reenvia o push pra todo mundo. Por isso o painel ARQUIVA os ids
+   `bolao-*` em vez de apagar (ver deletarBanner em /api/content.js). Se um
+   dia surgir outro aviso automático, ele precisa do mesmo tratamento. */
 async function avisarUmaVez(bcId, titulo, corpo, url){
   const { data } = await sb.from('broadcasts').select('bc_id').eq('bc_id', bcId).limit(1);
   if(data && data.length) return false;
@@ -206,6 +212,34 @@ async function avisarUmaVez(bcId, titulo, corpo, url){
   return true;
 }
 
+/* Um aviso automático só faz sentido PERTO da hora dele.
+
+   Esta janela existe porque o guard antigo (`estado.encerrado`) não segurava
+   nada nas edições históricas, e o site acabou publicando "O bolão de 2017
+   fechou", "de 2018 fechou", "de 2019 fechou"... um banner (e um push) para
+   cada ano do acervo.
+
+   Por que `encerrado` falhava: ele depende de `fim_votacao`, e as edições
+   antigas têm esse campo VAZIO — que o resto do código lê como "votação
+   sempre aberta". Sem `fim_votacao` não há `somePorFim`, logo `encerrado` é
+   false, logo a edição de 2017 passava batido. E como a Noite 1 dela é de
+   2017, `palpiteFechado` era true: o servidor anunciava, com toda a razão
+   interna, que o palpite acabava de travar.
+
+   A janela resolve isso pela raiz e não depende de nenhum campo estar
+   preenchido: um aviso atrasado mais de 48h simplesmente não sai. Serve
+   também para o futuro — um deploy meses depois do festival não ressuscita
+   o anúncio, e uma edição adicionada ao acervo já com as datas no passado
+   entra caladinha. */
+const AVISO_JANELA_MS = 48 * 60 * 60 * 1000;
+function momentoRecente(quando){
+  if(!quando) return false;
+  const t = new Date(quando).getTime();
+  if(!isFinite(t)) return false;
+  const d = Date.now() - t;
+  return d >= 0 && d <= AVISO_JANELA_MS;
+}
+
 let _bolaoAvisoAt = 0;
 async function dispararAvisosBolao(){
   if(Date.now() - _bolaoAvisoAt < 60000) return;   // no máximo 1 verificação por minuto
@@ -216,18 +250,20 @@ async function dispararAvisosBolao(){
       if(!y) continue;
       const estado = await estadoBolao(y);
       if(!estado.ativo || !estado.existe) continue;
-      /* `encerrado` corta as edições antigas: sem isso, subir esta versão
-         dispararia um push de "o bolão de 2024 fechou" pra todo mundo */
       if(estado.encerrado) continue;
       const t = asObj(asObj(asObj(linha.extra).bolao).textos);
 
-      if(estado.liberado && !estado.palpiteFechado){
+      /* `abreEm` nulo = bolão sem hora marcada de abertura (nasce aberto).
+         Nesse caso não há momento nenhum para anunciar, e a janela devolve
+         false de propósito: para ter o aviso de abertura, preencha o
+         "Monte o Seu abre em" da edição no painel. */
+      if(estado.liberado && !estado.palpiteFechado && momentoRecente(estado.abreEm)){
         await avisarUmaVez('bolao-abre:' + y,
           String(t.abreTitulo || '').trim() || ('🔮 O bolão de ' + y + ' abriu!'),
           String(t.abreCorpo || '').trim() || 'Palpite a nota de cada peça antes da primeira noite começar. Vale preencher tudo.',
           '/' + y + '/bolao.html');
       }
-      if(estado.palpiteFechado){
+      if(estado.palpiteFechado && momentoRecente(estado.fechaPalpiteEm)){
         await avisarUmaVez('bolao-fecha:' + y,
           String(t.fechaTitulo || '').trim() || ('🔒 O bolão de ' + y + ' fechou'),
           String(t.fechaCorpo || '').trim() || 'Os palpites estão travados. Acompanhe o placar conforme as notas vão saindo!',

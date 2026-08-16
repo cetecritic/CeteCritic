@@ -205,6 +205,52 @@ function posterDaEdicao(ano, valorConhecido){
   return urlRecurso(p, `${BASE}${ano}/`);
 }
 
+/* ---------------------- <img> do poster, com nova tentativa ----------------------
+   O poster mora no Supabase Storage — OUTRO domínio, portanto fora do alcance
+   do service worker, que só cacheia o próprio site. Numa primeira visita a
+   imagem não está em cache nenhum e depende inteiramente da rede daquele
+   instante.
+
+   O onerror antigo (`classList.remove('has-image')`) era DEFINITIVO: um único
+   soluço de rede, um cold start do Storage, e o card da home ficava com o
+   placeholder "Sem capa" até a pessoa recarregar a página na mão. Era esse o
+   sintoma de "às vezes a capa não aparece no primeiro acesso" — o segundo
+   acesso funcionava porque aí a imagem já estava no cache HTTP do navegador.
+
+   Agora a falha é tratada como o que ela quase sempre é: temporária. Tentamos
+   de novo algumas vezes, com espera crescente, e só depois disso desistimos e
+   mostramos o placeholder. A última tentativa leva um parâmetro novo na URL
+   para escapar de uma eventual resposta ruim que tenha ficado em cache. */
+const POSTER_TENTATIVAS = 3;
+function posterFalhou(img){
+  const n = Number(img.dataset.tentativa || 0) + 1;
+  img.dataset.tentativa = n;
+  const url = img.dataset.poster || img.getAttribute('src') || '';
+  if(n > POSTER_TENTATIVAS || !url){
+    const box = img.closest('.poster-box') || img.closest('.sc-poster-wrap');
+    if(box){ box.classList.remove('has-image'); box.classList.add('sem-poster'); }
+    img.remove();
+    return;
+  }
+  /* tira o src antes de repor: reatribuir o MESMO valor não dispara request nova */
+  img.removeAttribute('src');
+  const alvo = (n === POSTER_TENTATIVAS)
+    ? url + (url.indexOf('?') >= 0 ? '&' : '?') + 'cc=' + Date.now()
+    : url;
+  setTimeout(() => { img.src = alvo; }, 400 * n);
+}
+/* o onerror é atributo inline (HTML montado como string), então precisa ser global */
+window.posterFalhou = posterFalhou;
+
+/* markup do <img> de poster — um lugar só, para todas as telas tratarem a
+   falha do mesmo jeito. `url` vem do posterDaEdicao(); vazio devolve '' e
+   quem chama mostra o placeholder. */
+function htmlPoster(url, alt){
+  if(!url) return '';
+  return `<img src="${esc(url)}" alt="${esc(alt || '')}" decoding="async"`
+       + ` data-poster="${esc(url)}" onerror="posterFalhou(this)">`;
+}
+
 /* Turmas que se apresentaram numa noite, sem repetir e na ordem de palco.
    Vira o texto de apoio dos cards de compartilhamento — antes ali ficava a
    frase genérica "turmas que se apresentaram na noite N do festival", que
@@ -2921,7 +2967,7 @@ function paginaEdicao(){
     <div id="capture-area">
       <div class="left-panel">
         <div class="poster-box${posterDaEdicao(ANO, ED.poster) ? ' has-image' : ''}" id="posterBox">
-          ${posterDaEdicao(ANO, ED.poster) ? `<img src="${esc(posterDaEdicao(ANO, ED.poster))}" alt="" onerror="this.closest('.poster-box').classList.remove('has-image')">` : ''}
+          ${htmlPoster(posterDaEdicao(ANO, ED.poster), '')}
           <div class="poster-hint"><b>Sem capa</b>Suba o poster desta edição pelo painel admin</div>
         </div>
         <div class="title-section">
@@ -4889,6 +4935,9 @@ async function paginaHome(){
   document.title = 'CETECritic';
   const slogan = (typeof SLOGAN_HOME !== 'undefined') ? SLOGAN_HOME : 'O Cetec Festival na palma da sua mão';
   const pastaDest = `${EDICAO_EM_DESTAQUE}/`;
+  /* resolvido UMA vez: antes a mesma chamada aparecia três vezes na montagem
+     do hero, e o `has-image` do container podia discordar do <img> renderizado */
+  const posterHome = posterDaEdicao(EDICAO_EM_DESTAQUE, ED && ED.poster);
 
   /* countdown grandão: começo da edição → fim da votação → próxima edição */
   let cdLabel = '', cdTarget = null, cdExtra = '';
@@ -4963,8 +5012,8 @@ async function paginaHome(){
   montarShell(`
     ${htmlBannerHome}
     <div class="home-hero">
-      <div class="poster-box${posterDaEdicao(EDICAO_EM_DESTAQUE, ED && ED.poster) ? ' has-image' : ''} home-poster">
-        ${posterDaEdicao(EDICAO_EM_DESTAQUE, ED && ED.poster) ? `<img src="${esc(posterDaEdicao(EDICAO_EM_DESTAQUE, ED && ED.poster))}" alt="Poster da edição" onerror="this.closest('.poster-box').classList.remove('has-image')">` : ''}
+      <div class="poster-box${posterHome ? ' has-image' : ''} home-poster">
+        ${htmlPoster(posterHome, 'Poster da edição')}
         <div class="poster-hint"><b>Sem capa</b>Capa da edição em destaque</div>
       </div>
       <div class="home-info">

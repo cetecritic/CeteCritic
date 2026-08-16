@@ -15,8 +15,14 @@
    Ao publicar uma versão nova do site, troque o número em CACHE_VERSION
    para forçar a limpeza do cache antigo. */
  
-const CACHE_VERSION = 'cetecritic-v26';
- 
+const CACHE_VERSION = 'cetecritic-v27';
+
+/* Cache SEPARADO para as imagens de outro domínio (os posters moram no
+   Supabase Storage). Fica fora do CACHE_VERSION de propósito: um poster não
+   muda quando o código do site muda, e refazer o download de todas as capas a
+   cada deploy é justamente o que deixava a home dependente da rede. */
+const CACHE_IMG = 'cetecritic-img-v1';
+
 /* Lê o config.js para saber qual é o festival "em destaque" (EDICAO_EM_DESTAQUE)
    agora — assim, quando esse número mudar no config.js, o service worker passa
    a pré-cachear o festival novo sozinho, sem precisar editar nada aqui.
@@ -55,12 +61,21 @@ const PRECACHE = [
     `/${ANO_ATUAL}/abertura.html`,
     `/${ANO_ATUAL}/monte.html`,
     `/${ANO_ATUAL}/edicao.js`,
-    `/${ANO_ATUAL}/poster.jpg`,
+    /* ANTES havia um `/${ANO_ATUAL}/poster.jpg` aqui. Esse caminho deixou de
+       existir quando os posters foram para o Supabase Storage: o cache.add
+       dava 404 e era engolido pelo .catch(), então a capa NUNCA era
+       pré-cacheada. O endereço real vem do config.js (EDICOES[].poster) e
+       está logo abaixo, em PRECACHE_IMG. */
     ...Array.from({ length: CFG_ATUAL.noites || 0 }, (_, i) => `/${ANO_ATUAL}/noite-${i + 1}.html`),
     ...Array.from({ length: CFG_ATUAL.noites || 0 }, (_, i) => `/${ANO_ATUAL}/noites/noite-${i + 1}.js`)
   ] : [])
 ];
- 
+
+/* capas das edições — endereços absolutos do Storage, guardados no CACHE_IMG */
+const PRECACHE_IMG = (typeof EDICOES !== 'undefined' && Array.isArray(EDICOES))
+  ? EDICOES.map(e => e && e.poster).filter(p => /^https?:\/\//i.test(String(p || '')))
+  : [];
+
 self.addEventListener('install', event => {
   event.waitUntil((async () => {
     const cache = await caches.open(CACHE_VERSION);
@@ -68,14 +83,20 @@ self.addEventListener('install', event => {
     await Promise.all(PRECACHE.map(url =>
       cache.add(new Request(url, { cache: 'reload' })).catch(() => {})
     ));
+    /* as capas vão pro cache de imagens, que sobrevive à troca de versão */
+    const cacheImg = await caches.open(CACHE_IMG);
+    await Promise.all(PRECACHE_IMG.map(url =>
+      cacheImg.add(new Request(url, { mode: 'no-cors' })).catch(() => {})
+    ));
     self.skipWaiting();
   })());
 });
- 
+
 self.addEventListener('activate', event => {
   event.waitUntil((async () => {
     const nomes = await caches.keys();
-    await Promise.all(nomes.filter(n => n !== CACHE_VERSION).map(n => caches.delete(n)));
+    const manter = [CACHE_VERSION, CACHE_IMG];
+    await Promise.all(nomes.filter(n => manter.indexOf(n) < 0).map(n => caches.delete(n)));
     await self.clients.claim();
   })());
 });
@@ -96,11 +117,34 @@ function ehArquivoDeDados_(pathname) {
 self.addEventListener('fetch', event => {
   const req = event.request;
  
-  /* só mexemos em GET do MESMO domínio; o resto passa direto */
+  /* só mexemos em GET; o resto passa direto */
   if (req.method !== 'GET') return;
   const url = new URL(req.url);
-  if (url.origin !== self.location.origin) return;
- 
+
+  /* ---- IMAGENS de outro domínio: cache-first ----
+     As capas das edições moram no Supabase Storage. Antes o SW devolvia cedo
+     pra tudo que não fosse do próprio site, então a capa saía pela rede em
+     TODA visita nova — e um soluço qualquer virava "Sem capa" no card da home.
+     Um poster não muda de conteúdo (uma capa nova ganha URL nova), então
+     cache-first é seguro e a segunda visita nunca mais depende da rede.
+
+     A resposta é `opaque` (vem de outra origem, sem CORS): não dá pra ler
+     status nem corpo, mas dá pra guardar e devolver — que é tudo que o <img>
+     precisa. Por isso o teste é "veio alguma coisa", não "resp.ok". */
+  if (url.origin !== self.location.origin) {
+    if (req.destination === 'image') {
+      event.respondWith((async () => {
+        const cache = await caches.open(CACHE_IMG);
+        const cacheado = await cache.match(req);
+        if (cacheado) return cacheado;
+        const resp = await fetch(req);
+        if (resp && (resp.ok || resp.type === 'opaque')) cache.put(req, resp.clone()).catch(() => {});
+        return resp;
+      })());
+    }
+    return;
+  }
+
   /* a API (dados frescos) e o script de insights nunca entram no cache */
   if (url.pathname.startsWith('/_vercel/')) return;
   if (url.pathname.startsWith('/api/')) return;
