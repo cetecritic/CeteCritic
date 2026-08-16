@@ -109,7 +109,6 @@ Comece pelo primeiro; os outros são consulta.
 | [06 · Bolão](docs/06-bolao.md) | A linha do tempo, a pontuação, a privacidade |
 | [07 · Deploy e ambiente](docs/07-deploy-e-ambiente.md) | Variáveis, migrações, Storage, cron |
 | [08 · Manutenção](docs/08-manutencao.md) | Receitas: abrir uma edição, virar o ano, o dia do festival |
-| [09 · Riscos conhecidos](docs/09-riscos-conhecidos.md) | O que está frágil hoje, em ordem de gravidade |
 
 ---
 
