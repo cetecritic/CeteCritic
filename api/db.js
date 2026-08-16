@@ -796,6 +796,159 @@ async function enviarEmailReset(to, usuario, link){
 /* ==================================================================
    GET — leituras públicas
    ================================================================== */
+
+/* ==================================================================
+   HALL DA FAMA — payload agregado
+   ==================================================================
+   O Hall pedia, no browser, edicao.js+noites de TODOS os anos, votos de
+   cada ano e placar de bolão de cada ano — centenas de hits em serverless.
+   Esta rota devolve tudo o que a página precisa numa resposta só:
+
+     edicoes[]   metadados mínimos (ano, noites, inicio, emBreve)
+     pecas[]     catálogo (ano, noite, ep, titulo, turma)
+     votos{}     submissions por ano (mesmo formato do ?year=)
+     bolaoWins[] contagem de 1º lugar no bolão (sem expor palpite)
+
+   Com ~centenas de submissions o payload continua pequeno. Se um dia
+   passar de ~8–10k linhas, agregar médias no SQL em vez de mandar grid. */
+async function apiDadosHall(){
+  const [edQ, pecQ, subQ, palQ] = await Promise.all([
+    sb.from('edicoes').select('ano,noites,inicio,em_breve').order('ano', { ascending: true }).limit(LIMITE_ALTO),
+    sb.from('pecas').select('ano,noite,ordem,titulo,turma').order('ano', { ascending: true }).limit(LIMITE_ALTO),
+    sb.from('submissions').select('sub_id,ts,name,grid,year,usuario').limit(LIMITE_ALTO),
+    sb.from('palpites').select('usuario,palpites,year,ts').limit(LIMITE_ALTO)
+  ]);
+  if(edQ.error) throw new Error(edQ.error.message);
+  if(pecQ.error) throw new Error(pecQ.error.message);
+  if(subQ.error) throw new Error(subQ.error.message);
+  /* palpites é opcional pro Hall — se a tabela falhar, seguimos sem wins */
+  avisarSeTruncou('hall edicoes', edQ.data);
+  avisarSeTruncou('hall pecas', pecQ.data);
+  avisarSeTruncou('hall submissions', subQ.data);
+  if(!palQ.error) avisarSeTruncou('hall palpites', palQ.data);
+
+  const edicoes = (edQ.data || []).map(e => ({
+    ano: Number(e.ano),
+    noites: Number(e.noites) || 5,
+    inicio: e.inicio || null,
+    emBreve: e.em_breve === true
+  }));
+
+  const pecas = (pecQ.data || [])
+    .filter(p => p.ano && p.noite && p.ordem)
+    .map(p => ({
+      ano: Number(p.ano),
+      noite: Number(p.noite),
+      ep: Number(p.ordem),
+      titulo: String(p.titulo || ''),
+      turma: String(p.turma || '')
+    }));
+
+  const pmap = await lerPerfisMap();
+  const votos = {};
+  (subQ.data || []).forEach(r => {
+    if(!r.sub_id) return;
+    const year = r.year != null ? Number(r.year) : null;
+    if(!year) return;
+    const grid = asObj(r.grid);
+    if(hasInvalidRating(grid)) return;
+    const dono = String(r.usuario || '');
+    const p = dono ? pmap[norm(dono)] : null;
+    const nomeExib = (p && p.anonimo) ? p.display : String(r.name || '');
+    const sub = {
+      id: String(r.sub_id),
+      ts: Number(r.ts) || 0,
+      name: nomeExib,
+      grid,
+      year,
+      user: displayFeed(dono, pmap)
+    };
+    if(!votos[year]) votos[year] = [];
+    votos[year].push(sub);
+  });
+
+  /* bolão: vitórias (pos === 1) por usuário, usando as médias já derivadas
+     das submissions — sem N idas ao banco via placarBolao(). */
+  const bolaoWins = [];
+  try{
+    const mediasPorAno = {};
+    Object.keys(votos).forEach(y => {
+      const soma = {}, cont = {};
+      (votos[y] || []).forEach(s => {
+        Object.keys(s.grid || {}).forEach(k => {
+          const v = Number(s.grid[k]);
+          if(isNaN(v)) return;
+          soma[k] = (soma[k] || 0) + v;
+          cont[k] = (cont[k] || 0) + 1;
+        });
+      });
+      const m = {};
+      Object.keys(soma).forEach(k => { m[k] = soma[k] / cont[k]; });
+      mediasPorAno[y] = m;
+    });
+
+    const porAno = {};
+    (palQ.error ? [] : (palQ.data || [])).forEach(r => {
+      const y = Number(r.year);
+      if(!y || !r.usuario) return;
+      if(!porAno[y]) porAno[y] = [];
+      porAno[y].push(r);
+    });
+
+    const wins = {};
+    Object.keys(porAno).forEach(y => {
+      const medias = mediasPorAno[y] || {};
+      if(!Object.keys(medias).length) return;
+      const linhas = porAno[y].map(r => {
+        const pal = asObj(r.palpites);
+        let pontos = 0, apuradas = 0, somaErro = 0;
+        Object.keys(pal).forEach(k => {
+          if(medias[k] === undefined) return;
+          const p = Number(pal[k]);
+          const er = Math.abs(p - medias[k]);
+          if(isNaN(er)) return;
+          pontos += pontosBolao(p, medias[k]);
+          somaErro += er;
+          apuradas++;
+        });
+        return {
+          user: displayFeed(String(r.usuario), pmap),
+          pontos,
+          apuradas,
+          erroMedio: apuradas ? somaErro / apuradas : null,
+          ts: Number(r.ts) || 0
+        };
+      }).filter(l => l.apuradas > 0);
+      linhas.sort((a, b) => b.pontos - a.pontos || a.erroMedio - b.erroMedio || a.ts - b.ts);
+      let pos = 0, chaveAnt = null;
+      linhas.forEach((l, i) => {
+        const chave = l.pontos + '|' + (l.erroMedio === null ? '' : l.erroMedio.toFixed(4));
+        if(chave !== chaveAnt){ pos = i + 1; chaveAnt = chave; }
+        l.pos = pos;
+      });
+      linhas.filter(l => l.pos === 1).forEach(l => {
+        const key = norm(l.user);
+        if(!key) return;
+        if(!wins[key]) wins[key] = { user: l.user, wins: 0 };
+        wins[key].wins++;
+      });
+    });
+    Object.keys(wins).forEach(k => bolaoWins.push(wins[k]));
+    bolaoWins.sort((a, b) => b.wins - a.wins);
+  }catch(e){
+    console.warn('[cetecritic] hall bolaoWins falhou', e && e.message);
+  }
+
+  return {
+    ok: true,
+    serverNow: Date.now(),
+    edicoes,
+    pecas,
+    votos,
+    bolaoWins
+  };
+}
+
 async function handleGet(req, res){
   const q = req.query || {};
 
@@ -967,6 +1120,17 @@ async function handleGet(req, res){
       return Number(b.ts) >= desde;                    // sem período: transitório (últimos 7 dias)
     }).slice(0, 15);
     return res.json({ ok:true, broadcasts: ativos.map(b => ({ id:b.bc_id, titulo:b.titulo, corpo:b.corpo, url:b.url, ts:b.ts, dur:b.dur||0, modo:b.modo||'uma_vez' })) });
+  }
+
+  // Hall da Fama — payload único (edicoes + pecas + votos + bolaoWins)
+  if(q.hall){
+    try{
+      const payload = await apiDadosHall();
+      res.setHeader('Cache-Control', 'public, max-age=15, s-maxage=30, stale-while-revalidate=60');
+      return res.json(payload);
+    }catch(e){
+      return res.status(500).json({ ok:false, error:String((e && e.message) || e) });
+    }
   }
 
   // ranking de reputação

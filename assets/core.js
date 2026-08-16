@@ -4404,16 +4404,72 @@ async function paginaHall(){
     Chart.defaults.font.family = "'Inter', sans-serif";
   }
 
-  /* carrega os dados (edicao.js + noites/*.js) de TODAS as edições do config.js */
-  async function carregarEdicoes(){
-    /* Carrega TODAS as edições em paralelo (antes era um for serial: cada
-       edição só começava depois da anterior terminar, deixando o Hall lento).
-       Promise.all preserva a ordem do array, então o resultado é idêntico. */
-    const resultados = await Promise.all(EDICOES.map(cfg => carregarDadosEdicao(cfg)));
-    return resultados.filter(Boolean);
+  /* ---- acervo do Hall via /api/db?hall=1 (um request só) ----
+     Antes: N× edicao.js + noites + N× ?year= + N× ?bolao= (centenas de hits).
+     Agora o servidor agrega edicoes, pecas, votos e bolaoWins numa resposta.
+     A forma { cfg, ed, noites } é a mesma que carregarDadosEdicao devolvia,
+     para o resto do Hall (calcular, gráficos, records) não mudar. */
+  let hallBolaoWins = [];
+  function montarEdicoesDoHall(payload){
+    const pecasPorAno = {};
+    (payload.pecas || []).forEach(p => {
+      const ano = Number(p.ano), noite = Number(p.noite), ep = Number(p.ep);
+      if(!ano || !noite || !ep) return;
+      if(!pecasPorAno[ano]) pecasPorAno[ano] = {};
+      if(!pecasPorAno[ano][noite]) pecasPorAno[ano][noite] = [];
+      pecasPorAno[ano][noite].push({ ep, titulo: String(p.titulo || ''), turma: String(p.turma || '') });
+    });
+    Object.keys(pecasPorAno).forEach(ano => {
+      Object.keys(pecasPorAno[ano]).forEach(n => {
+        pecasPorAno[ano][n].sort((a, b) => a.ep - b.ep);
+      });
+    });
+    const lista = Array.isArray(payload.edicoes) && payload.edicoes.length
+      ? payload.edicoes
+      : (typeof EDICOES !== 'undefined' ? EDICOES : []);
+    return lista.map(e => {
+      const ano = Number(e.ano);
+      const byNight = pecasPorAno[ano] || {};
+      const noites = {};
+      Object.keys(byNight).forEach(n => {
+        noites[Number(n)] = { pecas: byNight[n].map(x => ({ titulo: x.titulo, turma: x.turma })) };
+      });
+      const nNoites = Number(e.noites) || Math.max(0, ...Object.keys(noites).map(Number), 0) || 5;
+      return {
+        cfg: { ano, noites: nNoites },
+        ed: { ano, inicio: e.inicio || null },
+        noites
+      };
+    });
   }
 
-  const edicoes = await carregarEdicoes();
+  async function carregarHallAgregado(){
+    const r = await fetch(API_URL + '?hall=1&_=' + Date.now(), { cache: 'no-store' });
+    if(!r.ok) throw new Error('HTTP ' + r.status);
+    const j = await r.json();
+    if(!j || j.ok === false) throw new Error((j && j.error) || 'hall agregada falhou');
+    if(j.serverNow) serverTimeOffset = j.serverNow - Date.now();
+    hallBolaoWins = Array.isArray(j.bolaoWins) ? j.bolaoWins : [];
+    const votos = {};
+    const raw = j.votos || {};
+    Object.keys(raw).forEach(y => {
+      const ano = Number(y);
+      votos[ano] = filtrarVotosDoAno(raw[y] || [], ano);
+    });
+    return { edicoes: montarEdicoesDoHall(j), votos };
+  }
+
+  let edicoes = [];
+  let votosHallCache = {};
+  try{
+    const agg = await carregarHallAgregado();
+    edicoes = agg.edicoes;
+    votosHallCache = agg.votos;
+  }catch(e){
+    console.warn('Hall: payload agregado falhou, caindo no carregamento legado', e);
+    const resultados = await Promise.all(EDICOES.map(cfg => carregarDadosEdicao(cfg)));
+    edicoes = resultados.filter(Boolean);
+  }
   /* edições futuras (inicio ainda não chegou) ficam fora das contagens,
      dos gráficos e do heatmap — nada de spoiler nem de "3 edições" antes da hora */
   const edRealizadas = edicoes.filter(d => {
@@ -5051,17 +5107,21 @@ async function paginaHall(){
   }
 
   /* ---------- atualização automática ---------- */
-  async function atualizar(){
+  async function atualizar(forcarRede){
     try{
-      const votos = {};
-      await Promise.all(edicoes.map(async d => {
+      let votos = votosHallCache;
+      /* revalida o payload agregado (1 request) em vez de N× ?year= */
+      if(forcarRede || !votos || !Object.keys(votos).length){
         try{
-          /* no-store + _ : fura o cache pra sempre pegar votos frescos */
-          const r = await fetch(API_URL + '?year=' + d.cfg.ano + '&_=' + Date.now(), { cache: 'no-store' });
-          const j = await r.json();
-          votos[d.cfg.ano] = filtrarVotosDoAno(Array.isArray(j) ? j : (j.submissions || []), d.cfg.ano);
-        }catch(e){ votos[d.cfg.ano] = []; }
-      }));
+          const agg = await carregarHallAgregado();
+          edicoes = agg.edicoes;
+          votosHallCache = agg.votos;
+          votos = votosHallCache;
+        }catch(e){
+          if(!votos || !Object.keys(votos).length) throw e;
+          console.warn('Hall: revalidação agregada falhou, mantendo cache', e);
+        }
+      }
       stats = calcular(votos);
       renderTudo();
       renderUsuarios(votos);
@@ -5091,18 +5151,12 @@ async function paginaHall(){
       return { nome: r.nome, eps: r.eps, festivais: r.anos.size, streak: best, media: media(r.notas) };
     });
 
-    /* bolões vencidos — o ranking agora vem pronto do servidor (o cliente não
-       enxerga mais palpite alheio). Empate no 1º lugar dá vitória aos dois. */
-    const placares = await Promise.all(anos.map(y => fetchPlacarBolao(y)));
-    const wins = {};
-    placares.forEach(d => {
-      if(!d || !d.placar || !d.placar.length) return;
-      d.placar.filter(r => r.pos === 1).forEach(r => {
-        const w = String(r.user).toLowerCase();
-        wins[w] = (wins[w] || 0) + 1;
-      });
-    });
-    const winList = Object.keys(wins).map(k => ({ nome: (U[k] && U[k].nome) || k, wins: wins[k] }));
+    /* bolões vencidos — conta de 1º lugar já vem em bolaoWins do ?hall=1
+       (sem N× ?bolao=). Empate no 1º ainda conta vitória pra todos os empatados. */
+    const winList = (hallBolaoWins || []).map(x => ({
+      nome: x.user,
+      wins: Number(x.wins) || 0
+    })).filter(x => x.wins > 0);
 
     const link = nome => `${BASE}perfil.html?user=${encodeURIComponent(nome)}`;
     const col = (titulo, itens, fmt) => `<div class="rank-col"><h3 class="subhead">${titulo}</h3>${itens.length
@@ -5116,8 +5170,10 @@ async function paginaHall(){
       col('🔮 Gosta do jogo', winList.sort((a,b) => b.wins - a.wins).slice(0, CNT.rankUsuarios), x => `${x.wins} bolão${x.wins === 1 ? '' : 'es'} vencido${x.wins === 1 ? '' : 's'}`);
   }
 
-  await atualizar();
-  intervaloVisivel(atualizar, 20000); // atualiza sozinho a cada 20s (só com a aba à vista)
+  await atualizar(false); // usa o cache do payload já baixado
+  /* histórico quase não muda: revalida o agregado a cada 2 min (1 request),
+     não a cada 20s com dezenas de ?year= */
+  intervaloVisivel(() => atualizar(true), 120000);
 }
 
 /* =====================================================================
