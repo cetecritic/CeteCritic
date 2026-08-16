@@ -53,6 +53,12 @@
      sem isso uma aba escondida pelo papel continuaria visível */
   .hidden{ display:none !important; }
   .toolbar{ display:flex; gap:8px; flex-wrap:wrap; margin-top:12px; }
+  /* `.chk` já era usado no HTML mas nunca tinha sido definido — e como todo
+     `label` aqui é display:block, a caixinha caía numa linha e o texto na
+     seguinte. Alinhado na horizontal, com a área de clique inteira. */
+  label.chk{ display:inline-flex; align-items:center; gap:7px; margin:6px 0;
+             font-size:13px; font-weight:600; color:var(--text); cursor:pointer; }
+  label.chk input{ width:auto; margin:0; flex:0 0 auto; accent-color:var(--gold); cursor:pointer; }
   a{ color:var(--gold); }
 
   /* ---- linha de usuário: o nome vira botão que abre o editor completo ---- */
@@ -128,6 +134,7 @@
          forma; isto aqui é só pra não mostrar botão que não vai funcionar. -->
     <nav class="admin-nav">
       <a href="#secBusca"    data-papel="admin historiador">🔎 Buscar</a>
+      <a href="#secManutencao" data-papel="admin">🔧 Manutenção</a>
       <a href="#secConfig"   data-papel="admin">⚙️ Configurações</a>
       <a href="#secHall"     data-papel="admin">🏆 Hall &amp; avançado</a>
       <a href="#secCurios"   data-papel="admin">📝 Curiosidades/badges</a>
@@ -146,6 +153,75 @@
       <h2>🔎 Buscar pra editar</h2>
       <input id="buscaAdmin" type="text" placeholder="Digite uma edição (ex: 2026) ou o nome de uma peça…">
       <div id="buscaRes" style="margin-top:8px;"></div>
+    </div>
+
+    <!-- MANUTENÇÃO -->
+    <div class="card" id="secManutencao" data-papel="admin">
+      <h2>🔧 Manutenção</h2>
+      <p class="sub" style="margin:0 0 12px;">
+        Tira o site (ou só algumas páginas) do ar, com uma tela explicativa no lugar.
+        Quem é da equipe continua navegando normalmente, com uma tarja amarela no rodapé.
+        <b>Este painel nunca é bloqueado</b> — é sempre o caminho de volta.
+      </p>
+
+      <div id="manutStatus" style="display:none;"></div>
+
+      <label class="chk" style="font-size:15px;">
+        <input type="checkbox" id="manutAtivo"> <b>Ligar o modo manutenção</b>
+      </label>
+
+      <div id="manutCorpo" style="margin-top:14px;">
+        <label>O que fica fora do ar</label>
+        <div style="display:flex; gap:18px; flex-wrap:wrap; margin:4px 0 10px;">
+          <label class="chk"><input type="radio" name="manutEscopo" value="site" checked> O site inteiro</label>
+          <label class="chk"><input type="radio" name="manutEscopo" value="paginas"> Só as páginas marcadas</label>
+        </div>
+
+        <div id="manutPaginas" style="display:none; background:var(--surface2); border:1px solid var(--border);
+             border-radius:10px; padding:12px; margin-bottom:12px;">
+          <div class="sub" style="margin:0 0 8px;">
+            Útil no meio do festival: dá pra derrubar o Hall da Fama sem tirar a votação do ar.
+          </div>
+          <div style="display:grid; grid-template-columns:repeat(auto-fill,minmax(190px,1fr)); gap:6px;">
+            <label class="chk"><input type="checkbox" class="manutPg" value="home"> Início</label>
+            <label class="chk"><input type="checkbox" class="manutPg" value="edicao"> Página da edição (votação)</label>
+            <label class="chk"><input type="checkbox" class="manutPg" value="noite"> Páginas de noite</label>
+            <label class="chk"><input type="checkbox" class="manutPg" value="bolao"> Bolão</label>
+            <label class="chk"><input type="checkbox" class="manutPg" value="monte"> Monte o Seu</label>
+            <label class="chk"><input type="checkbox" class="manutPg" value="hall"> Hall da Fama</label>
+            <label class="chk"><input type="checkbox" class="manutPg" value="perfil"> Perfis</label>
+            <label class="chk"><input type="checkbox" class="manutPg" value="busca"> Busca</label>
+            <label class="chk"><input type="checkbox" class="manutPg" value="notif"> Notificações</label>
+            <label class="chk"><input type="checkbox" class="manutPg" value="config"> Configurações do usuário</label>
+          </div>
+        </div>
+
+        <div class="row2">
+          <div><label>Título da tela</label><input id="manutTitulo" type="text" placeholder="Estamos em manutenção"></div>
+          <div><label>Previsão de volta (opcional)</label><input id="manutVolta" type="datetime-local"></div>
+        </div>
+        <label>Mensagem</label>
+        <textarea id="manutMensagem" rows="3" placeholder="Voltamos já. Estamos ajustando uma coisa aqui e preferimos tirar do ar a te mostrar algo quebrado."></textarea>
+        <div class="sub" style="margin:2px 0 12px;">
+          Com a previsão preenchida, a tela mostra uma contagem regressiva e recarrega sozinha quando a hora chega.
+        </div>
+
+        <label class="chk">
+          <input type="checkbox" id="manutBloquearApi" checked>
+          <b>Também recusar envios no servidor</b> (votos, palpites, carimbos, reações, edição de perfil)
+        </label>
+        <div class="sub" style="margin:4px 0 0;">
+          Deixe marcado quando a manutenção existe pra proteger dado. A tela sozinha é cortesia — quem
+          mexer no navegador passa por cima dela. Esta trava é conferida no servidor e não tem como burlar.
+          Entrar na conta, sair e recuperar senha continuam funcionando de propósito, senão a equipe se tranca do lado de fora.
+        </div>
+      </div>
+
+      <div class="toolbar" style="margin-top:14px;">
+        <button id="btnSalvarManut">Salvar</button>
+        <button class="ghost" id="btnDesligarManut">Desligar agora</button>
+      </div>
+      <div class="msg" id="manutMsg"></div>
     </div>
 
     <!-- CONFIG GLOBAL -->
@@ -486,8 +562,99 @@ async function carregarConfig(){
   $('cfgEmail').value = CFG.EMAIL_CONTATO || '';
   $('cfgSlogan').value = CFG.SLOGAN_HOME || '';
   $('cfgRodape').value = CFG.RODAPE || '';
+  carregarManutencao();
   carregarAvancado();
 }
+/* ---------- MANUTENÇÃO ----------
+   Grava em CFG.manutencao e reusa o salvarConfigSeguro, então a alteração
+   entra com a mesma concorrência otimista do resto do config. */
+const MANUT_VAZIA = { ativo:false, escopo:'site', paginas:[], titulo:'', mensagem:'', volta:null, bloquearApi:true };
+
+function isoParaLocal(iso){
+  if(!iso) return '';
+  const d = new Date(iso);
+  if(isNaN(d)) return '';
+  const p = n => String(n).padStart(2,'0');
+  return d.getFullYear()+'-'+p(d.getMonth()+1)+'-'+p(d.getDate())+'T'+p(d.getHours())+':'+p(d.getMinutes());
+}
+
+function carregarManutencao(){
+  const m = Object.assign({}, MANUT_VAZIA, (CFG.manutencao && typeof CFG.manutencao === 'object') ? CFG.manutencao : {});
+  $('manutAtivo').checked = m.ativo === true;
+  document.querySelectorAll('input[name=manutEscopo]').forEach(r => { r.checked = (r.value === (m.escopo === 'paginas' ? 'paginas' : 'site')); });
+  document.querySelectorAll('.manutPg').forEach(c => { c.checked = Array.isArray(m.paginas) && m.paginas.indexOf(c.value) >= 0; });
+  $('manutTitulo').value = m.titulo || '';
+  $('manutMensagem').value = m.mensagem || '';
+  $('manutVolta').value = isoParaLocal(m.volta);
+  $('manutBloquearApi').checked = m.bloquearApi !== false;
+  refletirManutencao();
+}
+
+/* o estado precisa gritar: manutenção esquecida ligada é um clássico */
+function refletirManutencao(){
+  const ligada = $('manutAtivo').checked;
+  const porPagina = document.querySelector('input[name=manutEscopo]:checked').value === 'paginas';
+  $('manutPaginas').style.display = porPagina ? '' : 'none';
+  $('manutCorpo').style.opacity = ligada ? '1' : '.55';
+
+  const box = $('manutStatus');
+  const salva = (CFG.manutencao && CFG.manutencao.ativo === true);
+  if(salva){
+    const m = CFG.manutencao;
+    const alvo = (m.escopo === 'paginas' && (m.paginas||[]).length) ? m.paginas.join(', ') : 'o site inteiro';
+    box.style.display = '';
+    box.innerHTML = '<div style="background:#f5c518;color:#0b0c0f;border-radius:10px;padding:11px 14px;'
+      + 'font-weight:700;margin:0 0 14px;line-height:1.5;">🔧 O site ESTÁ em manutenção agora — '
+      + escH(alvo) + ' fora do ar para quem não é da equipe.'
+      + (m.bloquearApi !== false ? ' Envios recusados no servidor.' : ' Envios continuam liberados.')
+      + '</div>';
+  } else {
+    box.style.display = 'none';
+    box.innerHTML = '';
+  }
+}
+
+async function gravarManutencao(m){
+  $('manutMsg').textContent = 'Salvando…';
+  const r = await salvarConfigSeguro(Object.assign({}, CFG, { manutencao: m }));
+  if(r && r.ok){
+    $('manutMsg').textContent = m.ativo ? 'Manutenção LIGADA ✓' : 'Manutenção desligada ✓';
+    refletirManutencao();
+  } else {
+    $('manutMsg').textContent = 'Erro: ' + ((r && r.error) || '');
+  }
+}
+
+document.addEventListener('change', ev => {
+  if(ev.target && (ev.target.id === 'manutAtivo' || ev.target.name === 'manutEscopo')) refletirManutencao();
+});
+document.addEventListener('click', async ev => {
+  if(ev.target && ev.target.id === 'btnSalvarManut'){
+    const escopo = document.querySelector('input[name=manutEscopo]:checked').value;
+    const paginas = [...document.querySelectorAll('.manutPg')].filter(c => c.checked).map(c => c.value);
+    if($('manutAtivo').checked && escopo === 'paginas' && !paginas.length){
+      $('manutMsg').textContent = 'Marque ao menos uma página — ou escolha "o site inteiro".';
+      return;
+    }
+    const volta = $('manutVolta').value ? new Date($('manutVolta').value).toISOString() : null;
+    const m = {
+      ativo: $('manutAtivo').checked,
+      escopo, paginas,
+      titulo: $('manutTitulo').value.trim(),
+      mensagem: $('manutMensagem').value.trim(),
+      volta,
+      bloquearApi: $('manutBloquearApi').checked
+    };
+    if(m.ativo && !confirm('Ligar a manutenção para ' + (escopo === 'site' ? 'O SITE INTEIRO' : paginas.join(', ')) + '?\n\nQuem não é da equipe vai ver a tela de aviso. Você continua navegando normalmente.')) return;
+    await gravarManutencao(m);
+  }
+  if(ev.target && ev.target.id === 'btnDesligarManut'){
+    const m = Object.assign({}, MANUT_VAZIA, CFG.manutencao || {}, { ativo:false });
+    $('manutAtivo').checked = false;
+    await gravarManutencao(m);
+  }
+});
+
 /* ---- Hall / avançado ---- */
 function carregarAvancado(){
   const H = CFG.HALL || {}, P = CFG.PERFIL || {}, HD = CFG.HOME_DADOS || {};

@@ -101,15 +101,60 @@ async function fimVotacaoMap(){
    provavelmente certo do que `NaN` no meio de uma votação.
    --------------------------------------------------------------------- */
 const ANO_FALLBACK = 2026;
-let _destaqueCache = null, _destaqueCacheAt = 0;
-async function anoEmDestaque(){
-  if(_destaqueCache && (Date.now() - _destaqueCacheAt) < 30000) return _destaqueCache;
+let _cfgCache = null, _cfgCacheAt = 0;
+async function lerConfigSite(){
+  if(_cfgCache && (Date.now() - _cfgCacheAt) < 30000) return _cfgCache;
   try{
     const { data } = await sb.from('config_site').select('dados').eq('id', 1).limit(1);
-    const y = Number(data && data[0] && data[0].dados && data[0].dados.EDICAO_EM_DESTAQUE);
-    if(y){ _destaqueCache = y; _destaqueCacheAt = Date.now(); return y; }
-  }catch(e){ /* cai no fallback */ }
-  return _destaqueCache || ANO_FALLBACK;
+    const d = (data && data[0] && data[0].dados) ? data[0].dados : {};
+    _cfgCache = d; _cfgCacheAt = Date.now();
+    return d;
+  }catch(e){ return _cfgCache || {}; }
+}
+async function anoEmDestaque(){
+  const y = Number((await lerConfigSite()).EDICAO_EM_DESTAQUE);
+  return y || ANO_FALLBACK;
+}
+
+/* ---------------------------------------------------------------------
+   MODO MANUTENÇÃO — o lado do servidor
+
+   A tela de manutenção que o visitante vê é desenhada no core.js, e ela é
+   cortesia: quem mexer no localStorage passa por cima e vê o site. Isso é
+   aceitável, porque o que a tela protege é a EXPERIÊNCIA de quem chega num
+   site meio quebrado.
+
+   O que NÃO é aceitável deixar passar é escrita. Se a manutenção existe
+   porque algo está errado com os dados, um voto que entra no meio do
+   conserto é um voto que vai ter que ser caçado depois. Por isso esta
+   trava mora aqui, é conferida no servidor e não depende do cliente.
+
+   Leitura continua liberada de propósito: quem já está com a página aberta
+   consegue terminar de ler, e o próprio painel precisa das rotas de
+   consulta pra funcionar.
+   --------------------------------------------------------------------- */
+const ACOES_BLOQUEADAS_MANUTENCAO = {
+  voto:1, palpite:1, carimbo:1, reagir:1, reputacao:1, visita:1,
+  perfil:1, trocarNome:1, deletarConta:1, apagarAvaliacao:1, registrar:1
+};
+/* login, logout, meuPerfil, notificações e reset ficam FORA da lista: a
+   equipe precisa conseguir entrar justamente durante a manutenção. */
+
+async function ehEquipe(usuario, token){
+  if(!usuario || !token) return false;
+  if(!(await verificarToken(usuario, token))) return false;
+  const u = await acharUsuario(usuario);
+  return !!(u && u.admin === true);
+}
+
+async function bloqueioManutencao(action, body){
+  if(!ACOES_BLOQUEADAS_MANUTENCAO[action]) return null;
+  const m = (await lerConfigSite()).manutencao;
+  if(!m || m.ativo !== true || m.bloquearApi === false) return null;
+  /* a equipe passa — é ela quem está consertando */
+  if(await ehEquipe(body && body.user, body && body.token)) return null;
+  return String(m.mensagem || '').trim()
+    || 'O site está em manutenção no momento. Tente de novo daqui a pouco.';
 }
 
 /* ---------------------------------------------------------------------
@@ -1858,6 +1903,10 @@ async function handlePost(req, res){
     consumirAnonUmaVez: apiConsumirAnonUmaVez, trocarNome: apiTrocarNome,
     reagir: apiReagir, apagarAvaliacao: apiApagarAvaliacao
   };
+  /* manutenção: recusa escrita ANTES de rotear (ver bloqueioManutencao) */
+  { const bloq = await bloqueioManutencao(action, body);
+    if(bloq) return res.json({ ok:false, manutencao:true, error: bloq }); }
+
   const fn = rotas[action] || apiVoto;
   /* `req` vai junto porque as rotas com limite de taxa precisam da origem da
      chamada (apiVoto, apiRegistrar, apiPedirReset). As demais ignoram. */

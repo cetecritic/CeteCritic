@@ -97,7 +97,8 @@ Números de linha são aproximados — use-os como bússola, não como endereço
 | 3566–3710 | **Página: noite** |
 | 3711–3990 | **Página: Monte o Seu** |
 | 3989–4880 | **Página: Hall da Fama** (Chart.js) |
-| 4884–5175 | **Página: início** |
+| 4884–5060 | "Hoje recomendamos" — sorteio determinístico do acervo |
+| 5060–5350 | **Página: início** |
 | 5176–5200 | Página: em breve |
 | 5197–6580 | **Página: perfil** — avaliações, badges, carimbos, feed social, bolão |
 | 6583–6710 | **Página: busca** |
@@ -162,8 +163,8 @@ formValues = { s1e1: 8.5, s1e2: 7, s2e1: 9 };
 
 ```js
 const submission = {
-  id:   Date.now() + '-' + Math.random().toString(36).slice(2,7),
-  ts:   Date.now(),
+  id:   idAvaliacao(),        // crypto.randomUUID()
+  ts:   Date.now(),           // o servidor descarta se for implausível
   name: (logado && !anon) ? sess.user : (anon ? 'Anônimo' : nomeDigitado),
   grid: { ...formValues },
   year: ANO,
@@ -179,9 +180,10 @@ Três coisas a notar:
   quando `sub.user` bate com a sessão. Sem dono, o voto não entra no perfil.
 - **A atualização é otimista:** o voto entra em `submissions` e a tela repinta
   antes de o servidor confirmar.
-- **O cooldown é local.** `localStorage['last-submission-ts']` mais
-  `COOLDOWN_MINUTOS`. Não há equivalente no servidor —
-  ver [09 · Riscos, item 1](09-riscos-conhecidos.md).
+- **O cooldown do navegador é só conforto.** `localStorage['last-submission-ts']`
+  mais `COOLDOWN_MINUTOS` evita o clique duplo. A trava que vale é a do
+  servidor (3 avaliações por 5 minutos, por conta e por origem) — ver
+  [03 · API](03-api.md) e [09 · Riscos, item 1](09-riscos-conhecidos.md).
 
 ### Cache dos votos (SWR)
 
@@ -201,25 +203,89 @@ Existem **três** sistemas de badge no projeto, e confundi-los é fácil.
 
 ### 7.1 Badges de peça (automáticas)
 
-Calculadas em `badgesDoAno(subs)` a partir dos votos daquela edição:
+São **nove**, calculadas em `badgesDoAno(subs)` a partir dos votos daquela
+edição. **Tudo é relativo à própria edição** — a mediana que separa "pouca
+gente viu", a comparação de dispersão, o crescimento no tempo. A única exceção
+é a ⭐, que por definição compara o acervo inteiro e é atribuída fora desta
+função.
 
-| Badge | Critério |
-|---|---|
-| 🥇 Campeã do ano | maior média da edição |
-| ⭐ Melhor da história | maior média entre todas as edições |
-| 🔥 Polêmica | maior desvio padrão |
-| 🎯 Consistente | menor desvio padrão |
-| 👏 Favorita do público | maior % de notas 9+ |
-| 📊 Mais avaliada | mais votos recebidos |
-| 📈 Bem recebida | consolação: melhor saldo de elogios (7+) sobre críticas (4−) |
+| # | Badge | Critério | Eixo que mede | Piso |
+|---|---|---|---|---|
+| 1 | 🥇 Campeã do ano | maior média da edição | topo da média | — |
+| — | ⭐ Melhor da história | maior média entre todas as edições | topo absoluto | — |
+| 2 | 💎 Joia escondida | melhor média **entre as peças menos avaliadas da edição** | alcance invertido | média ≥ 7,5 |
+| 3 | 🗣️ Boca a boca | a média **subiu** entre a primeira e a segunda metade dos votos | o tempo | média ≥ 7 |
+| 4 | 👏 Favorita do público | maior % de notas 9+ | pico de entusiasmo | — |
+| 5 | 🤝 Unânime | a **menor nota** que recebeu foi a mais alta da edição | o piso | média ≥ 7 |
+| 6 | 🔥 Polêmica | maior desvio padrão | dispersão pra cima | — |
+| 7 | 🎯 Consistente | menor desvio padrão | dispersão pra baixo | — |
+| 8 | 📊 Mais avaliada | mais votos recebidos | alcance | — |
+| 9 | 📈 Bem recebida | consolação: melhor saldo de elogios (7+) sobre críticas (4−) | saldo | — |
 
-Regra que economiza confusão: **no máximo uma badge automática por peça por
-edição**, na ordem de prioridade acima. Se a vencedora de um critério já tem
-badge melhor, aquele critério fica sem dono naquele ano. A ⭐ da história e as
-badges manuais não contam no limite.
+A coluna **#** é a ordem de prioridade em `CRITERIOS`, e ela **não** é a ordem
+em que as badges aparecem no Hall — a vitrine ordena por prestígio, que é como
+o público lê a lista.
+
+**Toda badge é positiva, por decisão de projeto.** Nenhuma aponta a pior peça
+do ano: são estudantes que subiram no palco, e o site existe para celebrar o
+festival. 🔥 Polêmica é o limite — e ela diz "dividiu opinião", que numa mostra
+de teatro é elogio.
+
+**Cada uma mede um eixo diferente**, e isso não é estética: dois critérios que
+medem quase a mesma coisa se atropelam e um deles nunca encontra dono. Foi
+exatamente o que aconteceu até agosto de 2026 — ver a caixa abaixo.
+
+**Piso de qualidade.** As badges que *afirmam* que a peça é boa só são
+concedidas acima de uma média mínima. Num ano em que a melhor abertura tirou
+5,0, ninguém leva 🎬 — badge que se dá a qualquer coisa deixa de significar
+alguma coisa.
+
+**Uma badge por peça, e nenhum critério fica órfão.** Cada critério ordena
+todas as candidatas e **desce a lista** até achar uma que ainda não tenha
+badge. A campeã de média leva 🥇; a segunda colocada em notas 9+ leva 👏 se a
+primeira já estiver ocupada. A ⭐ da história e as badges manuais do painel
+entram por fora e não contam no limite.
+
+**Raras primeiro.** A ordem de prioridade põe 💎 e 🗣️ logo depois da 🥇, e isso
+foi medido, não escolhido por gosto. Um critério raro colocado no fim quase
+nunca chega a alguém: a peça que cresceu no boca a boca costuma ser boa
+também, então já foi levada por 🥇 ou 👏 antes de o 🗣️ ter vez. Em 400 edições
+simuladas, mover as duas para o começo levou 💎 de 84% para 97% das edições,
+🗣️ de 54% para 72%, e a média por edição de 8,38 para 8,68 — sem custo
+relevante para as outras.
+
+**O 🗣️ é o critério mais ruidoso do conjunto**, e por isso tem dois pisos
+próprios: `BOCA_MIN_VOTOS` (8) e `BOCA_MIN_DELTA` (0,5). Com menos de oito
+votos, primeira metade contra segunda metade é praticamente sorteio; um ganho
+menor que meio ponto não é história, é oscilação. Peça sem carimbo de tempo
+nos votos simplesmente não concorre.
+
+> #### O bug que existia aqui até 08/2026
+>
+> A regra "uma badge por peça" era aplicada assim: cada critério elegia a sua
+> campeã e, se ela já tivesse badge, **aquele critério simplesmente ficava sem
+> dono**. Não havia segunda colocada.
+>
+> Como os critérios são correlacionados — a peça de maior média costuma ser
+> também a com mais notas 9+ e uma das mais consensuais —, três ou quatro
+> badges eram eleitas pela mesma peça, a primeira ficava com ela, e as outras
+> não iam para ninguém.
+>
+> Numa simulação de 200 edições, 👏 **Favorita do público encontrava dono em
+> 15% das vezes**. 🎯 Consistente em 81%, 📊 Mais avaliada em 80%. A média era
+> de 4,8 badges distribuídas por edição.
+>
+> Com a descida na lista, as seis antigas passaram a 100%, e a média subiu
+> para 8,5 de 9.
 
 Só entram peças com pelo menos `HALL.minAvaliacoes` votos (padrão 3) — a menos
 que nenhuma alcance o mínimo, aí vale o que houver.
+
+> **Ao adicionar uma badge nova:** acrescente em `BADGES_DEF` (a vitrine do
+> Hall se monta sozinha a partir dele) e em `CRITERIOS` dentro de
+> `badgesDoAno`. Pergunte-se qual **eixo novo** ela mede — se a resposta for
+> "quase o mesmo que outra", ela vai viver órfã. E ponha `minimo` se ela
+> afirmar qualidade.
 
 ### 7.2 Badges de usuário (perfil)
 
@@ -239,6 +305,36 @@ cima do catálogo na renderização. Nada é gravado como badge no banco.
 
 Detalhe pensado: o Colecionador é calculado **antes** dessas exceções, então
 uma badge dada à mão não destrava outra em cascata.
+
+---
+
+## 7.4 "Hoje recomendamos"
+
+Uma peça por dia na home, **igual para todo mundo** e sorteada de **todo o
+acervo**, não só da edição em cartaz.
+
+O sorteio é uma permutação determinística: `_embaralharComSemente(candidatos,
+ano)` embaralha a lista inteira com um PRNG semeado (mulberry32) e o dia do ano
+escolhe a posição. Isso dá três propriedades ao mesmo tempo:
+
+- **todo mundo vê a mesma peça no mesmo dia** — nada depende de `Math.random()`
+  nem do relógio local;
+- **cada peça aparece uma vez antes de qualquer repetição** — o ciclo tem o
+  tamanho do acervo, não de um punhado;
+- **dias seguidos não caem em peças vizinhas**, e a ordem muda a cada ano.
+
+A estatística sai dos votos que a home já carregou (nenhuma requisição extra).
+Só a edição sorteada tem os dados de acervo carregados, via
+`carregarDadosEdicao`, que já cacheia por ano.
+
+Preferências, em ordem: peças com nota ≥ 7 (afrouxa se sobrarem menos de dez),
+e entre as candidatas do dia, uma que **tenha gravação** — o convite é "assista
+e deixe a sua nota", e mandar a pessoa para uma peça sem vídeo é beco sem saída.
+
+> Cuidado ao mexer: qualquer coisa que introduza `Math.random()` ou dependa da
+> ordem em que as respostas da rede chegaram quebra a promessa de "igual para
+> todo mundo". Por isso os candidatos são ordenados por `(ano, chave)` antes do
+> embaralhamento.
 
 ---
 

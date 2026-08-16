@@ -263,7 +263,9 @@ merecem: "sem festival por causa da pandemia" é informação.
 home só na data. É o recurso mais barato de fazer e o que mais surpreende.
 
 **Badges manuais** (📝) — reconhecimentos que o cálculo automático não pega:
-"primeira peça com libras", "recorde de público".
+"primeira peça com libras", "recorde de público". As nove badges automáticas
+são distribuídas sozinhas a partir dos votos — ver
+[02 · Frontend § 7.1](02-frontend.md).
 
 **Sobre e abertura** da edição (🎬 Edições) — texto, banner, contexto histórico,
 playlist do Spotify da abertura.

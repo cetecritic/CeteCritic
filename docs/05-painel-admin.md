@@ -85,6 +85,7 @@ A navegação é por âncora, e cada seção tem `data-papel` com quem a enxerga
 | Aba | Papéis | O quê |
 |---|---|---|
 | 🔎 Buscar | admin, historiador | busca por edição ou peça para editar direto |
+| 🔧 Manutenção | admin | tira o site ou páginas específicas do ar |
 | ⚙️ Configurações | admin | edição em destaque, nota máxima, cooldown, textos, VAPID |
 | 🏆 Hall & avançado | admin | mínimo de avaliações, badges extras, metas de perfil |
 | 📝 Curiosidades/badges | admin | curiosidades, badges manuais, linha do tempo, "neste dia" |
@@ -197,6 +198,68 @@ aparelho / uma vez por sessão / sempre) e período opcional.
 > excluir. Somem do site e da lista, mas a linha permanece. Se fossem
 > excluídos de verdade, o servidor recriaria o banner e reenviaria o push para
 > toda a base — foi exatamente esse o bug corrigido em agosto de 2026.
+
+---
+
+## Aba Manutenção
+
+Tira o site — ou só algumas páginas — do ar, com uma tela explicativa no lugar.
+
+| Campo | O quê |
+|---|---|
+| **Ligar o modo manutenção** | o interruptor |
+| **Escopo** | o site inteiro, ou só as páginas marcadas |
+| **Páginas** | início, edição, noite, bolão, monte o seu, hall, perfil, busca, notificações, configurações |
+| **Título e mensagem** | o que aparece na tela; vazio usa um texto padrão |
+| **Previsão de volta** | opcional — vira contagem regressiva, e a página recarrega sozinha na hora |
+| **Recusar envios no servidor** | ver abaixo |
+
+### Duas camadas, e elas fazem coisas diferentes
+
+**A tela** é o que o visitante vê. Ela é **cortesia, não cadeado**: quem editar
+o `localStorage` passa por cima e vê o site — possivelmente quebrado, que é
+justamente o que a tela estava evitando. Isso é aceitável, porque o que ela
+protege é a experiência de quem chega.
+
+**A recusa de envios** (`bloquearApi`) é o cadeado de verdade. O `/api/db`
+passa a recusar voto, palpite, carimbo, reação, reputação, visita, edição de
+perfil, troca de nome e exclusão de conta. É conferida **no servidor**, com o
+papel confirmado no banco, e não tem como burlar.
+
+Deixe marcada sempre que a manutenção existir para proteger dado. Se algo está
+errado com as notas, um voto que entra no meio do conserto é um voto que vai
+ter que ser caçado depois.
+
+**Entrar na conta, sair e recuperar senha continuam funcionando** de propósito
+— senão a equipe se tranca do lado de fora.
+
+### Como a equipe entra
+
+Três caminhos, e nenhum depende do modo manutenção:
+
+1. **`/admin.html` nunca é bloqueado.** O painel não carrega o `core.js`, então
+   a tela de manutenção não existe para ele. A própria tela traz um link
+   discreto "Sou da equipe →".
+2. **Quem tem sessão de admin atravessa a tela** e navega normalmente, com uma
+   tarja amarela fixa no rodapé: *"🔧 Manutenção LIGADA … só a equipe está
+   vendo o site"*, com atalho para desligar.
+3. **`/redefinir-senha.html` nunca é bloqueada** — é o caminho de volta de quem
+   perdeu o acesso.
+
+> A tarja existe porque manutenção esquecida ligada é um clássico. Se você é
+> admin e o site parece normal, olhe o rodapé antes de concluir que está tudo
+> certo para os outros.
+
+### Se o painel também estiver fora do ar
+
+O modo manutenção mora em `config_site.dados.manutencao`. Se por algum motivo
+nem o painel abrir, desligue direto no SQL Editor do Supabase:
+
+```sql
+UPDATE config_site
+SET dados = jsonb_set(dados, '{manutencao,ativo}', 'false')
+WHERE id = 1;
+```
 
 ---
 

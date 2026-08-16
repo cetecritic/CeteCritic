@@ -155,6 +155,46 @@ async function lerConfig() {
   return (data && data[0] && data[0].dados) ? data[0].dados : {};
 }
 /* ---------------------------------------------------------------------
+   MODO MANUTENÇÃO
+
+   Serve pra tirar o site (ou parte dele) do ar de propósito, com uma tela
+   explicativa, enquanto algo é consertado. Mora em `config_site.dados`, e a
+   forma normalizada viaja no config.js — assim toda página sabe do estado
+   sem uma requisição extra.
+
+   Duas camadas, e elas fazem coisas diferentes:
+
+     TELA   — o core.js mostra o aviso em vez de renderizar a página. É o que
+              o visitante vê. Vale como cortesia, não como cadeado: quem
+              editar o localStorage passa direto e vê o site (possivelmente
+              quebrado, que é justamente o que a tela evitava).
+
+     API    — o /api/db recusa as ações de ESCRITA. É esta que importa quando
+              a manutenção existe pra proteger dado: nenhum voto, palpite ou
+              carimbo entra enquanto ela estiver ligada, venha de onde vier.
+
+   Quem é da equipe atravessa as duas, e a segunda é verificada no servidor.
+   --------------------------------------------------------------------- */
+const PAGINAS_MANUTENCAO = ['home','edicao','noite','bolao','monte','hall','perfil','busca','notif','config'];
+
+function manutencaoNormalizada(cfg) {
+  const m = (cfg && cfg.manutencao && typeof cfg.manutencao === 'object') ? cfg.manutencao : {};
+  const escopo = (m.escopo === 'paginas') ? 'paginas' : 'site';
+  const paginas = Array.isArray(m.paginas)
+    ? m.paginas.map(String).filter(x => PAGINAS_MANUTENCAO.indexOf(x) >= 0)
+    : [];
+  return {
+    ativo: m.ativo === true,
+    escopo,
+    paginas,
+    titulo: String(m.titulo || '').slice(0, 120),
+    mensagem: String(m.mensagem || '').slice(0, 600),
+    volta: m.volta || null,              // ISO opcional — vira contagem regressiva
+    bloquearApi: m.bloquearApi !== false  // padrão: sim
+  };
+}
+
+/* ---------------------------------------------------------------------
    GRAVAÇÃO DO CONFIG COM CONCORRÊNCIA OTIMISTA
 
    Toda a configuração do site é UMA linha de jsonb, e salvar é
@@ -314,7 +354,8 @@ async function handleGet(req, res) {
       `const RODAPE = ${JSON.stringify(cfg.RODAPE || '')};\n` +
       `const VAPID_PUBLIC_KEY = ${JSON.stringify(cfg.VAPID_PUBLIC_KEY || '')};\n` +
       `const CURIOSIDADES = ${JSON.stringify(curios)};\n` +
-      `const FEED = ${JSON.stringify((Array.isArray(cfg.feed) ? cfg.feed : []).slice(0, 40))};\n`;
+      `const FEED = ${JSON.stringify((Array.isArray(cfg.feed) ? cfg.feed : []).slice(0, 40))};\n` +
+      `const MANUTENCAO = ${JSON.stringify(manutencaoNormalizada(cfg))};\n`;
     return jsResp(res, js);
   }
 

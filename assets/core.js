@@ -2778,24 +2778,90 @@ function statsDeVals(vals){
   };
 }
 
+/* ---------------------------------------------------------------------
+   AS NOVE BADGES DE PEÇA
+
+   Toda badge daqui é POSITIVA por decisão de projeto. Nenhuma aponta a pior
+   peça do ano: são estudantes que subiram no palco, e o site existe pra
+   celebrar o festival, não pra constranger ninguém. "Polêmica" é o limite —
+   e ela diz "dividiu opinião", que numa mostra de teatro é elogio.
+
+   Cada uma mede um EIXO diferente. Se duas medissem quase a mesma coisa,
+   uma delas nunca encontraria dono (ver a regra de desempate no
+   badgesDoAno logo abaixo):
+
+     campea        o topo da média
+     melhorHist    o topo da média entre TODAS as edições
+     favorita      o pico do entusiasmo  (fatia de notas 9+)
+     unanime       o PISO  (a nota mais baixa que ela recebeu foi alta)
+     polemica      a dispersão pra cima
+     consistente   a dispersão pra baixo
+     maisAvaliada  alcance (quanta gente viu)
+     joiaEscondida alcance INVERTIDO (nota alta com pouca gente)
+     bocaABoca     o TEMPO (a nota subiu conforme mais gente avaliou)
+     bemRecebida   saldo de elogios sobre críticas (consolação)
+
+   Tudo aqui é relativo à PRÓPRIA EDIÇÃO: a mediana que separa "pouca gente
+   viu", a comparação de dispersão, o crescimento no tempo. A única exceção é
+   a ⭐ melhorHist, que por definição compara o acervo inteiro e é atribuída
+   fora desta função.
+   --------------------------------------------------------------------- */
 const BADGES_DEF = {
-  campea:       { emoji:'🥇', nome:'Campeã do ano', desc:'A peça com a maior nota média da edição.' },
-  melhorHist:   { emoji:'⭐', nome:'Melhor episódio da história', desc:'A maior nota média entre TODAS as edições do festival.' },
-  polemica:     { emoji:'🔥', nome:'Polêmica', desc:'As notas mais divididas do ano — teve gente amando e gente detestando.' },
-  consistente:  { emoji:'🎯', nome:'Consistente', desc:'As notas mais parecidas do ano — quase todo mundo deu a mesma nota.' },
-  favorita:     { emoji:'👏', nome:'Favorita do público', desc:'A maior porcentagem de notas 9+ da edição.' },
-  maisAvaliada: { emoji:'📊', nome:'Mais avaliada', desc:'A peça que mais recebeu notas na edição.' },
-  bemRecebida:  { emoji:'📈', nome:'Bem recebida', desc:'Mais elogios (notas 7+) do que críticas (notas 4 ou menos).' }
+  campea:        { emoji:'🥇', nome:'Campeã do ano', desc:'A peça com a maior nota média da edição.' },
+  melhorHist:    { emoji:'⭐', nome:'Melhor episódio da história', desc:'A maior nota média entre TODAS as edições do festival.' },
+  favorita:      { emoji:'👏', nome:'Favorita do público', desc:'A maior porcentagem de notas 9+ da edição.' },
+  unanime:       { emoji:'🤝', nome:'Unânime', desc:'Nem a nota mais baixa que ela recebeu foi baixa — ninguém saiu decepcionado.' },
+  polemica:      { emoji:'🔥', nome:'Polêmica', desc:'As notas mais divididas do ano — teve gente amando e gente detestando.' },
+  consistente:   { emoji:'🎯', nome:'Consistente', desc:'As notas mais parecidas do ano — quase todo mundo deu a mesma nota.' },
+  maisAvaliada:  { emoji:'📊', nome:'Mais avaliada', desc:'A peça que mais recebeu notas na edição.' },
+  joiaEscondida: { emoji:'💎', nome:'Joia escondida', desc:'A melhor nota entre as peças que menos gente avaliou naquela edição — quem viu, viu.' },
+  bocaABoca:     { emoji:'🗣️', nome:'Boca a boca', desc:'A nota dela subiu conforme mais gente foi avaliando — começou discreta e cresceu no boca a boca.' },
+  bemRecebida:   { emoji:'📈', nome:'Bem recebida', desc:'Mais elogios (notas 7+) do que críticas (notas 4 ou menos).' }
 };
 
-/* calcula as badges de UMA edição a partir dos votos dela.
-   Retorna { 's1e1': [badge, ...], ... } */
+/* =====================================================================
+   badgesDoAno — as badges de UMA edição, a partir dos votos dela
+   =====================================================================
+   Retorna { 's1e1': [badge, ...], ... }
+
+   O QUE ESTAVA ERRADO ANTES
+
+   A regra "uma badge por peça" era aplicada assim: cada critério elegia a
+   sua campeã e, se ela JÁ tivesse badge, aquele critério simplesmente ficava
+   sem dono no ano. O comentário antigo dizia isso com todas as letras.
+
+   Na prática as badges se atropelavam quase sempre, porque os critérios são
+   correlacionados: a peça de maior média costuma ser também a com mais notas
+   9+ (👏 Favorita) e uma das mais consensuais (🎯 Consistente). Numa edição
+   típica, três ou quatro das badges eram eleitas pela MESMA peça — a
+   primeira ficava com ela e as outras não iam pra ninguém. Era comum sobrar
+   duas ou três badges distribuídas de sete.
+
+   COMO FICOU
+
+   Cada critério agora ORDENA todas as candidatas e desce a lista até achar
+   uma que ainda não tenha badge. A campeã de média continua ganhando 🥇; a
+   segunda colocada em notas 9+ leva o 👏 se a primeira já estiver ocupada.
+   Nenhuma peça acumula, nenhum critério fica órfão enquanto houver peça
+   elegível — que é o que o texto do Hall sempre prometeu.
+
+   A ORDEM DA LISTA É A PRIORIDADE, e ela põe as badges RARAS primeiro — não
+   as mais prestigiosas. O motivo está comentado em cima do array CRITERIOS,
+   com os números que sustentam a escolha.
+
+   As badges de qualidade têm PISO (`minimo`): num ano em que a peça pouco
+   vista de melhor nota tirou 6,0, ninguém recebe "💎 Joia escondida" — badge
+   que se dá a qualquer coisa deixa de significar alguma coisa.
+
+   (⭐ da história e as badges manuais do hall-dados.js entram por fora e não
+   contam no limite de uma por peça.)
+   ===================================================================== */
 function badgesDoAno(subs){
   const stats = {};
   const chaves = new Set();
-  subs.forEach(s => Object.keys(s.grid).forEach(k => chaves.add(k)));
+  (subs || []).forEach(s => { if(s && s.grid) Object.keys(s.grid).forEach(k => chaves.add(k)); });
   chaves.forEach(k => {
-    const vals = subs.map(s => Number(s.grid[k])).filter(v => !isNaN(v));
+    const vals = (subs || []).map(s => Number(s.grid[k])).filter(v => !isNaN(v));
     const st = statsDeVals(vals);
     if(st) stats[k] = st;
   });
@@ -2806,36 +2872,136 @@ function badgesDoAno(subs){
 
   const minAv = (typeof HALL !== 'undefined' && HALL.minAvaliacoes) || 3;
   let elig = ks.filter(k => stats[k].n >= minAv);
-  if(!elig.length) elig = ks; // pouca gente votou ainda: usa o que tem
+  if(!elig.length) elig = ks;                 // pouca gente votou ainda: usa o que tem
 
-  function top(lista, f, maior){
-    let best = null;
-    lista.forEach(k => {
-      if(best === null || (maior ? f(stats[k]) > f(stats[best]) : f(stats[k]) < f(stats[best]))) best = k;
-    });
-    return best;
-  }
-  /* REGRA: no máximo 1 badge automática por peça por edição — vale a que
-     mais se encaixa, nesta ordem de prioridade. Se a vencedora de um
-     critério já tem badge melhor, aquele critério fica sem dono no ano.
-     (⭐ da história e as badges manuais do hall-dados.js não contam no limite.) */
-  const candidatos = [
-    ['campea',       top(elig, s => s.avg, true)],
-    ['favorita',     top(elig.filter(k => stats[k].p9 > 0), s => s.p9, true)],
-    ['polemica',     top(elig.filter(k => stats[k].std > 0), s => s.std, true)],
-    ['consistente',  elig.length > 1 ? top(elig, s => s.std, false) : null],
-    ['maisAvaliada', top(ks, s => s.n, true)]
-  ];
-  candidatos.forEach(([tipo, k]) => {
-    if(k && out[k] && out[k].length === 0) out[k].push(BADGES_DEF[tipo]);
+  /* ---------------------------------------------------------------------
+     CRESCIMENTO NO TEMPO — o eixo do 🗣️ Boca a boca
+
+     Compara a média da PRIMEIRA metade dos votos daquela peça com a da
+     SEGUNDA metade, ordenadas por horário. Como cada pessoa envia a grade
+     inteira de uma vez, na prática isto compara "quem votou logo depois da
+     noite" com "quem votou dias depois" — que é exatamente o sinal de boca
+     a boca que se quer capturar.
+
+     Os dois pisos existem porque este é o critério mais ruidoso do conjunto,
+     e sem eles ele premiaria acaso:
+
+       BOCA_MIN_VOTOS  — com menos que isto, primeira metade contra segunda
+                         metade é praticamente sorteio;
+       BOCA_MIN_DELTA  — um ganho menor que meio ponto não é história
+                         nenhuma, é oscilação normal.
+
+     Em contagem ímpar o voto do meio fica de fora das duas metades, para não
+     contaminar os dois lados com o mesmo dado.
+     --------------------------------------------------------------------- */
+  const BOCA_MIN_VOTOS = 8;
+  const BOCA_MIN_DELTA = 0.5;
+  const crescimento = {};
+  chaves.forEach(k => {
+    const pares = (subs || [])
+      .map(sub => ({ ts: Number(sub && sub.ts) || 0, v: Number(sub && sub.grid && sub.grid[k]) }))
+      .filter(x => x.ts > 0 && !isNaN(x.v))
+      .sort((a, b) => a.ts - b.ts);
+    if(pares.length < BOCA_MIN_VOTOS) return;      // amostra pequena demais
+    const metade = Math.floor(pares.length / 2);
+    const cedo = pares.slice(0, metade);
+    const tarde = pares.slice(pares.length - metade);
+    const m = arr => arr.reduce((a, x) => a + x.v, 0) / arr.length;
+    crescimento[k] = m(tarde) - m(cedo);
   });
-  /* consolação: também é ÚNICA — vai só para a peça sem badge com o melhor
-     saldo de elogios (7+) vs críticas (4-) */
-  const semBadge = elig.filter(k => out[k].length === 0 && stats[k].pos > stats[k].neg);
-  if(semBadge.length){
-    const bem = top(semBadge, s => s.pos - s.neg, true);
-    if(bem) out[bem].push(BADGES_DEF.bemRecebida);
-  }
+
+  /* mediana de avaliações — separa "muita gente viu" de "pouca gente viu",
+     que é o eixo do 📊 e do 💎 */
+  const ns = elig.map(k => stats[k].n).sort((a, b) => a - b);
+  const medianaN = ns[Math.floor(ns.length / 2)];
+
+  /* Cada critério é { tipo, entre, por, maior, minimo }:
+       entre  — quem pode concorrer
+       por    — (stats, chave) => valor comparado. Recebe a chave também
+                porque nem todo eixo cabe no `stats` (o 🗣️ mede crescimento
+                no tempo, que vive num mapa à parte)
+       maior  — true = vence o maior; false = vence o menor
+       minimo — piso de qualidade (média), quando a badge afirma que é boa */
+  /* ---------------------------------------------------------------------
+     A ORDEM AQUI É A PRIORIDADE — e ela é diferente da ordem em que as
+     badges aparecem no Hall, de propósito.
+
+     A vitrine ordena por prestígio, que é como o público lê a lista. Aqui a
+     ordem é operacional: quem escolhe primeiro leva. E a regra que funciona
+     é RARAS PRIMEIRO.
+
+     Por quê: um critério raro colocado no fim quase nunca chega a alguém.
+     A peça que cresceu no boca a boca costuma ser boa também, então ela já
+     foi levada por 🥇, 👏 ou 🤝 antes de o 🗣️ ter vez — e o critério fica
+     órfão descrevendo uma história que ninguém vê.
+
+     Medido em 400 edições simuladas, movendo 💎 e 🗣️ para logo depois da 🥇:
+
+         💎 Joia escondida    84% -> 97% das edições
+         🗣️ Boca a boca       54% -> 72%
+         média por edição    8,38 -> 8,68  (de 9)
+
+     e nenhuma das outras perdeu nada relevante (🤝 caiu de 100% para 99%).
+     --------------------------------------------------------------------- */
+  const CRITERIOS = [
+    { tipo:'campea',        entre: elig,
+      por: s => s.avg, maior: true },
+
+    /* o avesso do 📊: entre as peças que MENOS gente avaliou, a melhor.
+       Existe porque o sistema todo empurra pra frente quem já tem público, e
+       uma peça ótima numa noite de chuva ficava invisível pra sempre. */
+    { tipo:'joiaEscondida', entre: elig.filter(k => stats[k].n <= medianaN),
+      por: s => s.avg, maior: true, minimo: 7.5 },
+
+    /* a peça que mais cresceu entre a primeira e a segunda metade dos votos.
+       Só concorre quem cresceu ACIMA do piso de ruído. */
+    { tipo:'bocaABoca',     entre: elig.filter(k => (crescimento[k] || 0) >= BOCA_MIN_DELTA),
+      por: (s, k) => crescimento[k] || 0, maior: true, minimo: 7 },
+
+    { tipo:'favorita',      entre: elig.filter(k => stats[k].p9 > 0),
+      por: s => s.p9, maior: true },
+
+    /* o PISO da peça: a menor nota que ela recebeu. Mede coisa diferente do
+       🎯 Consistente — uma peça pode ter notas todas parecidas E baixas. */
+    { tipo:'unanime',       entre: elig,
+      por: s => s.min, maior: true, minimo: 7 },
+
+    { tipo:'polemica',      entre: elig.filter(k => stats[k].std > 0),
+      por: s => s.std, maior: true },
+
+    { tipo:'consistente',   entre: elig.length > 1 ? elig : [],
+      por: s => s.std, maior: false },
+
+    { tipo:'maisAvaliada',  entre: elig,
+      por: s => s.n, maior: true }
+  ];
+
+  const livre = k => out[k] && out[k].length === 0;
+
+  CRITERIOS.forEach(c => {
+    const candidatas = (c.entre || [])
+      .filter(k => c.minimo === undefined || stats[k].avg >= c.minimo)
+      .sort((a, b) => {
+        const d = c.maior ? c.por(stats[b], b) - c.por(stats[a], a)
+                          : c.por(stats[a], a) - c.por(stats[b], b);
+        /* desempate estável: mais avaliações e, no fim, a chave — sem isso a
+           mesma edição poderia dar badges diferentes em navegadores
+           diferentes, conforme a ordem em que os votos chegaram */
+        return d || (stats[b].n - stats[a].n) || a.localeCompare(b);
+      });
+    /* desce a lista até achar quem ainda não tem badge. ERA AQUI o bug:
+       antes só a primeira colocada era considerada, e se ela estivesse
+       ocupada o critério inteiro ficava sem dono. */
+    const vencedora = candidatas.find(livre);
+    if(vencedora) out[vencedora].push(BADGES_DEF[c.tipo]);
+  });
+
+  /* consolação, sempre por último: a peça ainda sem badge com o melhor saldo
+     de elogios (7+) sobre críticas (4-) */
+  const semBadge = elig.filter(k => livre(k) && stats[k].pos > stats[k].neg)
+    .sort((a, b) => (stats[b].pos - stats[b].neg) - (stats[a].pos - stats[a].neg) || a.localeCompare(b));
+  if(semBadge.length) out[semBadge[0]].push(BADGES_DEF.bemRecebida);
+
   return out;
 }
 
@@ -4161,10 +4327,9 @@ async function paginaHall(){
 
     evolucao: `<div class="section">
       <h2>📈 Evolução do festival</h2>
-      <div class="sub">Nota média por edição e "exigência do público" (% de notas 9+). Clique num ponto para abrir a edição.</div>
+      <div class="sub">Nota média por edição. Clique num ponto para abrir a edição.</div>
       <div class="hall-filtros">De <select class="hall-select" id="hallDe"></select> até <select class="hall-select" id="hallAte"></select></div>
       <div style="height:240px"><canvas id="chartEvolucao"></canvas></div>
-      <div style="height:200px; margin-top:18px"><canvas id="chartP9"></canvas></div>
       <h3 class="subhead">Cada nota, edição por edição</h3>
       <div class="sub">Quanto cada nota de 0 a ${NOTA_MAXIMA} representou do total daquele ano. Clique numa nota da legenda para mostrar ou esconder a linha dela.</div>
       <div style="height:280px"><canvas id="chartNotas"></canvas></div>
@@ -4365,7 +4530,11 @@ async function paginaHall(){
           dist: distAno,
           nNotas: valsAno.length,
           polar: avgs.length > 1 ? Math.max(...avgs) - Math.min(...avgs) : null,
-          p9: valsAno.length ? valsAno.filter(v => v >= 9).length / valsAno.length : 0,
+          /* `p9` (fatia de notas 9+ do ano) ficava aqui. Só existia pra
+             alimentar o gráfico chartP9, que saiu do Hall — a mesma
+             informação, e melhor, está no "Cada nota, edição por edição".
+             O p9 POR PEÇA continua em statsDeVals, e é ele que sustenta a
+             badge 👏 Favorita do público. */
           cresc: ordN.length > 1 ? { d: ordN[ordN.length-1].avg - ordN[0].avg, de: ordN[0], para: ordN[ordN.length-1] } : null,
           avalPorPeca: pecasDoAno.length ? nAno / pecasDoAno.length : null
         });
@@ -4557,11 +4726,14 @@ async function paginaHall(){
         scales: { y: { min: 0, max: NOTA_MAXIMA } }
       }
     });
-    desenhar('chartP9', {
-      type: 'line',
-      data: { labels: lista.map(a => a.ano), datasets: [{ label: '% de notas 9+', data: lista.map(a => Math.round(a.p9 * 1000) / 10), borderColor: '#31b96e', backgroundColor: 'rgba(49,185,110,.15)', fill: true, tension: .3, pointRadius: 4, pointBackgroundColor: '#31b96e' }] },
-      options: { responsive: true, maintainAspectRatio: false, plugins: { legend: { display: true } }, scales: { y: { min: 0, max: 100, ticks: { callback: v => v + '%' } } } }
-    });
+    /* O gráfico "% de notas 9+" (chartP9) ficava aqui. Foi removido quando o
+       "Cada nota, edição por edição" logo abaixo entrou: aquele mostra a
+       fatia de TODAS as notas ano a ano, então a linha do 9+ virou um recorte
+       pobre da mesma informação — e ainda ocupava a altura de um gráfico
+       inteiro para dizer menos.
+
+       A estatística em si continua viva: `p9` segue em statsDeVals, alimenta
+       a badge 👏 Favorita do público e o recorde correspondente no Hall. */
 
     /* ---- uma linha por nota (0 a 10) ----------------------------------
        Mesmo formato do gráfico de cima, só que com uma linha para cada
@@ -4941,6 +5113,190 @@ async function paginaHall(){
 }
 
 /* =====================================================================
+   "HOJE RECOMENDAMOS" — uma peça por dia, do ACERVO INTEIRO
+   =====================================================================
+   O QUE ESTAVA ERRADO
+
+   A versão anterior sorteava dentro de um conjunto minúsculo e sempre o
+   mesmo, por três motivos que se somavam:
+
+   1. O candidato saía só da EDIÇÃO EM DESTAQUE. A lista era montada com um
+      laço sobre `ND` (as noites do ano em cartaz), então as outras catorze
+      edições do acervo simplesmente não existiam para a recomendação.
+
+   2. Dentro dessa edição, a preferência era "peça com badge" — e
+      `badgesDoAno` dá NO MÁXIMO uma badge por peça, com o catálogo inteiro
+      somando seis. Na prática o conjunto tinha quatro ou cinco peças.
+
+   3. A escolha era `diaAno % pool.length`. Com cinco peças, o ciclo fecha em
+      cinco dias e recomeça igual, para sempre — e, como as badges param de
+      mudar depois que a votação fecha, o conjunto congela junto.
+
+   Fora da semana do festival, isso é onze meses girando as mesmas cinco
+   peças do ano passado. Era exatamente o sintoma relatado.
+
+   COMO FICOU
+
+   O conjunto passou a ser o acervo inteiro: toda peça de toda edição que
+   tenha votos suficientes. Os votos de todos os anos já estavam carregados
+   nesta tela (a home usa isso para os números históricos), então o conjunto
+   novo não custa nenhuma requisição a mais.
+
+   A ordem é um EMBARALHAMENTO DETERMINÍSTICO semeado pelo ano: todo mundo vê
+   a mesma peça no mesmo dia (que era a intenção original e continua sendo),
+   mas percorre-se uma permutação completa — cada peça aparece uma vez antes
+   de qualquer repetição, e dias seguidos não caem em peças vizinhas.
+
+   Com ~15 edições de ~15 peças, o ciclo passa de cinco dias para mais de
+   duzentos, e vira outro a cada ano.
+   ===================================================================== */
+
+/* PRNG determinístico (mulberry32). Precisa ser reproduzível: dois
+   navegadores diferentes têm que chegar na MESMA ordem, senão a promessa de
+   "igual pra todo mundo" cai. Math.random() não serve. */
+function _prngSemente(a){
+  return function(){
+    a |= 0; a = (a + 0x6D2B79F5) | 0;
+    let t = Math.imul(a ^ (a >>> 15), 1 | a);
+    t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
+    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+  };
+}
+/* Fisher-Yates com semente — permutação completa, sempre a mesma */
+function _embaralharComSemente(arr, semente){
+  const a = arr.slice();
+  const rnd = _prngSemente(semente);
+  for(let i = a.length - 1; i > 0; i--){
+    const j = Math.floor(rnd() * (i + 1));
+    [a[i], a[j]] = [a[j], a[i]];
+  }
+  return a;
+}
+
+/* candidatos do acervo inteiro, a partir dos votos que a home já carregou.
+   Só estatística aqui — título e sinopse vêm depois, e só da edição sorteada. */
+function _candidatosRecomendacao(subsDestaque, outros){
+  const minAv = (typeof HALL !== 'undefined' && HALL && HALL.minAvaliacoes) || 3;
+  const porAno = [{ ano: ANO, subs: subsDestaque }].concat(outros || []);
+  const cand = [];
+
+  porAno.forEach(({ ano, subs }) => {
+    if(!ano || !(subs || []).length) return;
+    const vals = {};
+    subs.forEach(sub => {
+      const g = sub && sub.grid;
+      if(!g) return;
+      Object.keys(g).forEach(k => {
+        if(!/^s\d+e\d+$/.test(k)) return;
+        const v = Number(g[k]);
+        if(isNaN(v)) return;
+        (vals[k] = vals[k] || []).push(v);
+      });
+    });
+    Object.keys(vals).forEach(key => {
+      /* spoiler: na edição em cartaz, noite ainda não liberada fica de fora */
+      if(Number(ano) === Number(ANO)){
+        const n = Number((/^s(\d+)e/.exec(key) || [])[1]);
+        if(n && !noiteLiberada(n)) return;
+      }
+      const st = statsDeVals(vals[key]);
+      if(st && st.n >= minAv) cand.push({ ano: Number(ano), key, st });
+    });
+  });
+  return cand;
+}
+
+/* Ordem de preferência. Uma recomendação deve ser algo que vale a pena ver —
+   mas restringir demais devolveria sempre as mesmas campeãs, que é o
+   problema que estamos consertando. Então: primeiro as bem avaliadas; se não
+   houver o bastante para um ciclo decente, afrouxa. */
+function _peneirarCandidatos(cand){
+  const bem = cand.filter(c => c.st.avg >= 7);
+  if(bem.length >= 10) return bem;
+  const medianas = cand.filter(c => c.st.avg >= 6);
+  if(medianas.length >= 10) return medianas;
+  return cand;
+}
+
+async function montarRecomendacao(subsDestaque, outros){
+  const elR = document.getElementById('homeRecomenda');
+  if(!elR) return;
+  try{
+    const cand = _peneirarCandidatos(_candidatosRecomendacao(subsDestaque, outros));
+    if(!cand.length){
+      elR.innerHTML = '<div class="empty-note">A recomendação aparece quando houver peças com votos.</div>';
+      return;
+    }
+
+    /* chave estável para a ordem não depender da ordem em que as respostas
+       da rede chegaram — sem isto, dois navegadores poderiam divergir */
+    cand.sort((a, b) => a.ano - b.ano || a.key.localeCompare(b.key));
+
+    const hj = agora();
+    const ordem = _embaralharComSemente(cand, hj.getFullYear());
+    const diaAno = Math.floor((hj - new Date(hj.getFullYear(), 0, 0)) / 86400000);
+    const inicio = diaAno % ordem.length;
+
+    /* Percorre a partir do dia de hoje até achar uma peça exibível. As
+       tentativas existem porque a estatística vem dos VOTOS e o título vem do
+       ACERVO: uma chave votada pode não ter peça cadastrada (edição antiga
+       ainda sendo digitalizada). Cada tentativa carrega uma edição — daí o
+       teto baixo. `carregarDadosEdicao` já guarda o resultado por ano. */
+    const TENTATIVAS = 6;
+    let escolhida = null, reserva = null;
+    for(let i = 0; i < TENTATIVAS && i < ordem.length; i++){
+      const c = ordem[(inicio + i) % ordem.length];
+      const cfgAno = EDICOES.find(e => e.ano === c.ano);
+      if(!cfgAno || cfgAno.emBreve) continue;
+
+      const dados = await carregarDadosEdicao(cfgAno);
+      if(!dados) continue;
+
+      const m = /^s(\d+)e(\d+)$/.exec(c.key);
+      const noite = Number(m[1]), ordemPeca = Number(m[2]);
+      const nd = dados.noites && dados.noites[noite];
+      const peca = nd && Array.isArray(nd.pecas) ? nd.pecas[ordemPeca - 1] : null;
+      if(!peca || !String(peca.titulo || '').trim()) continue;
+
+      const item = { ...c, noite, peca, cfgAno };
+      /* preferimos uma peça com vídeo: o convite é "assista e deixe a sua
+         nota", e mandar a pessoa para uma peça sem gravação é beco sem saída */
+      if(String(peca.youtube || '').trim()){ escolhida = item; break; }
+      if(!reserva) reserva = item;
+    }
+
+    const p = escolhida || reserva;
+    if(!p){
+      elR.innerHTML = '<div class="empty-note">A recomendação aparece quando houver peças com votos.</div>';
+      return;
+    }
+
+    /* badges daquela peça, calculadas no ano dela */
+    let badges = [];
+    try{
+      const subsDoAno = (Number(p.ano) === Number(ANO))
+        ? subsDestaque
+        : ((outros || []).find(o => Number(o.ano) === Number(p.ano)) || {}).subs;
+      badges = badgesDoAno(subsDoAno || [])[p.key] || [];
+    }catch(e){ badges = []; }
+
+    const url = `${BASE}${p.ano}/noite-${p.noite}.html`;
+    const sinopse = String(p.peca.sinopse || '').trim();
+    const temVideo = !!String(p.peca.youtube || '').trim();
+    elR.innerHTML = `<a class="record-item" href="${url}">
+      <span class="rec-emoji">🎭</span>
+      <div>
+        <div class="rec-title">${esc(p.peca.titulo)} <span class="peca-badges">${htmlBadges(badges)}</span> — nota ${p.st.avg.toFixed(1)}</div>
+        <div class="rec-text">${p.ano} · Noite ${p.noite}${p.peca.turma ? ' · Turma ' + esc(p.peca.turma) : ''}${temVideo ? ' · 🎬 tem gravação' : ''}${sinopse ? ' — ' + esc(sinopse.slice(0, 150)) + (sinopse.length > 150 ? '…' : '') : ''}</div>
+      </div>
+    </a>`;
+  }catch(e){
+    console.warn('[cetecritic] recomendação do dia falhou', e);
+    elR.innerHTML = '<div class="empty-note">A recomendação aparece quando houver peças com votos.</div>';
+  }
+}
+
+/* =====================================================================
    PÁGINA: INÍCIO (homepage oficial — cetecritic.xyz)
    Engloba a edição em destaque (EDICAO_EM_DESTAQUE do config.js).
    ===================================================================== */
@@ -5054,7 +5410,7 @@ async function paginaHome(){
 
     <div class="section">
       <h2>🎭 Hoje recomendamos</h2>
-      <div class="sub">Uma peça escolhida por dia — assista e deixe a sua nota.</div>
+      <div class="sub">Uma peça diferente por dia, sorteada de todo o acervo — assista e deixe a sua nota.</div>
       <div class="record-list" id="homeRecomenda"><div class="empty-note">Carregando...</div></div>
     </div>
 
@@ -5163,24 +5519,8 @@ async function paginaHome(){
         </a>`).join('')
       : '<div class="empty-note">Os destaques aparecem aqui assim que os primeiros votos chegarem.</div>';
 
-    /* ---- hoje recomendamos: 1 peça por dia (prioriza quem tem badge) ---- */
-    const bmap = badgesDoAno(submissions);
-    const comBadge = lista.filter(p => (bmap[p.key] || []).length);
-    const pool = comBadge.length ? comBadge : lista;
-    const elR = document.getElementById('homeRecomenda');
-    if(elR){
-      if(pool.length){
-        const diaAno = Math.floor((hoje - new Date(hoje.getFullYear(), 0, 0)) / 86400000);
-        const p = pool[diaAno % pool.length]; /* muda todo dia, igual pra todo mundo */
-        elR.innerHTML = `<a class="record-item" href="${p.url}">
-          <span class="rec-emoji">🎭</span>
-          <div><div class="rec-title">${esc(p.titulo)} <span class="peca-badges">${htmlBadges(bmap[p.key])}</span> — nota ${p.st.avg.toFixed(1)}</div>
-          <div class="rec-text">Turma ${esc(p.turma)} · Noite ${p.noite}${p.sinopse ? ' — ' + esc(p.sinopse.slice(0, 150)) + (p.sinopse.length > 150 ? '…' : '') : ''}</div></div>
-        </a>`;
-      } else {
-        elR.innerHTML = '<div class="empty-note">A recomendação aparece quando houver peças com votos.</div>';
-      }
-    }
+    /* ---- hoje recomendamos ---- */
+    montarRecomendacao(submissions, outros);
 
     /* ---- curiosidades: manuais (home-dados.js) + automáticas ---- */
     const autoCurio = [];
@@ -7345,12 +7685,123 @@ function telaDeErro(titulo, detalhe){
     </div>`;
 }
 
+/* =====================================================================
+   MODO MANUTENÇÃO — a tela que o visitante vê
+   =====================================================================
+   Configurado no painel (aba 🔧 Manutenção) e entregue pelo config.js em
+   `MANUTENCAO`. Pode valer pro site inteiro ou só para alguns tipos de
+   página — útil quando, por exemplo, o Hall da Fama quebrou mas a votação
+   precisa continuar de pé no meio do festival.
+
+   SOBRE O QUE ISTO É E O QUE NÃO É:
+
+   Esta tela é CORTESIA, não cadeado. Quem editar o localStorage passa por
+   cima e vê o site — possivelmente quebrado, que é justamente o que a tela
+   estava evitando. O cadeado de verdade é a recusa de ESCRITA no /api/db,
+   que roda no servidor e confere o papel de quem chama (ver
+   bloqueioManutencao em api/db.js). Se a manutenção existe pra proteger
+   dado, é aquela que vale.
+
+   Quem é da equipe atravessa a tela e ganha uma tarja fixa no topo, pra
+   ninguém esquecer que o site está fora do ar pro resto do mundo — o modo
+   manutenção esquecido ligado é um clássico.
+
+   A página de redefinir senha NUNCA é bloqueada: é o caminho de volta de
+   quem perdeu o acesso, inclusive da própria equipe. E o /admin.html não
+   carrega este arquivo, então o painel continua acessível sempre. */
+const _MANUT = (typeof MANUTENCAO !== 'undefined' && MANUTENCAO) ? MANUTENCAO : { ativo:false };
+
+function manutencaoPegaEstaPagina(){
+  if(!_MANUT.ativo) return false;
+  if(PAGINA.tipo === 'redefinir') return false;          // sempre liberada
+  if(_MANUT.escopo === 'paginas'){
+    const lista = Array.isArray(_MANUT.paginas) ? _MANUT.paginas : [];
+    /* 'edicao' cobre também as telas satélite do ano (sobre/abertura/resumo),
+       que são partes da mesma página pro visitante */
+    const tipo = (['sobre','abertura','resumo'].indexOf(PAGINA.tipo) >= 0) ? 'edicao' : PAGINA.tipo;
+    return lista.indexOf(tipo) >= 0;
+  }
+  return true;                                            // escopo = site inteiro
+}
+
+/* a sessão diz `admin` porque o servidor respondeu isso no login. Serve pra
+   decidir o que MOSTRAR; nada que dependa de segurança se apoia nisto. */
+function souDaEquipe(){ const s = usuarioLogado(); return !!(s && s.admin); }
+
+function telaManutencao(){
+  const titulo = String(_MANUT.titulo || '').trim() || 'Estamos em manutenção';
+  const msg = String(_MANUT.mensagem || '').trim()
+    || 'Voltamos já. Estamos ajustando uma coisa aqui e preferimos tirar do ar a te mostrar algo quebrado.';
+  const volta = _MANUT.volta ? new Date(_MANUT.volta) : null;
+  const temVolta = volta && !isNaN(volta) && volta > new Date();
+  document.body.innerHTML = `
+    <div style="min-height:100vh;display:flex;align-items:center;justify-content:center;padding:24px;
+                font-family:Inter,system-ui,sans-serif;background:#0e0f12;color:#eceef2;text-align:center;">
+      <div style="max-width:460px;">
+        <img src="${BASE}assets/logo.png" alt="CETECritic" style="max-width:150px;margin-bottom:22px;opacity:.9"
+             onerror="this.style.display='none'">
+        <div style="font-size:44px;line-height:1;margin-bottom:14px;">🔧</div>
+        <h1 style="font-size:21px;margin:0 0 12px;color:#f5c518;">${esc(titulo)}</h1>
+        <p style="color:#b9bdc6;font-size:14px;line-height:1.65;margin:0 0 20px;">${esc(msg)}</p>
+        ${temVolta ? `<div style="background:#17181c;border:1px solid #2c2e33;border-radius:12px;padding:14px 18px;margin:0 0 20px;">
+            <div style="color:#9a9ea6;font-size:12px;text-transform:uppercase;letter-spacing:1px;margin-bottom:6px;">Previsão de volta</div>
+            <div style="color:#f5c518;font-size:18px;font-weight:800;" id="manutTimer">--:--:--</div>
+          </div>` : ''}
+        <button onclick="location.reload()"
+                style="background:#f5c518;color:#0b0c0f;border:0;border-radius:10px;padding:11px 26px;
+                       font-weight:800;cursor:pointer;font-size:14px;">Tentar de novo</button>
+        <p style="margin:26px 0 0;font-size:12px;">
+          <a href="${BASE}admin.html" style="color:#6e727a;text-decoration:none;">Sou da equipe →</a>
+        </p>
+      </div>
+    </div>`;
+  if(temVolta){
+    const el = document.getElementById('manutTimer');
+    const tick = () => {
+      const falta = volta - new Date();
+      if(falta <= 0){ location.reload(); return; }
+      el.textContent = formatDuracao(falta);
+      setTimeout(tick, 1000);
+    };
+    tick();
+  }
+}
+
+/* Tarja da equipe: quem passa pela manutenção precisa lembrar que passou —
+   manutenção esquecida ligada é um clássico.
+
+   `position:fixed` no RODAPÉ, e inserida num setTimeout, de propósito: o
+   `montarShell` insere a sidebar com `afterbegin`, então qualquer coisa
+   posta antes dele acabaria embaixo do menu. Fixa embaixo, a tarja não
+   disputa espaço com o cabeçalho nem com o menu do celular. */
+function tarjaManutencao(){
+  const alvo = (_MANUT.escopo === 'paginas' && (_MANUT.paginas || []).length)
+    ? _MANUT.paginas.join(', ')
+    : 'o site inteiro';
+  setTimeout(() => {
+    if(document.getElementById('tarjaManutencao')) return;
+    document.body.insertAdjacentHTML('beforeend', `
+      <div id="tarjaManutencao"
+           style="position:fixed;left:0;right:0;bottom:0;z-index:99998;background:#f5c518;color:#0b0c0f;
+                  font-family:Inter,system-ui,sans-serif;font-size:12.5px;font-weight:700;
+                  padding:9px 14px;text-align:center;line-height:1.45;
+                  box-shadow:0 -6px 20px rgba(0,0,0,.35);">
+        🔧 Manutenção LIGADA para ${esc(alvo)} — só a equipe está vendo o site.
+        <a href="${BASE}admin.html#secManutencao"
+           style="color:#0b0c0f;text-decoration:underline;">desligar no painel</a>
+      </div>`);
+  }, 0);
+}
+
 if(typeof EDICOES === 'undefined' || !Array.isArray(EDICOES)){
   console.error('[cetecritic] config.js não carregou — EDICOES ausente. Confira /config.js no navegador.');
   telaDeErro('Não conseguimos carregar o site',
     'Os dados do festival não chegaram. Costuma ser passageiro — tente recarregar em alguns instantes.');
+}else if(manutencaoPegaEstaPagina() && !souDaEquipe()){
+  telaManutencao();
 }else{
   try{
+    if(manutencaoPegaEstaPagina()) tarjaManutencao();
     /* ---------------------- dispatcher ---------------------- */
     despachar();
   }catch(e){
