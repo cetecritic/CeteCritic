@@ -203,8 +203,11 @@ Existem **três** sistemas de badge no projeto, e confundi-los é fácil.
 
 ### 7.1 Badges de peça (automáticas)
 
-São **nove**, calculadas em `badgesDoAno(subs)` a partir dos votos daquela
-edição. **Tudo é relativo à própria edição** — a mediana que separa "pouca
+São **nove no total**, e a distinção importa: oito são distribuídas por
+`badgesDoAno(subs)` a partir dos votos daquela edição, e a ⭐ é atribuída por
+fora, na página da noite, porque ela compara o acervo inteiro.
+
+**Tudo o mais é relativo à própria edição** — a mediana que separa "pouca
 gente viu", a comparação de dispersão, o crescimento no tempo. A única exceção
 é a ⭐, que por definição compara o acervo inteiro e é atribuída fora desta
 função.
@@ -216,11 +219,10 @@ função.
 | 2 | 💎 Joia escondida | melhor média **entre as peças menos avaliadas da edição** | alcance invertido | média ≥ 7,5 |
 | 3 | 🗣️ Boca a boca | a média **subiu** entre a primeira e a segunda metade dos votos | o tempo | média ≥ 7 |
 | 4 | 👏 Favorita do público | maior % de notas 9+ | pico de entusiasmo | — |
-| 5 | 🤝 Unânime | a **menor nota** que recebeu foi a mais alta da edição | o piso | média ≥ 7 |
-| 6 | 🔥 Polêmica | maior desvio padrão | dispersão pra cima | — |
-| 7 | 🎯 Consistente | menor desvio padrão | dispersão pra baixo | — |
-| 8 | 📊 Mais avaliada | mais votos recebidos | alcance | — |
-| 9 | 📈 Bem recebida | consolação: melhor saldo de elogios (7+) sobre críticas (4−) | saldo | — |
+| 5 | 🔥 Polêmica | maior desvio padrão | dispersão pra cima | — |
+| 6 | 🎯 Consistente | menor desvio padrão | dispersão pra baixo | — |
+| 7 | 📊 Mais avaliada | mais votos recebidos | alcance | — |
+| 8 | 📈 Bem recebida | consolação: melhor saldo de elogios (7+) sobre críticas (4−) | saldo | — |
 
 A coluna **#** é a ordem de prioridade em `CRITERIOS`, e ela **não** é a ordem
 em que as badges aparecem no Hall — a vitrine ordena por prestígio, que é como
@@ -250,9 +252,15 @@ entram por fora e não contam no limite.
 foi medido, não escolhido por gosto. Um critério raro colocado no fim quase
 nunca chega a alguém: a peça que cresceu no boca a boca costuma ser boa
 também, então já foi levada por 🥇 ou 👏 antes de o 🗣️ ter vez. Em 400 edições
-simuladas, mover as duas para o começo levou 💎 de 84% para 97% das edições,
-🗣️ de 54% para 72%, e a média por edição de 8,38 para 8,68 — sem custo
-relevante para as outras.
+simuladas, mover as duas para o começo levou 💎 de 84% para 97% das edições e
+🗣️ de 54% para 72% — sem custo relevante para as outras.
+
+> Houve uma nona badge automática, **🤝 Unânime** (a menor nota que a peça
+> recebeu foi a mais alta da edição). Media um eixo próprio — o piso, em vez do
+> topo ou da dispersão — mas foi removida para o catálogo fechar em nove.
+> Se um dia fizer falta, é um objeto em `BADGES_DEF` e um critério
+> `{ tipo:'unanime', entre: elig, por: s => s.min, maior: true, minimo: 7 }`
+> em `CRITERIOS`.
 
 **O 🗣️ é o critério mais ruidoso do conjunto**, e por isso tem dois pisos
 próprios: `BOCA_MIN_VOTOS` (8) e `BOCA_MIN_DELTA` (0,5). Com menos de oito

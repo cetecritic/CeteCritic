@@ -2793,7 +2793,6 @@ function statsDeVals(vals){
      campea        o topo da média
      melhorHist    o topo da média entre TODAS as edições
      favorita      o pico do entusiasmo  (fatia de notas 9+)
-     unanime       o PISO  (a nota mais baixa que ela recebeu foi alta)
      polemica      a dispersão pra cima
      consistente   a dispersão pra baixo
      maisAvaliada  alcance (quanta gente viu)
@@ -2810,7 +2809,6 @@ const BADGES_DEF = {
   campea:        { emoji:'🥇', nome:'Campeã do ano', desc:'A peça com a maior nota média da edição.' },
   melhorHist:    { emoji:'⭐', nome:'Melhor episódio da história', desc:'A maior nota média entre TODAS as edições do festival.' },
   favorita:      { emoji:'👏', nome:'Favorita do público', desc:'A maior porcentagem de notas 9+ da edição.' },
-  unanime:       { emoji:'🤝', nome:'Unânime', desc:'Nem a nota mais baixa que ela recebeu foi baixa — ninguém saiu decepcionado.' },
   polemica:      { emoji:'🔥', nome:'Polêmica', desc:'As notas mais divididas do ano — teve gente amando e gente detestando.' },
   consistente:   { emoji:'🎯', nome:'Consistente', desc:'As notas mais parecidas do ano — quase todo mundo deu a mesma nota.' },
   maisAvaliada:  { emoji:'📊', nome:'Mais avaliada', desc:'A peça que mais recebeu notas na edição.' },
@@ -2939,9 +2937,8 @@ function badgesDoAno(subs){
 
          💎 Joia escondida    84% -> 97% das edições
          🗣️ Boca a boca       54% -> 72%
-         média por edição    8,38 -> 8,68  (de 9)
 
-     e nenhuma das outras perdeu nada relevante (🤝 caiu de 100% para 99%).
+     e nenhuma das outras perdeu nada relevante.
      --------------------------------------------------------------------- */
   const CRITERIOS = [
     { tipo:'campea',        entre: elig,
@@ -2960,11 +2957,6 @@ function badgesDoAno(subs){
 
     { tipo:'favorita',      entre: elig.filter(k => stats[k].p9 > 0),
       por: s => s.p9, maior: true },
-
-    /* o PISO da peça: a menor nota que ela recebeu. Mede coisa diferente do
-       🎯 Consistente — uma peça pode ter notas todas parecidas E baixas. */
-    { tipo:'unanime',       entre: elig,
-      por: s => s.min, maior: true, minimo: 7 },
 
     { tipo:'polemica',      entre: elig.filter(k => stats[k].std > 0),
       por: s => s.std, maior: true },
