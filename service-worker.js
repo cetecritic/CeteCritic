@@ -15,7 +15,7 @@
    Ao publicar uma versão nova do site, troque o número em CACHE_VERSION
    para forçar a limpeza do cache antigo. */
  
-const CACHE_VERSION = 'cetecritic-v33';
+const CACHE_VERSION = 'cetecritic-v34';
 
 /* Cache SEPARADO para as imagens de outro domínio (os posters moram no
    Supabase Storage). Fica fora do CACHE_VERSION de propósito: um poster não
@@ -130,10 +130,33 @@ self.addEventListener('fetch', event => {
 
      A resposta é `opaque` (vem de outra origem, sem CORS): não dá pra ler
      status nem corpo, mas dá pra guardar e devolver — que é tudo que o <img>
-     precisa. Por isso o teste é "veio alguma coisa", não "resp.ok". */
+     precisa. Por isso o teste é "veio alguma coisa", não "resp.ok".
+
+     ⚠️ ARMADILHA (corrigida): esse cache é alimentado em modo 'no-cors' (ali
+     embaixo, no install, e aqui mesmo pra visitas novas), então tudo que
+     guarda é opaco. Só que `cache.match(req)` casa pela URL, sem olhar o
+     `mode` de quem está pedindo agora — e existe um segundo tipo de pedido
+     pra essas mesmas capas: `coresDaImagem()` no core.js usa
+     `img.crossOrigin = 'anonymous'` (pra ler os pixels e montar o fundo do
+     card de compartilhar), o que gera um request `mode: 'cors'`. Uma
+     resposta opaca NÃO serve pra satisfazer um request que não é 'no-cors'
+     — o navegador rejeita a combinação e mata o fetch com
+     "net::ERR_FAILED: an opaque response was used for a request whose type
+     is not no-cors". Resultado prático: a extração de cor falhava sempre, e
+     o card de compartilhar ficava com a paleta cinza de fallback.
+     Por isso um pedido 'cors' de verdade pula o cache opaco por completo e
+     vai direto pra rede, preservando o `mode` original do request. */
   if (url.origin !== self.location.origin) {
     if (req.destination === 'image') {
       event.respondWith((async () => {
+        if (req.mode !== 'no-cors') {
+          /* extração de cor (ou qualquer outro pedido que precise de
+             resposta legível): sem cache opaco no meio. Se o Storage não
+             tiver CORS liberado pro nosso domínio, o fetch falha aqui
+             mesmo — igual falharia sem service worker nenhum — e quem
+             chamou (coresDaImagem) já sabe cair pra paleta neutra. */
+          return fetch(req);
+        }
         const cache = await caches.open(CACHE_IMG);
         const cacheado = await cache.match(req);
         if (cacheado) return cacheado;

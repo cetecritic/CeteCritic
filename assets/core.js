@@ -2448,7 +2448,13 @@ const _coresCache = {};
 async function coresDaImagem(url){
   const chave = String(url || '');
   if(!chave) return null;
-  if(_coresCache[chave] !== undefined) return _coresCache[chave];
+  /* só usa o cache se uma tentativa ANTERIOR teve sucesso. Uma falha (null)
+     não é memorizada: pode ter sido um soluço passageiro (cold start do
+     Storage, ou o service worker servindo uma resposta opaca pra um pedido
+     que precisava de CORS de verdade — ver 09-riscos), e vale tentar de
+     novo na próxima vez que o card for aberto, em vez de ficar cinza pelo
+     resto da sessão inteira por causa de uma falha de um instante só. */
+  if(_coresCache[chave]) return _coresCache[chave];
 
   const resultado = await new Promise(resolve => {
     const img = new Image();
@@ -2489,13 +2495,23 @@ async function coresDaImagem(url){
         const dist = c => Math.abs(c.r-principal.r) + Math.abs(c.g-principal.g) + Math.abs(c.b-principal.b);
         const secundaria = lista.slice(1).find(c => dist(c) > 90) || lista[1] || principal;
         resolve({ principal: hex(principal), secundaria: hex(secundaria) });
-      }catch(e){ resolve(null); }   // canvas tainted (sem CORS)
+      }catch(e){
+        // canvas "tainted": a imagem carregou mas o navegador recusou ler os
+        // pixels. Quase sempre é CORS (ver 09-riscos) — logamos o motivo
+        // real em vez de engolir, porque esse catch escondia o diagnóstico.
+        console.warn('coresDaImagem: canvas tainted (provável falta de CORS)', chave, e);
+        resolve(null);
+      }
     };
-    img.onerror = () => resolve(null);
+    img.onerror = (ev) => {
+      console.warn('coresDaImagem: a imagem não carregou em modo CORS', chave, ev);
+      resolve(null);
+    };
     img.src = chave;
   });
 
-  _coresCache[chave] = resultado;
+  /* só grava no cache o que deu certo — falha não é persistida (ver acima) */
+  if(resultado) _coresCache[chave] = resultado;
   return resultado;
 }
 
