@@ -406,6 +406,22 @@ async function fetchVotos(){
   }catch(e){ console.error('Falha ao carregar avaliações', e); }
 }
 
+/* payload agregado do acervo inteiro (edições + peças + votos de todos os
+   anos + bolaoWins), a mesma rota que o Hall usa (`?hall=1`). Cacheado em
+   memória pela duração da página — a Home e o Hall podem chamar mais de
+   uma vez sem duplicar o hit de rede. Ver comentário completo em `db.js`
+   → `apiDadosHall`. */
+let _acervoAgregadoCache = null;
+async function carregarAcervoAgregado(){
+  if(_acervoAgregadoCache) return _acervoAgregadoCache;
+  const r = await fetch(API_URL + '?hall=1&_=' + Date.now(), { cache: 'no-store' });
+  if(!r.ok) throw new Error('HTTP ' + r.status);
+  const j = await r.json();
+  if(!j || j.ok === false) throw new Error((j && j.error) || 'acervo agregado falhou');
+  _acervoAgregadoCache = j;
+  return j;
+}
+
 /* id de uma avaliação. Vira também o id do post no feed social (`sub:<id>`),
    então precisa ser único de verdade — duas avaliações com o mesmo id
    compartilhariam as reações. `randomUUID` existe em todo navegador que o
@@ -3832,7 +3848,7 @@ function paginaNoite(n){
     let html = '';
     pecas.forEach((info, idx) => {
       const key = `s${n}e${idx + 1}`;
-      html += `<div class="noite-card">
+      html += `<div class="noite-card" id="peca-${key}">
         <div class="noite-card-head">
           <div>
             <div class="noite-card-title">${esc(info.titulo)} <span class="peca-badges" id="badges-${key}"></span></div>
@@ -3871,6 +3887,14 @@ function paginaNoite(n){
   }
 
   renderCards();
+
+  /* rolagem automática até a peça, quando o link veio com #sNeM (ex.:
+     vindo do Hall, da Home ou da busca). Só na primeira montagem — depois
+     disso o usuário pode rolar livremente sem ser puxado de volta. */
+  {
+    const alvo = /^#s\d+e\d+$/.test(location.hash) ? document.getElementById('peca-' + location.hash.slice(1)) : null;
+    if(alvo) requestAnimationFrame(() => alvo.scrollIntoView({ behavior: 'smooth', block: 'start' }));
+  }
 
   /* compartilhar a MÉDIA DA NOITE inteira (média de todas as peças da noite) */
   {
@@ -4566,7 +4590,7 @@ async function paginaHall(){
           const key = `s${n}e${i+1}`;
           const vals = subs.map(su => Number(su.grid[key])).filter(v => !isNaN(v));
           const st = statsDeVals(vals);
-          const item = { ano: d.cfg.ano, noite: n, ep: i+1, titulo: p.titulo, turma: p.turma, st, url: `${BASE}${d.cfg.ano}/noite-${n}.html` };
+          const item = { ano: d.cfg.ano, noite: n, ep: i+1, titulo: p.titulo, turma: p.turma, st, url: `${BASE}${d.cfg.ano}/noite-${n}.html#${key}` };
           pecas.push(item);
           if(st){ somaNoite += st.avg * st.n; nNoite += st.n; pecasDaNoite.push(item); pecasDoAno.push(item); }
         });
@@ -4965,7 +4989,12 @@ async function paginaHall(){
     const pol = topDe(elig.filter(p => p.st.std > 0), p => p.st.std);
     if(pol) recsP.push({ emoji:'🔥', titulo:'A mais polêmica (dividiu a plateia)', texto:`${fmtP(pol)} — notas de ${pol.st.min.toFixed(1)} a ${pol.st.max.toFixed(1)}`, url: pol.url });
     const sleepers = [];
-    s.noites.forEach(x => { if(x.pecas.length > 1) x.pecas.forEach(p => { if(p.st.n >= minAv) sleepers.push({ p, margem: p.st.avg - x.avg, noiteAvg: x.avg }); }); });
+    s.noites.forEach(x => { if(x.pecas.length > 1) x.pecas.forEach(p => {
+      /* a GOAT (maior média da história) não pode ser "sleeper hit": ela é a
+         favorita natural, não uma surpresa que ninguém viu chegar */
+      if(goat && p.titulo === goat.titulo && p.ano === goat.ano) return;
+      if(p.st.n >= minAv) sleepers.push({ p, margem: p.st.avg - x.avg, noiteAvg: x.avg });
+    }); });
     const sl = topDe(sleepers, q => q.margem);
     if(sl && sl.margem > 0.2) recsP.push({ emoji:'😴', titulo:'O "Sleeper Hit" (maior surpresa)', texto:`${fmtP(sl.p)} superou a média da própria noite (${sl.noiteAvg.toFixed(1)}) em ${sl.margem.toFixed(1)} ponto(s)`, url: sl.p.url });
     if(elig.length > 1){
@@ -5001,20 +5030,65 @@ async function paginaHall(){
 
     /* ---- 2. A Batalha das Noites ---- */
     const recsN = [];
+    /* guarda as noites (objeto bruto `x`) premiadas aqui embaixo, pra "A Mais
+       Repetida" no fim conseguir contar por POSIÇÃO (Noite 1, 2, 3...) sem
+       duplicar a lógica de cada recorde */
+    const vencedoresNoite = [];
+
     const ouro = topDe(s.noites, x => x.avg);
-    if(ouro) recsN.push({ emoji:'🌙', titulo:'A Noite Ouro (melhor da história)', texto:`Noite ${ouro.noite} de ${ouro.ano} — média ${ouro.avg.toFixed(1)} com ${ouro.n} notas`, url: ouro.url });
+    if(ouro){ recsN.push({ emoji:'🌙', titulo:'A Noite Ouro (melhor da história)', texto:`Noite ${ouro.noite} de ${ouro.ano} — média ${ouro.avg.toFixed(1)} com ${ouro.n} notas`, url: ouro.url }); vencedoresNoite.push(ouro); }
+
     const comVarias = s.noites.filter(x => x.pecas.length > 1);
-    const caos = topDe(comVarias, x => Math.max(...x.pecas.map(p => p.st.avg)) - Math.min(...x.pecas.map(p => p.st.avg)));
-    if(caos){
-      const diff = Math.max(...caos.pecas.map(p => p.st.avg)) - Math.min(...caos.pecas.map(p => p.st.avg));
-      recsN.push({ emoji:'🎢', titulo:'A Noite do Caos (montanha-russa)', texto:`Noite ${caos.noite} de ${caos.ano} — ${diff.toFixed(1)} pontos entre a melhor e a pior peça do dia`, url: caos.url });
-    }
+    const amplitude = x => Math.max(...x.pecas.map(p => p.st.avg)) - Math.min(...x.pecas.map(p => p.st.avg));
+    const caos = topDe(comVarias, amplitude);
+    if(caos){ recsN.push({ emoji:'🎢', titulo:'A Noite do Caos (montanha-russa)', texto:`Noite ${caos.noite} de ${caos.ano} — ${amplitude(caos).toFixed(1)} pontos entre a melhor e a pior peça do dia`, url: caos.url }); vencedoresNoite.push(caos); }
+
+    /* irmã do Caos: a noite em que a plateia foi mais unânime peça a peça
+       (menor distância entre a melhor e a pior nota da programação) */
+    const equilibrada = topDe(comVarias, amplitude, false);
+    if(equilibrada){ recsN.push({ emoji:'⚖️', titulo:'A Noite Equilibrada', texto:`Noite ${equilibrada.noite} de ${equilibrada.ano} — só ${amplitude(equilibrada).toFixed(1)} ponto(s) entre a melhor e a pior peça do dia`, url: equilibrada.url }); vencedoresNoite.push(equilibrada); }
+
     s.anos.forEach(a => {
       s.noites.filter(x => x.ano === a.ano && x.pecas.length >= 2 && x.pecas.every(p => p.st.avg >= a.avg))
-        .forEach(x => recsN.push({ emoji:'👑', titulo:'Rolo Compressor (Tripla Coroa)', texto:`Noite ${x.noite} de ${x.ano}: todas as peças acima da média do festival (${a.avg.toFixed(1)})`, url: x.url }));
+        .forEach(x => { recsN.push({ emoji:'👑', titulo:'Rolo Compressor (Tripla Coroa)', texto:`Noite ${x.noite} de ${x.ano}: todas as peças acima da média do festival (${a.avg.toFixed(1)})`, url: x.url }); vencedoresNoite.push(x); });
     });
+
+    /* aprovação unânime: toda peça da noite acima de um patamar alto — mais
+       simples que o Rolo Compressor, que compara com a média do FESTIVAL */
+    const TETO_UNANIME = NOTA_MAXIMA - 2;
+    s.noites.filter(x => x.pecas.length >= 2 && x.pecas.every(p => p.st.avg >= TETO_UNANIME))
+      .forEach(x => { recsN.push({ emoji:'💯', titulo:'Aprovação Unânime', texto:`Noite ${x.noite} de ${x.ano}: nenhuma peça abaixo de ${TETO_UNANIME.toFixed(1)}`, url: x.url }); vencedoresNoite.push(x); });
+
+    /* votos por peça (engajamento): menor e maior extremo da mesma métrica */
+    const votosPorPeca = x => x.n / x.pecas.length;
+    const casaVazia = topDe(s.noites, votosPorPeca, false);
+    if(casaVazia){ recsN.push({ emoji:'🪑', titulo:'Casa Vazia', texto:`Noite ${casaVazia.noite} de ${casaVazia.ano} — só ${votosPorPeca(casaVazia).toFixed(1)} avaliaç${votosPorPeca(casaVazia) === 1 ? 'ão' : 'ões'} por peça em média`, url: casaVazia.url }); vencedoresNoite.push(casaVazia); }
+    const maisEngajada = topDe(s.noites, votosPorPeca);
+    if(maisEngajada){ recsN.push({ emoji:'🎟️', titulo:'A Mais Comentada (votos por peça)', texto:`Noite ${maisEngajada.noite} de ${maisEngajada.ano} — ${votosPorPeca(maisEngajada).toFixed(1)} avaliações por peça em média`, url: maisEngajada.url }); vencedoresNoite.push(maisEngajada); }
+
+    /* dispersão média das notas dentro da noite: diferente do Caos (que olha
+       só a distância entre extremos), aqui é a média dos desvios-padrão de
+       cada peça — mostra se a plateia se dividiu peça a peça, não só no total */
+    const diversidade = x => media(x.pecas.map(p => p.st.std));
+    const dividida = topDe(s.noites.filter(x => x.pecas.length), diversidade);
+    if(dividida){ recsN.push({ emoji:'🌈', titulo:'Diversidade de Opiniões', texto:`Noite ${dividida.noite} de ${dividida.ano} — a plateia se dividiu peça a peça (desvio médio de ${diversidade(dividida).toFixed(2)})`, url: dividida.url }); vencedoresNoite.push(dividida); }
+
+    const maiorLineup = topDe(s.noites, x => x.pecas.length);
+    if(maiorLineup) { recsN.push({ emoji:'🎭', titulo:'Maior Line-up', texto:`Noite ${maiorLineup.noite} de ${maiorLineup.ano} — ${maiorLineup.pecas.length} peças na mesma noite`, url: maiorLineup.url }); vencedoresNoite.push(maiorLineup); }
+
     const maratona = topDe(s.noites, x => x.n);
-    if(maratona) recsN.push({ emoji:'🏃', titulo:'O Dia da Maratona (mais votos)', texto:`Noite ${maratona.noite} de ${maratona.ano} — ${maratona.n} notas registradas`, url: maratona.url });
+    if(maratona){ recsN.push({ emoji:'🏃', titulo:'O Dia da Maratona (mais votos)', texto:`Noite ${maratona.noite} de ${maratona.ano} — ${maratona.n} notas registradas`, url: maratona.url }); vencedoresNoite.push(maratona); }
+
+    /* "A Mais Repetida": por POSIÇÃO (Noite 1, 2, 3...), não por ano — conta
+       quantas vezes aquela posição da grade apareceu entre os recordes
+       acima. Só aparece se alguma posição se repetiu de verdade. */
+    if(vencedoresNoite.length){
+      const porPosicao = {};
+      vencedoresNoite.forEach(x => { porPosicao[x.noite] = (porPosicao[x.noite] || 0) + 1; });
+      const [posTop, contagem] = Object.entries(porPosicao).sort((a,b) => b[1] - a[1])[0];
+      if(contagem > 1) recsN.push({ emoji:'🕰️', titulo:'A Mais Repetida', texto:`A Noite ${posTop} apareceu ${contagem}× entre os recordes acima — parece ser um horário abençoado (ou amaldiçoado) na grade` });
+    }
+
     preencher('recNoites', recsN);
 
     /* ---- 3. Linha do Tempo & Edições ---- */
@@ -5282,7 +5356,7 @@ function _peneirarCandidatos(cand){
   return cand;
 }
 
-async function montarRecomendacao(subsDestaque, outros){
+async function montarRecomendacao(subsDestaque, outros, acervoPecas){
   const elR = document.getElementById('homeRecomenda');
   if(!elR) return;
   try{
@@ -5304,8 +5378,12 @@ async function montarRecomendacao(subsDestaque, outros){
     /* Percorre a partir do dia de hoje até achar uma peça exibível. As
        tentativas existem porque a estatística vem dos VOTOS e o título vem do
        ACERVO: uma chave votada pode não ter peça cadastrada (edição antiga
-       ainda sendo digitalizada). Cada tentativa carrega uma edição — daí o
-       teto baixo. `carregarDadosEdicao` já guarda o resultado por ano. */
+       ainda sendo digitalizada).
+
+       Se `acervoPecas` veio pronto (payload agregado, carregamento único),
+       é só consulta em memória — nenhum fetch por tentativa. Sem ele, cai no
+       caminho antigo: uma chamada a `carregarDadosEdicao` por tentativa (que
+       já guarda o resultado por ano, então o teto baixo ainda protege). */
     const TENTATIVAS = 6;
     let escolhida = null, reserva = null;
     for(let i = 0; i < TENTATIVAS && i < ordem.length; i++){
@@ -5313,13 +5391,18 @@ async function montarRecomendacao(subsDestaque, outros){
       const cfgAno = EDICOES.find(e => e.ano === c.ano);
       if(!cfgAno || cfgAno.emBreve) continue;
 
-      const dados = await carregarDadosEdicao(cfgAno);
-      if(!dados) continue;
-
       const m = /^s(\d+)e(\d+)$/.exec(c.key);
       const noite = Number(m[1]), ordemPeca = Number(m[2]);
-      const nd = dados.noites && dados.noites[noite];
-      const peca = nd && Array.isArray(nd.pecas) ? nd.pecas[ordemPeca - 1] : null;
+      let peca = null;
+      if(acervoPecas){
+        const nd = acervoPecas[c.ano] && acervoPecas[c.ano][noite];
+        peca = Array.isArray(nd) ? nd[ordemPeca - 1] : null;
+      } else {
+        const dados = await carregarDadosEdicao(cfgAno);
+        if(!dados) continue;
+        const nd = dados.noites && dados.noites[noite];
+        peca = nd && Array.isArray(nd.pecas) ? nd.pecas[ordemPeca - 1] : null;
+      }
       if(!peca || !String(peca.titulo || '').trim()) continue;
 
       const item = { ...c, noite, peca, cfgAno };
@@ -5344,7 +5427,7 @@ async function montarRecomendacao(subsDestaque, outros){
       badges = badgesDoAno(subsDoAno || [])[p.key] || [];
     }catch(e){ badges = []; }
 
-    const url = `${BASE}${p.ano}/noite-${p.noite}.html`;
+    const url = `${BASE}${p.ano}/noite-${p.noite}.html#${p.key}`;
     const sinopse = String(p.peca.sinopse || '').trim();
     const temVideo = !!String(p.peca.youtube || '').trim();
     elR.innerHTML = `<a class="record-item" href="${url}">
@@ -5530,14 +5613,43 @@ async function paginaHome(){
   async function atualizarHome(){
     await fetchVotos(); /* votos da edição em destaque (sincroniza o relógio também) */
 
-    /* demais edições, só para os números históricos */
-    const outros = await Promise.all(EDICOES.filter(e => e.ano !== ANO).map(async e => {
-      try{
-        const r = await fetch(API_URL + '?year=' + e.ano + '&_=' + Date.now(), { cache: 'no-store' });
-        const j = await r.json();
-        return { ano: e.ano, subs: filtrarVotosDoAno(Array.isArray(j) ? j : (j.submissions || []), e.ano) };
-      }catch(err){ return { ano: e.ano, subs: [] }; }
-    }));
+    /* demais edições (números históricos) + acervo de peças (Hoje recomendamos):
+       antes disparava N-1 requests de ?year= por edição, mais até 6 requests
+       de edicao.js/noites dentro de montarRecomendacao. Agora um request só
+       (a mesma rota agregada do Hall) cobre as duas coisas. Se falhar, cai
+       no caminho antigo em vez de deixar a home sem números históricos. */
+    let outros = [], acervoPecas = null;
+    try{
+      const agg = await carregarAcervoAgregado();
+      const rawVotos = agg.votos || {};
+      outros = EDICOES.filter(e => e.ano !== ANO).map(e => ({
+        ano: e.ano,
+        subs: filtrarVotosDoAno(rawVotos[e.ano] || [], e.ano)
+      }));
+      acervoPecas = {};
+      (agg.pecas || []).forEach(p => {
+        const ano = Number(p.ano), noite = Number(p.noite), ep = Number(p.ep);
+        if(!ano || !noite || !ep) return;
+        if(!acervoPecas[ano]) acervoPecas[ano] = {};
+        if(!acervoPecas[ano][noite]) acervoPecas[ano][noite] = [];
+        acervoPecas[ano][noite][ep - 1] = {
+          titulo: String(p.titulo || ''),
+          turma: String(p.turma || ''),
+          sinopse: String(p.sinopse || ''),
+          youtube: String(p.youtube || '')
+        };
+      });
+    }catch(e){
+      console.warn('[cetecritic] home: acervo agregado falhou, caindo no carregamento legado', e);
+      outros = await Promise.all(EDICOES.filter(e => e.ano !== ANO).map(async e => {
+        try{
+          const r = await fetch(API_URL + '?year=' + e.ano + '&_=' + Date.now(), { cache: 'no-store' });
+          const j = await r.json();
+          return { ano: e.ano, subs: filtrarVotosDoAno(Array.isArray(j) ? j : (j.submissions || []), e.ano) };
+        }catch(err){ return { ano: e.ano, subs: [] }; }
+      }));
+      acervoPecas = null; // sem o agregado, montarRecomendacao volta pro carregarDadosEdicao por tentativa
+    }
 
     const notasDest = [];
     submissions.forEach(s => Object.values(s.grid).forEach(v => { const x = Number(v); if(!isNaN(x)) notasDest.push(x); }));
@@ -5569,7 +5681,7 @@ async function paginaHome(){
         const key = `s${n}e${i+1}`;
         const vals = valoresDaChave(key).map(Number).filter(v => !isNaN(v));
         const st = statsDeVals(vals);
-        if(st) lista.push({ key, titulo: p.titulo, turma: p.turma, sinopse: p.sinopse || '', noite: n, st, url: `${pastaDest}noite-${n}.html` });
+        if(st) lista.push({ key, titulo: p.titulo, turma: p.turma, sinopse: p.sinopse || '', noite: n, st, url: `${pastaDest}noite-${n}.html#${key}` });
       });
     }
     const medalhas = ['🥇','🥈','🥉'];
@@ -5584,7 +5696,7 @@ async function paginaHome(){
       : '<div class="empty-note">Os destaques aparecem aqui assim que os primeiros votos chegarem.</div>';
 
     /* ---- hoje recomendamos ---- */
-    montarRecomendacao(submissions, outros);
+    montarRecomendacao(submissions, outros, acervoPecas);
 
     /* ---- curiosidades: manuais (home-dados.js) + automáticas ---- */
     const autoCurio = [];
@@ -5710,6 +5822,44 @@ function catalogoBadges(ctx){
     cat.push({ emoji: '🎖️', titulo: `Veterano de ${ano}`, texto: `Avaliar peças da edição ${ano}`, unlocked: ctx.anosSet.has(ano), cat: 'Presença' });
   });
 
+  const S = (emoji, titulo, texto, cond, categoria) => cat.push({ emoji, titulo, texto, unlocked: !!cond, cat: categoria });
+  /* Histórico e Presença */
+  S('🎬','Primeira Curtain Call','Fazer login e enviar a sua primeira review', ctx.total >= 1, 'Presença');
+  S('🏺','Arqueólogo do Passado','Avaliar peças de festivais anteriores a 2020', ctx.pre2020, 'Presença');
+  S('🌱','Plateia Raiz',`Marcar presença em ${metaPerfil('plateiaRaiz',4)}+ edições diferentes`, ctx.nAnos >= metaPerfil('plateiaRaiz',4), 'Presença');
+  S('🌙','Maratona Noturna','Avaliar em todas as noites de uma mesma edição', ctx.maratonaNoturna, 'Presença');
+  S('📜','Historiador',`Avaliar peça de ${metaPerfil('historiador',5)} edições diferentes`, ctx.nAnos >= metaPerfil('historiador',5), 'Presença');
+  S('🔥','Sequência','Avaliar duas edições de anos seguidos', ctx.consecutivo, 'Presença');
+  /* Comportamento de Crítico */
+  S('🏅','Selo Purista','Dar 10 a uma peça recordista (média ≥ 9)', ctx.selopurista, 'Crítico');
+  S('🥀','Dedo Podre','Dar a nota mais baixa e discrepante de uma peça', ctx.dedoPodre, 'Crítico');
+  S('💗','Coração mole','Ter média das suas notas acima de 9.0', ctx.coracaoMole, 'Crítico');
+  S('⚔️','Juiz Severo','Manter suas notas bem abaixo da média da plateia', ctx.juizSevero, 'Crítico');
+  S('🌀','Caos em Pessoa','Dar nota extrema numa peça polêmica (muito dividida)', ctx.caos, 'Crítico');
+  S('🌈','Paladar variado','Usar 7 valores de nota diferentes', ctx.diversidade >= 7, 'Crítico');
+  /* Interação Comunitária */
+  S('👯','Gêmeo de Opinião','+90% de afinidade de notas com outro usuário', ctx.gemeo, 'Comunidade');
+  S('🦄','Gosto Peculiar','Amar (nota 8+) peças que a plateia rejeitou (média < 6)', ctx.gostoPeculiar, 'Comunidade');
+  S('📺','Espectador em Série',`Avaliar ${metaPerfil('espectadorSerie',10)}+ peças no total`, ctx.nNotas >= metaPerfil('espectadorSerie',10), 'Comunidade');
+  S('🧾','Metralhadora de notas',`Dar ${metaPerfil('metralhadora',100)} notas no total`, ctx.nNotas >= metaPerfil('metralhadora',100), 'Comunidade');
+  S('👑','Lenda do Fórum','Nível alto e presença em todas as edições com votos', ctx.lenda, 'Comunidade');
+  /* Especiais / Sazonais */
+  S('🥇','Noite de Ouro','Avaliar a noite de maior média de uma edição', ctx.noiteOuroAv, 'Especial');
+  S('🎭','Polêmico','Dar nota máxima e mínima na mesma noite', ctx.polemicoNoite, 'Especial');
+  S('✨','Revelação','Dar 9+ a uma peça que terminou com média < 7', ctx.revelacao, 'Especial');
+  S('🌃','Coruja','Avaliar de madrugada (0h–5h)', ctx.madrugada, 'Especial');
+  S('🏆','Ficha completa','Avaliar uma edição inteira (todos os episódios)', ctx.fichaCompleta, 'Especial');
+  S('📸','Mestre dos Bastidores','Enviar foto de uma apresentação (em breve)', false, 'Especial');
+
+  /* Bolão — por último de propósito: quem não participa do bolão não tem
+     por que ver essas badges logo de cara no meio das outras. */
+  S('🔮','O Oráculo','Acertar a média exata de uma peça no bolão (erro < 0.05)', ctx.oraculo, 'Bolão');
+  S('🔵','Bola de Cristal','Ficar no Top 3 do bolão de uma edição', ctx.bolaCristal, 'Bolão');
+  S('👁️','Visionário','Ser o melhor palpiteiro de um episódio no bolão', ctx.visionario, 'Bolão');
+  S('🧮','Cálculo Exato','Erro médio < 0.1 na Noite Ouro do bolão', ctx.calculoExato, 'Bolão');
+  S('🎰','Aposta de Risco','Cravar nota extrema (≤2 ou ≥9) com erro < 0.5', ctx.apostaRisco, 'Bolão');
+  S('🗳️','Palpiteiro','Entrar em algum bolão', ctx.participouBolao >= 1, 'Bolão');
+
   /* dinâmicas: pódio do bolão de cada edição que teve bolão. Igual às
      Veterano, nascem da lista de edições cruzada com o resultado apurado —
      automáticas e retroativas, nada salvo no banco.
@@ -5734,41 +5884,7 @@ function catalogoBadges(ctx){
       });
     });
   });
-  const S = (emoji, titulo, texto, cond, categoria) => cat.push({ emoji, titulo, texto, unlocked: !!cond, cat: categoria });
-  /* Histórico e Presença */
-  S('🎬','Primeira Curtain Call','Fazer login e enviar a sua primeira review', ctx.total >= 1, 'Presença');
-  S('🏺','Arqueólogo do Passado','Avaliar peças de festivais anteriores a 2020', ctx.pre2020, 'Presença');
-  S('🌱','Plateia Raiz',`Marcar presença em ${metaPerfil('plateiaRaiz',4)}+ edições diferentes`, ctx.nAnos >= metaPerfil('plateiaRaiz',4), 'Presença');
-  S('🌙','Maratona Noturna','Avaliar em todas as noites de uma mesma edição', ctx.maratonaNoturna, 'Presença');
-  S('📜','Historiador',`Avaliar peça de ${metaPerfil('historiador',5)} edições diferentes`, ctx.nAnos >= metaPerfil('historiador',5), 'Presença');
-  S('🔥','Sequência','Avaliar duas edições de anos seguidos', ctx.consecutivo, 'Presença');
-  /* Bolão e Precisão */
-  S('🔮','O Oráculo','Acertar a média exata de uma peça no bolão (erro < 0.05)', ctx.oraculo, 'Bolão');
-  S('🔵','Bola de Cristal','Ficar no Top 3 do bolão de uma edição', ctx.bolaCristal, 'Bolão');
-  S('👁️','Visionário','Ser o melhor palpiteiro de um episódio no bolão', ctx.visionario, 'Bolão');
-  S('🧮','Cálculo Exato','Erro médio < 0.1 na Noite Ouro do bolão', ctx.calculoExato, 'Bolão');
-  S('🎰','Aposta de Risco','Cravar nota extrema (≤2 ou ≥9) com erro < 0.5', ctx.apostaRisco, 'Bolão');
-  S('🗳️','Palpiteiro','Entrar em algum bolão', ctx.participouBolao >= 1, 'Bolão');
-  /* Comportamento de Crítico */
-  S('🏅','Selo Purista','Dar 10 a uma peça recordista (média ≥ 9)', ctx.selopurista, 'Crítico');
-  S('🥀','Dedo Podre','Dar a nota mais baixa e discrepante de uma peça', ctx.dedoPodre, 'Crítico');
-  S('💗','Coração mole','Ter média das suas notas acima de 9.0', ctx.coracaoMole, 'Crítico');
-  S('⚔️','Juiz Severo','Manter suas notas bem abaixo da média da plateia', ctx.juizSevero, 'Crítico');
-  S('🌀','Caos em Pessoa','Dar nota extrema numa peça polêmica (muito dividida)', ctx.caos, 'Crítico');
-  S('🌈','Paladar variado','Usar 7 valores de nota diferentes', ctx.diversidade >= 7, 'Crítico');
-  /* Interação Comunitária */
-  S('👯','Gêmeo de Opinião','+90% de afinidade de notas com outro usuário', ctx.gemeo, 'Comunidade');
-  S('🦄','Gosto Peculiar','Amar (nota 8+) peças que a plateia rejeitou (média < 6)', ctx.gostoPeculiar, 'Comunidade');
-  S('📺','Espectador em Série',`Avaliar ${metaPerfil('espectadorSerie',10)}+ peças no total`, ctx.nNotas >= metaPerfil('espectadorSerie',10), 'Comunidade');
-  S('🧾','Metralhadora de notas',`Dar ${metaPerfil('metralhadora',100)} notas no total`, ctx.nNotas >= metaPerfil('metralhadora',100), 'Comunidade');
-  S('👑','Lenda do Fórum','Nível alto e presença em todas as edições com votos', ctx.lenda, 'Comunidade');
-  /* Especiais / Sazonais */
-  S('🥇','Noite de Ouro','Avaliar a noite de maior média de uma edição', ctx.noiteOuroAv, 'Especial');
-  S('🎭','Polêmico','Dar nota máxima e mínima na mesma noite', ctx.polemicoNoite, 'Especial');
-  S('✨','Revelação','Dar 9+ a uma peça que terminou com média < 7', ctx.revelacao, 'Especial');
-  S('🌃','Coruja','Avaliar de madrugada (0h–5h)', ctx.madrugada, 'Especial');
-  S('🏆','Ficha completa','Avaliar uma edição inteira (todos os episódios)', ctx.fichaCompleta, 'Especial');
-  S('📸','Mestre dos Bastidores','Enviar foto de uma apresentação (em breve)', false, 'Especial');
+
   /* Colecionador depende de quantas já foram desbloqueadas */
   const desbloq = cat.filter(b => b.unlocked).length;
   cat.push({ emoji: '🧷', titulo: 'Colecionador', texto: `Ter ${metaPerfil('colecionador',15)}+ badges diferentes`, unlocked: desbloq >= metaPerfil('colecionador',15), cat: 'Comunidade' });
@@ -7089,7 +7205,7 @@ async function paginaBusca(){
         const sinopse = p.sinopse || '';
         /* texto pesquisável da peça: título + turma + sinopse (o "tema" da peça) */
         const buscaPeca = [p.titulo, p.turma, sinopse].filter(Boolean).join(' ').toLowerCase();
-        pecas.push({ ano: cfg.ano, noite: n, key: `s${n}e${i+1}`, titulo: p.titulo || '', turma: p.turma || '', sinopse, poster, url: `${BASE}${cfg.ano}/noite-${n}.html`, busca: buscaPeca });
+        pecas.push({ ano: cfg.ano, noite: n, key: `s${n}e${i+1}`, titulo: p.titulo || '', turma: p.turma || '', sinopse, poster, url: `${BASE}${cfg.ano}/noite-${n}.html#s${n}e${i+1}`, busca: buscaPeca });
       });
     }
   });
