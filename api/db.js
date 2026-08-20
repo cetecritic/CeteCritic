@@ -798,27 +798,23 @@ async function enviarEmailReset(to, usuario, link){
    ================================================================== */
 
 /* ==================================================================
-   HALL DA FAMA (e HOME) — payload agregado
+   HALL DA FAMA — payload agregado
    ==================================================================
    O Hall pedia, no browser, edicao.js+noites de TODOS os anos, votos de
    cada ano e placar de bolão de cada ano — centenas de hits em serverless.
    Esta rota devolve tudo o que a página precisa numa resposta só:
 
      edicoes[]   metadados mínimos (ano, noites, inicio, emBreve)
-     pecas[]     catálogo (ano, noite, ep, titulo, turma, sinopse, youtube)
+     pecas[]     catálogo (ano, noite, ep, titulo, turma)
      votos{}     submissions por ano (mesmo formato do ?year=)
      bolaoWins[] contagem de 1º lugar no bolão (sem expor palpite)
-
-   A Home reaproveita esta MESMA rota (carregamento único, ver core.js
-   `carregarAcervoAgregado`): sinopse/youtube foram adicionados aqui porque
-   o "Hoje recomendamos" precisa deles, e o Hall só usava titulo/turma.
 
    Com ~centenas de submissions o payload continua pequeno. Se um dia
    passar de ~8–10k linhas, agregar médias no SQL em vez de mandar grid. */
 async function apiDadosHall(){
   const [edQ, pecQ, subQ, palQ] = await Promise.all([
     sb.from('edicoes').select('ano,noites,inicio,em_breve').order('ano', { ascending: true }).limit(LIMITE_ALTO),
-    sb.from('pecas').select('ano,noite,ordem,titulo,turma,sinopse,youtube,youtube_inicio').order('ano', { ascending: true }).limit(LIMITE_ALTO),
+    sb.from('pecas').select('ano,noite,ordem,titulo,turma').order('ano', { ascending: true }).limit(LIMITE_ALTO),
     sb.from('submissions').select('sub_id,ts,name,grid,year,usuario').limit(LIMITE_ALTO),
     sb.from('palpites').select('usuario,palpites,year,ts').limit(LIMITE_ALTO)
   ]);
@@ -845,10 +841,7 @@ async function apiDadosHall(){
       noite: Number(p.noite),
       ep: Number(p.ordem),
       titulo: String(p.titulo || ''),
-      turma: String(p.turma || ''),
-      sinopse: String(p.sinopse || ''),
-      youtube: String(p.youtube || ''),
-      youtubeInicio: p.youtube_inicio || null
+      turma: String(p.turma || '')
     }));
 
   const pmap = await lerPerfisMap();

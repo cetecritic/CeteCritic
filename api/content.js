@@ -20,6 +20,7 @@
    ===================================================================== */
 const { createClient } = require('@supabase/supabase-js');
 const webpush = require('web-push');
+const { chavePosicional, gerarChave, planoDeRemanejamento } = require('./_pecas');
 const {
   migrarNomeUsuario, estadoConta, validarNome,
   PAPEIS, MAX_DIAS_BAN_MODERADOR, LIMPEZAS_SO_ADMIN, ITENS_SO_ADMIN, podeExecutar,
@@ -505,11 +506,18 @@ async function handlePost(req, res) {
 
   /* `versao` serve pra conferir, em 2 segundos, se o que está no ar é mesmo o
      build atual — sem isso a gente fica adivinhando quando uma ação nova
-     responde "ação desconhecida". Ao adicionar ações, suba o número. */
+     responde "ação desconhecida". Ao adicionar ações, suba o número.
+
+     `saude` existe porque várias travas deste projeto FALHAM ABERTAS: sem a
+     tabela `rate_limite` os limites não travam ninguém, sem a chave da Resend
+     o 2FA e a redefinição de senha param — e nos dois casos o único sinal é
+     uma linha de log que ninguém lê durante o festival. Aqui isso vira uma
+     resposta que dá pra conferir na véspera, em dois segundos. */
   if (action === 'ping') return res.status(200).json({
     ok: true, admin: true,
     papel: eu.papel,
-    versao: 5,
+    versao: 6,
+    saude: await diagnosticoSaude(),
     acoes: Object.keys(ACOES_CONHECIDAS).filter(a => podeExecutar(eu.papel, a))
   });
 
@@ -1190,10 +1198,59 @@ async function handlePost(req, res) {
        Escape consciente: `body.confirmarRemanejamento === true` libera, pra
        quando a remoção for mesmo o que se quer e as chaves já tiverem sido
        remanejadas em SQL na mão. */
+    /* ---- identidade das peças: quem é quem, independente da posição ----
+       Carregado ANTES de qualquer escrita, porque é a única foto do estado
+       anterior que vamos ter. `chave` é atribuída uma vez e nunca mais
+       recalculada — ver api/_pecas.js. */
+    const { data: pecasAntes } = await sb.from('pecas')
+      .select('noite,ordem,chave,titulo,turma').eq('ano', ano).limit(LIMITE_ALTO);
+    const chavesUsadas = new Set((pecasAntes || []).map(p => p.chave).filter(Boolean));
+    const chavesDoAno = new Set(chavesUsadas);
+
+    /* casa cada peça do envio com a chave dela. O painel devolve a `chave`
+       que recebeu; peça sem chave é peça nova e ganha uma agora. */
+    const pecasDepois = [];
+    if (Array.isArray(body.noites)) {
+      for (const nd of body.noites) {
+        const noite = Number(nd.noite);
+        if (!noite) continue;
+        (Array.isArray(nd.pecas) ? nd.pecas : []).forEach((p, i) => {
+          let chave = String(p.chave || '').trim();
+          if (!chave || !chavesDoAno.has(chave)) chave = gerarChave(p.turma, ano, chavesUsadas);
+          p._chave = chave;
+          pecasDepois.push({ chave, noite, ordem: i + 1 });
+        });
+      }
+    }
+    const plano = planoDeRemanejamento(pecasAntes || [], pecasDepois);
+
     if (!body.confirmarRemanejamento && Array.isArray(body.noites)) {
       const { data: votos } = await sb.from('submissions').select('row_id').eq('year', ano).limit(1);
       if (votos && votos.length) {
-        const { data: pecasAtuais } = await sb.from('pecas').select('noite').eq('ano', ano).limit(LIMITE_ALTO);
+        /* ---- trava de REORDENAÇÃO -------------------------------------
+           A trava logo abaixo pega remoção (a contagem encolheu). Esta pega
+           o caso que passava batido: a contagem continua igual, mas as
+           peças trocaram de lugar entre si. Sem chave estável não havia como
+           perceber — as duas grades tinham o mesmo tamanho e os mesmos
+           `sNeM`, e as notas mudavam de dono em silêncio.
+
+           Recusar é deliberado: remanejar de verdade significa reescrever os
+           grids gravados, o que não dá pra fazer com segurança dentro de uma
+           função serverless sem transação. Quem precisa mesmo usa o script
+           `remanejar-pecas.js`, que faz backup, remaneja e confere. */
+        if (plano.movidas > 0) {
+          const exemplos = Object.entries(plano.mapa).slice(0, 3)
+            .map(([de, para]) => de + ' → ' + para).join(', ');
+          return res.status(409).json({
+            ok: false,
+            remanejamento: plano.mapa,
+            error: plano.movidas + ' peça(s) mudaram de posição (' + exemplos + ') e esta edição JÁ TEM VOTOS. ' +
+                   'As notas são gravadas por posição, então reordenar faria cada nota apontar para a peça errada. ' +
+                   'Para trocar a ordem de uma edição já votada, rode `node remanejar-pecas.js ' + ano + '` — ' +
+                   'ele reescreve os votos junto. Para corrigir texto, turma ou link, salve sem mudar a ordem.'
+          });
+        }
+        const pecasAtuais = pecasAntes;
         const contaAtual = {};
         (pecasAtuais || []).forEach(p => { const n = Number(p.noite); contaAtual[n] = (contaAtual[n] || 0) + 1; });
         for (const n of Object.keys(contaAtual)) {
@@ -1255,6 +1312,8 @@ async function handlePost(req, res) {
         (Array.isArray(nd.pecas) ? nd.pecas : []).forEach((p, i) => {
           linhasPecas.push({
             ano, noite, ordem: i + 1,
+            /* atribuída acima; nunca recalculada para peça que já existia */
+            chave: p._chave || null,
             titulo: p.titulo || '', turma: p.turma || '', sinopse: p.sinopse || '',
             youtube: p.youtube || '', youtube_inicio: Number(p.youtubeInicio ?? p.youtube_inicio) || 0
           });
@@ -1551,3 +1610,57 @@ module.exports = async (req, res) => {
     res.status(405).json({ ok: false, error: 'método não suportado' });
   } catch (e) { res.status(500).json({ ok: false, error: String((e && e.message) || e) }); }
 };
+
+/* ---------------------------------------------------------------------
+   diagnosticoSaude — o que está ligado de verdade neste momento
+
+   Responde ao `ping` do painel. Existe porque as travas deste projeto
+   degradam com elegância: quando uma migração não rodou ou uma variável de
+   ambiente sumiu, nada quebra na cara — o site continua servindo, só que
+   sem a proteção. Esse é o comportamento certo (uma migração pendente não
+   pode derrubar o site no meio do festival), mas ele precisa de um lugar
+   onde a ausência apareça, senão vira descoberta arqueológica.
+
+   Nenhum valor de segredo sai daqui: só booleanos de "está configurado".
+   --------------------------------------------------------------------- */
+async function diagnosticoSaude() {
+  const saude = {};
+
+  /* migracao-seguranca.sql: sem a tabela, os limites de taxa do /api/db
+     liberam tudo e só avisam no log. É a trava de votação do servidor. */
+  try {
+    const r = await sb.from('rate_limite').select('chave').limit(1);
+    saude.rateLimite = !r.error;
+  } catch (e) { saude.rateLimite = false; }
+
+  /* coluna `papel`: sem ela, todo mundo com admin=true entra como admin e a
+     separação moderador/historiador não existe */
+  try {
+    const r = await sb.from('usuarios').select('papel').limit(1);
+    saude.colunaPapel = !r.error;
+  } catch (e) { saude.colunaPapel = false; }
+
+  /* sem as duas, o envio de e-mail é ignorado EM SILÊNCIO: redefinição de
+     senha e 2FA param de funcionar sem nenhuma mensagem de erro, e quem tem
+     2FA ligado fica trancado fora da conta */
+  saude.email = !!(process.env.RESEND_API_KEY && process.env.RESEND_FROM);
+
+  /* push: as três precisam existir, e a chave pública ainda precisa bater
+     com a do config_site — se divergirem, as inscrições viram inválidas */
+  saude.push = !!(process.env.VAPID_PUBLIC_KEY && process.env.VAPID_PRIVATE_KEY && process.env.VAPID_SUBJECT);
+  try {
+    const { data } = await sb.from('config_site').select('dados').eq('id', 1).limit(1);
+    const cfg = (data && data[0] && data[0].dados) || {};
+    saude.vapidConfere = !!cfg.VAPID_PUBLIC_KEY && cfg.VAPID_PUBLIC_KEY === process.env.VAPID_PUBLIC_KEY;
+  } catch (e) { saude.vapidConfere = false; }
+
+  /* sem CRON_SECRET o /api/cron-push responde 401 pra todo mundo, inclusive
+     pro cron — nenhum agendamento sai */
+  saude.cron = !!process.env.CRON_SECRET;
+
+  /* sem sal próprio o hash de IP dos limites é previsível */
+  saude.rateSalt = !!process.env.RATE_SALT;
+
+  saude.tudoOk = Object.keys(saude).every(k => saude[k] === true);
+  return saude;
+}

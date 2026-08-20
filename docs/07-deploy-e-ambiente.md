@@ -67,6 +67,18 @@ mensagem de erro. Uma pessoa com 2FA ligado fica trancada fora da conta.
 
 ---
 
+## Testes
+
+```bash
+npm test
+```
+
+Sem instalar nada — `node:test`, que já vem no Node 18+. Cobre as funções puras
+(pontuação do bolão, badges de peça, papéis, identidade da peça, diagnóstico de
+saúde). Detalhes em `testes/LEIA-ME.md`.
+
+---
+
 ## Deploy
 
 A Vercel publica a cada push na branch de produção. Não há build step: os
@@ -147,6 +159,25 @@ sobe para o Storage e atualiza as edições com as URLs. Precisa de `sharp`
 
 Gera o par de chaves do Web Push.
 
+### `migrar-peca-chave.js`
+
+Preenche `pecas.chave` no acervo existente, depois de rodar
+`migracao-peca-chave.sql`. Sem argumento faz um ensaio; `--aplicar` grava. Só
+toca em peça **sem** chave — chave atribuída é chave congelada, então rodar de
+novo é inofensivo.
+
+### `remanejar-pecas.js`
+
+O único jeito seguro de reordenar peças de uma edição já votada. `node
+remanejar-pecas.js 2026` escreve um JSON com a ordem atual; você edita e roda
+com `--aplicar`, e ele reescreve os votos e os palpites junto. Exige backup das
+últimas 24 h, salva progresso a cada linha (cair no meio e rodar de novo
+continua de onde parou, sem aplicar o mapa duas vezes) e confere a soma das
+notas no fim.
+
+Estes dois e o `backup.js` não usam `npm install`: falam direto com o
+PostgREST pelo `fetch` do Node 18+.
+
 > Trocar o par VAPID invalida **todas** as inscrições existentes. O
 > `pushsubscriptionchange` do service worker refaz a inscrição sozinho, e o
 > `ativarPush` do cliente detecta chave diferente e recria — mas conte com
@@ -162,6 +193,7 @@ Supabase.
 | Arquivo | O quê |
 |---|---|
 | `migracao-bolao.sql` | índice único em `broadcasts(bc_id)` |
+| `migracao-peca-chave.sql` | coluna `pecas.chave` + índice único por ano |
 | `limpeza-avisos-bolao.sql` | arquiva os avisos de bolão dos anos antigos |
 | `migracao-seguranca.sql` | tabela `rate_limite`, nome único sem diferenciar maiúsculas, índices de leitura, versão do config |
 

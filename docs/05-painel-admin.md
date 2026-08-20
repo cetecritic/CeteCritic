@@ -24,8 +24,14 @@ Ou seja: você entra no site normalmente e abre `/admin.html`. Se a conta tem
 `admin = true`, o painel carrega. Senão, toda ação volta 403.
 
 A primeira coisa que o painel faz é um `ping`, que devolve o papel, a versão do
-build e a lista de ações permitidas. É o jeito rápido de conferir se o que está
-no ar é mesmo o build atual.
+build, a lista de ações permitidas e o bloco `saude`. É o jeito rápido de
+conferir se o que está no ar é mesmo o build atual.
+
+Quando algo do ambiente falta — a tabela `rate_limite`, a chave da Resend, o
+`CRON_SECRET` —, o painel pinta uma **tarja no topo** com o que está faltando e
+como consertar. Ela existe porque essas travas falham abertas: o site continua
+servindo normalmente, só que sem a proteção, e o único sinal era uma linha de
+log. Some sozinha quando está tudo certo.
 
 `/admin.html` está no `robots.txt`, mas isso é higiene de indexação, não
 segurança — a proteção real está no servidor.
@@ -135,8 +141,11 @@ que o painel ainda não conhece.
 ### ⚠️ Antes de mexer em peças de uma edição já votada
 
 Leia [04 · Banco — a chave `sNeM`](04-banco-de-dados.md#a-chave-snem).
-Reordenar ou remover uma peça do meio da lista reescreve o histórico de votos
-em silêncio.
+
+Desde 08/2026 o servidor **recusa** o envio (409) se alguma peça mudou de
+posição numa edição que já tem votos, e mostra o mapa do que mudaria. Corrigir
+título, turma, sinopse, link e data continua livre. Para reordenar de verdade:
+`node remanejar-pecas.js <ano>`.
 
 ---
 

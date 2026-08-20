@@ -40,9 +40,14 @@ próprio: ela *é* a posição dela na grade.
 > Renomear uma peça é seguro. Corrigir sinopse, turma e link é seguro.
 > **Reordenar ou remover do meio reescreve o histórico em silêncio.**
 >
-> Se precisar remover uma peça de uma edição já votada, esvazie o título em
-> vez de tirá-la da lista, ou faça o remanejamento das chaves em SQL na mão,
-> na mesma transação.
+> Desde 08/2026 o servidor **recusa** (409) tanto a remoção quanto a
+> reordenação numa edição que já tem votos — a detecção usa a coluna `chave`,
+> que diz quem é cada peça independentemente da posição.
+>
+> Se precisar remover, esvazie o título em vez de tirar a linha. Se precisar
+> mesmo reordenar, use `node remanejar-pecas.js <ano>`: ele reescreve os
+> `grid` e os `palpites` junto com a nova ordem, salva progresso a cada linha
+> e confere a soma das notas no fim.
 
 ---
 
@@ -229,9 +234,15 @@ Uma linha por ano.
 palpite do bolão.
 
 #### `pecas`
-`ano`, `noite`, `ordem`, `titulo`, `turma`, `sinopse`, `youtube`,
+`ano`, `noite`, `ordem`, `chave`, `titulo`, `turma`, `sinopse`, `youtube`,
 `youtube_inicio`. `ordem` + `noite` formam a chave `sNeM` — releia o aviso do
 topo deste documento.
+
+`chave` é a identidade estável da peça (`A3.2025`, `S1.2023-2`), única por ano.
+É **atribuída uma vez, na criação, e nunca recalculada**: se ela fosse derivada
+do campo `turma`, corrigir a turma na fase de acervo reescreveria o histórico
+exatamente como a reordenação fazia. Gerada por `gerarChave` em `api/_pecas.js`
+e preenchida no acervo existente por `migrar-peca-chave.js`.
 
 #### `config_site`
 **Uma linha só**, `id = 1`, com `dados` (jsonb) guardando o site inteiro:

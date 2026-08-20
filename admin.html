@@ -531,10 +531,44 @@ const PAPEL_ROTULO = { admin:'Administrador', moderador:'Moderador', historiador
     $('gate').classList.add('hidden');
     $('painel').classList.remove('hidden');
     aplicarPapel();
+    mostrarSaude(r.saude);
     iniciar();
   }
   else { gm.textContent = 'Sua conta (' + SESS.user + ') não faz parte da equipe. Peça pra um administrador te dar um papel.'; }
 })();
+
+/* ---------- saúde do ambiente ----------
+   Várias travas deste projeto falham ABERTAS: sem a tabela `rate_limite` os
+   limites de voto não travam ninguém, sem a chave da Resend o 2FA e a
+   redefinição de senha param — e em nenhum dos casos aparece erro. O único
+   sinal é uma linha de log que ninguém lê durante o festival.
+
+   Esta tarja é esse sinal, no lugar onde a equipe olha. Some sozinha quando
+   está tudo configurado: alarme que toca sempre vira paisagem. */
+const SAUDE_ROTULO = {
+  rateLimite:   { txt:'Limite de votos DESLIGADO', dica:'rode migracao-seguranca.sql no SQL Editor do Supabase — sem a tabela rate_limite, um laço de curl move a média de qualquer peça' },
+  colunaPapel:  { txt:'Coluna `papel` ausente', dica:'rode o SQL dos papéis — sem ela, todo admin=true vira admin e não existe moderador nem historiador' },
+  email:        { txt:'E-mail DESLIGADO', dica:'faltam RESEND_API_KEY e/ou RESEND_FROM na Vercel — redefinição de senha e 2FA param em silêncio, e quem tem 2FA fica trancado fora da conta' },
+  push:         { txt:'Push DESLIGADO', dica:'faltam variáveis VAPID na Vercel' },
+  vapidConfere: { txt:'Chave VAPID divergente', dica:'a VAPID_PUBLIC_KEY do config_site não bate com a da Vercel — as inscrições existentes são inválidas' },
+  cron:         { txt:'Cron DESLIGADO', dica:'sem CRON_SECRET o /api/cron-push responde 401 até pro cron, e nenhum agendamento sai' },
+  rateSalt:     { txt:'RATE_SALT no padrão', dica:'defina um valor aleatório na Vercel — sem sal próprio o hash de IP é previsível' }
+};
+function mostrarSaude(saude){
+  if(!saude || saude.tudoOk) return;
+  const problemas = Object.keys(SAUDE_ROTULO).filter(k => saude[k] === false);
+  if(!problemas.length) return;
+  const painel = $('painel');
+  if(!painel) return;
+  const cor = (saude.rateLimite === false || saude.email === false) ? '#c0392b' : '#b8860b';
+  const html = '<div style="border:2px solid ' + cor + ';border-radius:8px;padding:12px 14px;margin:0 0 16px">' +
+    '<strong style="color:' + cor + '">⚠️ Ambiente incompleto</strong>' +
+    '<div style="opacity:.85;margin:4px 0 8px;font-size:.9em">Nada disso quebra o site — por isso nenhum erro aparece. Só significa que a proteção não está lá.</div>' +
+    '<ul style="margin:0;padding-left:20px">' +
+    problemas.map(k => '<li style="margin:4px 0"><strong>' + SAUDE_ROTULO[k].txt + '</strong> — ' + SAUDE_ROTULO[k].dica + '</li>').join('') +
+    '</ul></div>';
+  painel.insertAdjacentHTML('afterbegin', html);
+}
 
 /* Esconde as seções que o papel não usa e escreve quem você é no topo.
    Cada bloco do painel é marcado com data-papel="lista de papéis". */
@@ -822,7 +856,10 @@ function noiteBlockHtml(n, nd){
 }
 function pecaBlockHtml(p){
   p = p || {};
-  return `<div class="peca-block">
+  /* a chave estável viaja num data-attribute: o servidor precisa dela de
+     volta pra saber QUEM é cada peça, independente da posição. Peça nova vem
+     sem chave e ganha uma no servidor. Ver api/_pecas.js. */
+  return `<div class="peca-block" data-chave="${(p.chave||'').replace(/"/g,'&quot;')}">
     <div class="row2"><div><label>Título</label><input class="pc-titulo" value="${(p.titulo||'').replace(/"/g,'&quot;')}"></div>
     <div><label>Turma</label><input class="pc-turma" value="${(p.turma||'').replace(/"/g,'&quot;')}"></div></div>
     <label>Sinopse</label><textarea class="pc-sinopse">${p.sinopse||''}</textarea>
@@ -1156,7 +1193,7 @@ function preencherEditor(e, noites, pecas){
   $('edBolaoFechaCorpo').value  = txtB.fechaCorpo  || '';
   // noites
   const nmap = {}; noites.forEach(nd => nmap[nd.noite] = { data:nd.data, subtitulo:nd.subtitulo, pecas:[] });
-  pecas.forEach(p => { if(nmap[p.noite]) nmap[p.noite].pecas.push({ titulo:p.titulo, turma:p.turma, sinopse:p.sinopse, youtube:p.youtube, youtubeInicio:p.youtube_inicio }); });
+  pecas.forEach(p => { if(nmap[p.noite]) nmap[p.noite].pecas.push({ chave:p.chave, titulo:p.titulo, turma:p.turma, sinopse:p.sinopse, youtube:p.youtube, youtubeInicio:p.youtube_inicio }); });
   const ns = Object.keys(nmap).map(Number).sort((a,b)=>a-b);
   $('noitesBox').innerHTML = ns.map(n => noiteBlockHtml(n, nmap[n])).join('');
   wireNoites();
@@ -1377,6 +1414,7 @@ function coletarNoites(){
     data: bl.querySelector('.nd-data').value.trim() || null,
     subtitulo: bl.querySelector('.nd-sub').value.trim() || null,
     pecas: [...bl.querySelectorAll('.peca-block')].map(pb => ({
+      chave: pb.dataset.chave || '',
       titulo: pb.querySelector('.pc-titulo').value.trim(),
       turma: pb.querySelector('.pc-turma').value.trim(),
       sinopse: pb.querySelector('.pc-sinopse').value.trim(),

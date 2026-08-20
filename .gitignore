@@ -10,4 +10,6 @@ node_modules/
 .DS_Store
 Thumbs.db
 *.log
-docs/09-riscos-conhecidos.md
+
+# backups do banco: contêm hash de senha e e-mail de todo mundo
+backups/

@@ -6,7 +6,8 @@ Duas funções serverless, um módulo compartilhado, dois utilitários de push.
 |---|---|---|
 | `api/db.js` | `/api/db` | Tudo que o público faz |
 | `api/content.js` | `/api/content` | Conteúdo público + painel admin |
-| `api/_moderacao.js` | — | Módulo compartilhado (o `_` impede virar rota) |
+| `api/_moderacao.js` | — | Regras de moderação e papéis (o `_` impede virar rota) |
+| `api/_pecas.js` | — | Identidade estável da peça e remanejamento de chaves |
 | `api/enviar-push.js` | `/api/enviar-push` | Envio manual de push |
 | `api/cron-push.js` | `/api/cron-push` | Cron diário de agendamentos |
 
@@ -224,7 +225,15 @@ if (!podeExecutar(eu.papel, action)) return 403;  // o papel permite ESTA ação
 
 ### Ações
 
-**Diagnóstico** — `ping` (devolve papel, versão do build e ações permitidas)
+**Diagnóstico** — `ping` (devolve papel, versão do build, ações permitidas e
+`saude`)
+
+> O bloco `saude` existe porque várias travas do projeto **falham abertas**:
+> sem a tabela `rate_limite` os limites de voto liberam tudo, sem a chave da
+> Resend o 2FA e a redefinição param — e em nenhum dos casos aparece erro. O
+> `ping` confere sete itens (rate limit, coluna `papel`, e-mail, VAPID, chave
+> pública batendo com o `config_site`, cron, `RATE_SALT`) e o painel pinta uma
+> tarja quando algum falha. Só booleanos: nenhum segredo sai na resposta.
 
 **Usuários** — `listarUsuarios`, `usuarioDetalhe`, `salvarUsuarioAdmin`,
 `renomearUsuario`, `deletarUsuario`, `definirPapel` / `tornarAdmin`
@@ -249,6 +258,14 @@ if (!podeExecutar(eu.papel, action)) return 403;  // o papel permite ESTA ação
 do ano e reinsere o que veio no corpo. Não é transacional, e renumera `ordem`
 sequencialmente. Leia o aviso sobre a chave `sNeM` em
 [04 · Banco](04-banco-de-dados.md#a-chave-snem) antes de mexer.
+
+Desde 08/2026 a rota compara a posição de cada peça **pela chave estável**
+(`pecas.chave`) antes e depois do envio. Se alguma mudou de lugar e o ano já
+tem votos, devolve **409** com o mapa do que mudaria (`s1e1 → s1e3`) — porque
+as notas são gravadas por posição e reordenar faria cada uma apontar para a
+peça errada. Para reordenar de verdade existe `remanejar-pecas.js`, que
+reescreve os votos junto. Peça nova recebe a chave aqui; peça que já existia
+carrega a dela para sempre.
 
 Para quem não é admin, a rota compara o envio com o que existe e **recusa
 qualquer payload que encolha o acervo** — é a trava anti-exclusão do

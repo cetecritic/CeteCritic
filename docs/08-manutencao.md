@@ -242,11 +242,17 @@ votada. O que não é seguro é mexer na *ordem*.
 > **Seguro:** título, turma, sinopse, link, timestamp, subtítulo, data da noite.
 > **Perigoso:** remover do meio, reordenar, inserir no meio.
 >
-> **Se precisar mesmo:** esvazie o título em vez de tirar a linha, ou faça o
-> remanejamento das chaves em SQL na mão, na mesma transação, com backup antes.
-> A partir de agosto/2026 o servidor recusa envios que reduzam a contagem de
-> peças de uma edição que já tem votos — mas a trava não impede reordenação,
-> que continua sendo responsabilidade sua.
+> **A partir de agosto/2026 o servidor recusa as duas coisas** numa edição que
+> já tem votos: remoção e reordenação. A detecção usa `pecas.chave`, a
+> identidade estável que diz quem é cada peça independentemente da posição — e
+> a mensagem mostra o mapa do que mudaria (`s1e1 → s1e3`).
+>
+> **Se precisar remover:** esvazie o título em vez de tirar a linha.
+>
+> **Se precisar mesmo reordenar:** `node remanejar-pecas.js <ano>` escreve um
+> JSON com a ordem atual; você edita e roda com `--aplicar`. Ele reescreve os
+> votos e os palpites junto, exige backup das últimas 24 h e confere a soma das
+> notas no fim.
 
 ### 3.4 Enriquecimento do site
 
@@ -494,7 +500,7 @@ chave diferente), mas conte com algumas horas de push não entregue.
 ## Tarefas periódicas
 
 ### A cada deploy de front
-Suba o `CACHE_VERSION` no `service-worker.js`.
+Suba o `CACHE_VERSION` no `service-worker.js`. E rode `npm test` antes.
 
 ### A cada edição nova
 Atualize o `sitemap.xml` — a menos que você já tenha migrado para o sitemap
@@ -538,9 +544,28 @@ de lá pioram conforme a base cresce, e é bom saber onde você está.
 
 ## Backup
 
-Não há rotina automatizada. Faça **antes de qualquer operação grande** —
-migração, limpeza em massa, edição de acervo antigo — e ao fim de cada
-festival:
+Não há rotina automatizada, mas há um script. **Antes de qualquer operação
+grande** — migração, limpeza em massa, edição de acervo antigo — e ao fim de
+cada festival:
+
+```powershell
+$env:SUPABASE_URL="https://xxxx.supabase.co"
+$env:SUPABASE_SECRET_KEY="sb_secret_..."
+node backup.js
+```
+
+Salva as 16 tabelas em `backups/AAAA-MM-DD-HHMM/`, um `.json` por tabela.
+Prefira isto ao CSV do painel: `grid`, `palpites` e `perfil` são jsonb, e no
+CSV viram texto escapado que você só descobre que precisa desescapar na hora de
+restaurar. O script pagina de mil em mil (o corte do PostgREST é silencioso) e
+avisa em letras claras se `submissions` vier vazia — o que quase sempre
+significa que foi usada a chave `anon` em vez da secret.
+
+A pasta `backups/` está no `.gitignore`: o dump traz hash de senha e e-mail de
+todo mundo. Copie para fora do computador — backup no mesmo disco que o
+problema não é backup.
+
+Pelo SQL Editor, se preferir na mão:
 
 ```sql
 SELECT * FROM submissions;   -- insubstituível

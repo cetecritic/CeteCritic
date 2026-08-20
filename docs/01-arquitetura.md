@@ -29,14 +29,16 @@ Quase toda decisão estranha do projeto se explica por essa dupla natureza.
 | Aplicação | Um arquivo JavaScript de 7.300 linhas | `assets/core.js` |
 | Estilo | Um CSS com tema claro e escuro | `assets/estilo.css` |
 | API de dados | Funções serverless Node | `api/db.js`, `api/content.js` |
-| Regras compartilhadas | Módulo privado (não vira rota) | `api/_moderacao.js` |
+| Regras compartilhadas | Módulos privados (não viram rota) | `api/_moderacao.js`, `api/_pecas.js` |
 | Push | Web Push com VAPID + cron | `api/enviar-push.js`, `api/cron-push.js` |
 | Banco | Postgres + Storage | Supabase |
 | Hospedagem | Estáticos + funções + cron + rewrites | Vercel |
 | Offline | Service worker (PWA) | `service-worker.js` |
+| Testes | Funções puras, sem dependência | `testes/` (`npm test`) |
 
 **Não existe etapa de build.** Sem webpack, sem Vite, sem TypeScript, sem
-`node_modules` no front. O `package.json` da raiz existe só para a Vercel
+`node_modules` no front. Os testes seguem a mesma regra: rodam no `node:test`,
+que já vem no Node, sem instalar nada. O `package.json` da raiz existe só para a Vercel
 instalar as dependências das funções serverless. Você edita, dá push, está no ar.
 
 Isso é uma escolha, não uma limitação de conhecimento. O projeto é mantido por
