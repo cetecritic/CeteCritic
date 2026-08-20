@@ -323,6 +323,9 @@ Detalhes em [05 · Painel admin](05-painel-admin.md).
 
 ## 9. O que ler depois
 
+- **Acabou de receber acesso e não sabe por onde começar?** →
+  [10 · Passagem de bastão](10-passagem-de-bastao.md)
+- **Algo está quebrado agora?** → [11 · Emergências](11-emergencias.md)
 - Vai mexer na interface ou numa página? → [02 · Frontend](02-frontend.md)
 - Vai criar ou mudar um endpoint? → [03 · API](03-api.md)
 - Vai mexer em dados ou escrever SQL? → [04 · Banco](04-banco-de-dados.md)

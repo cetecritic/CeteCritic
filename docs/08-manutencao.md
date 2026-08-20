@@ -4,6 +4,13 @@ Este é o documento operacional. Se você está assumindo o CETECritic agora, é
 que você vai abrir com mais frequência — e a **[Parte I](#parte-i--o-ciclo-anual)**
 é o que responde "e agora, o que eu faço?".
 
+> **Acabou de chegar?** Comece pelo [10 · Passagem de
+> bastão](10-passagem-de-bastao.md), que explica os acessos, o vocabulário e o
+> que fazer no primeiro dia. Volte aqui depois.
+>
+> **Algo está quebrado agora?** Vá direto para o
+> [11 · Emergências](11-emergencias.md).
+
 - **[Parte I · O ciclo anual](#parte-i--o-ciclo-anual)** — as quatro fases do ano, na ordem
 - **[Parte II · Receitas avulsas](#parte-ii--receitas-avulsas)** — tarefas que não seguem o calendário
 - **[Parte III · Higiene e diagnóstico](#parte-iii--higiene-e-diagnóstico)** — limpeza, cuidados, o que fazer quando quebra
@@ -89,8 +96,29 @@ o teatro cheio é uma noite ruim.
 
 - [ ] Push testado — mande um para você mesmo em `enviar-push.html`
 - [ ] `CACHE_VERSION` do service worker subido, se houve deploy recente
-- [ ] **Backup de `submissions` e `palpites`** (ver [Parte III](#backup))
+- [ ] **Backup de `submissions` e `palpites`**: `node backup.js` (ver [Parte III](#backup))
+- [ ] **A tarja do painel está limpa** — nenhuma proteção faltando
 - [ ] Um segundo admin com acesso, caso você fique sem sinal no teatro
+
+### Como conferir cada item, na prática
+
+Marcar a caixa sem testar não vale. O que fazer, item a item:
+
+| Item | Como confirmar de verdade |
+|---|---|
+| Datas das noites | Painel → 🎬 Edições → o ano. Leia **hora por hora**, uma noite de cada vez. Um `20:00` onde deveria ser `19:00` só aparece com o teatro cheio. |
+| Peças cadastradas | Abra `/ANO/noite-1.html` até `/ANO/noite-5.html` numa aba anônima e conte. O bolão **exige** que todas estejam lá. |
+| Pôster | Abra a home numa aba anônima. Se aparecer "Sem capa", o arquivo não subiu. |
+| Edição em destaque | A home mostra o ano certo no menu e no countdown? |
+| Push | `enviar-push.html`, mande para você mesmo, e **confira no celular**, não só na tela do computador. |
+| Tarja do painel | Abra `/admin.html`. Nenhuma caixa vermelha ou amarela no topo. |
+| Backup | Rode `node backup.js` e **abra a pasta**: `submissions.json` tem que ter conteúdo. |
+
+> **A tarja do painel é a checagem mais barata e a mais nova.** Ela acusa
+> quando a trava de votos, o e-mail (2FA e redefinição de senha) ou o cron
+> estão desligados. Essas proteções **falham abertas**: o site funciona
+> normalmente sem elas, e antes da tarja o único sinal era uma linha de log.
+> Se ela estiver acusando algo na véspera, resolva antes da primeira noite.
 
 ### Durante as noites
 
@@ -112,6 +140,18 @@ o teatro cheio é uma noite ruim.
 | Aviso importante para todos | 🔔 Notificação | com push marcado |
 | Peça entrou fora de ordem | 🎬 Edições | ⚠️ leia o aviso sobre `sNeM` antes |
 | Voto suspeito | 🗑️ Excluir notas | prefira **anonimizar** a apagar |
+
+**O plantão.** Combine antes quem fica de olho em cada noite, e tenha um
+segundo admin alcançável por telefone. Durante a noite, o trabalho é quase todo
+observação:
+
+- Abra `/ANO/index.html` no celular e recarregue de vez em quando: as médias se
+  movem sozinhas a cada 20 segundos.
+- Uma noite que **não** destravou no horário é o único problema realmente
+  urgente — ver [11 · Emergências, cenário 2](11-emergencias.md).
+- Banner de "a noite 3 começa em 30 min": 📢 Banners, modo "uma vez por
+  aparelho", duração 15 s. Não use push para isso; push é para o que a pessoa
+  precisa saber mesmo sem estar com o site aberto.
 
 **Peça que não aconteceu / ordem trocada no palco.** Resista à tentação de
 consertar a grade no meio do festival. Se a noite já recebeu votos, mexer na
@@ -212,6 +252,22 @@ O campo aceita **qualquer** formato de link de compartilhar:
 
 Salve por noite, não peça por peça — o painel manda a edição inteira a cada
 salvamento.
+
+**O fluxo que funciona**, quando chega a gravação de uma noite inteira num
+vídeo só:
+
+1. Abra a gravação no YouTube e anote em que minuto cada peça começa.
+2. Para cada peça: pause no instante certo → botão direito no vídeo → **"Copiar
+   URL do vídeo no tempo atual"**.
+3. Cole no campo da peça correspondente no painel. O site entende qualquer
+   formato de link e guarda o segundo em `youtube_inicio`.
+4. Salve a noite inteira de uma vez.
+5. **Confira**: abra `/ANO/noite-N.html` e clique numa peça. O vídeo tem que
+   abrir no ponto certo.
+
+> Se você fizer só uma coisa nesta fase, faça o timestamp. Uma peça sem ele
+> manda o visitante para o início de uma gravação de duas horas, e ele desiste
+> antes de achar. É a diferença entre ter o acervo e ter o acervo utilizável.
 
 ### 3.2 As sinopses e as turmas
 
@@ -401,6 +457,15 @@ service worker (que lê o `config.js` sozinho e passa a guardar o ano novo).
 4. **Anuncie** — 🔔 Notificação com push + 📢 Banner + 📰 Feed
 
 ### 4.5 Passagem de bastão
+
+> **O roteiro completo está em [10 · Passagem de
+> bastão](10-passagem-de-bastao.md)**: o inventário de acessos, como confirmar
+> que cada um funciona de verdade, o que a pessoa nova faz no primeiro dia e a
+> checagem de quinze minutos que prova que a passagem terminou.
+>
+> A lista abaixo é o resumo. Se você está realmente passando o bastão, abra o
+> documento 10 — a maior parte das passagens falha por acesso que ninguém
+> testou, não por falta de boa vontade.
 
 Se a equipe muda de ano para ano — e costuma mudar — este é o momento:
 
@@ -602,6 +667,10 @@ responsabilidade é sua.
 7. **Suba a `versao` do `ping`** ao adicionar ações no painel.
 
 ## Quando alguma coisa quebra
+
+> Para cenários específicos — home em branco, votação que não abre, push
+> repetindo, equipe trancada fora —, vá direto para o
+> [11 · Emergências](11-emergencias.md), que tem o passo a passo de cada um.
 
 Ordem de investigação que resolve a maioria dos casos:
 
