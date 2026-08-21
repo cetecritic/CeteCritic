@@ -989,7 +989,14 @@ async function handleGet(req, res){
     const por = q.por ? norm(q.por) : null;
     let reputacao = 0, meuVoto = 0;
     (rRows||[]).forEach(r => {
-      if(norm(r.profile_user)===norm(alvo)){ const v = Number(r.valor)||0; reputacao += v; if(por && norm(r.from_user)===por) meuVoto = v; }
+      if(norm(r.profile_user)!==norm(alvo)) return;
+      /* mesma regra do ranking (ver q.ranking==='reputacao'): voto de conta
+         apagada não conta. Sem isso o número do perfil e o número de
+         "Maiores reputações" divergiriam. */
+      const de = norm(r.from_user);
+      if(de && !pmap[de]) return;
+      const v = Number(r.valor)||0; reputacao += v;
+      if(por && de===por) meuVoto = v;
     });
     return res.json({ user: u?u.usuario:alvo, nomeExib: meMap?meMap.display:alvo, anonimo: !!(meMap&&meMap.anonimo),
       existe: !!u, perfil: perfilPublico(cfg), totalVisitas, visitas, carimbos, reputacao, meuVoto });
@@ -1135,10 +1142,25 @@ async function handleGet(req, res){
 
   // ranking de reputação
   if(q.ranking === 'reputacao'){
-    const { data: rRows } = await sb.from('reputacao').select('profile_user,valor').limit(LIMITE_ALTO);
+    const { data: rRows } = await sb.from('reputacao').select('profile_user,from_user,valor').limit(LIMITE_ALTO);
     const pmap = await lerPerfisMap();
     const soma = {};
-    (rRows||[]).forEach(r => { const key = norm(r.profile_user); if(!key) return; if(!soma[key]) soma[key] = { user:String(r.profile_user), rep:0 }; soma[key].rep += Number(r.valor)||0; });
+    (rRows||[]).forEach(r => {
+      const key = norm(r.profile_user); if(!key) return;
+      /* CONTA APAGADA NÃO ENTRA NO RANKING.
+         Excluir a conta apaga as linhas de `reputacao` (delWhere), mas basta
+         UMA exclusão antiga/parcial — ou uma linha órfã de antes dessa rotina
+         existir — pra o nome de um perfil que não existe mais reaparecer em
+         "Maiores reputações", linkando pra um perfil que dá "não encontrado".
+         `pmap` é a lista real da tabela `usuarios`: quem não está lá foi
+         apagado, então some do ranking. O mesmo vale pro voto de quem
+         apagou a conta: ele não deve continuar somando pra ninguém. */
+      if(!pmap[key]) return;
+      const de = norm(r.from_user);
+      if(de && !pmap[de]) return;
+      if(!soma[key]) soma[key] = { user:String(r.profile_user), rep:0 };
+      soma[key].rep += Number(r.valor)||0;
+    });
     const ranking = Object.keys(soma).map(k => { const m = pmap[k]; return { user:(m&&m.anonimo)?m.display:soma[k].user, rep:soma[k].rep }; }).sort((a,b)=>b.rep-a.rep);
     return res.json({ ranking });
   }

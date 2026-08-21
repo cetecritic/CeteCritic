@@ -222,6 +222,40 @@ function posterDaEdicao(ano, valorConhecido){
    mostramos o placeholder. A última tentativa leva um parâmetro novo na URL
    para escapar de uma eventual resposta ruim que tenha ficado em cache. */
 const POSTER_TENTATIVAS = 3;
+
+/* Depois de esgotar as tentativas, o <img> era REMOVIDO do DOM e a capa só
+   voltava com um F5 na mão — exatamente o "não carrega no primeiro acesso"
+   que a pessoa vê. Agora o elemento FICA (escondido pelo .sem-poster) e é
+   reprogramado pra tentar de novo em dois momentos em que a chance de dar
+   certo muda de verdade: quando a conexão volta (`online`) e quando a aba
+   volta a ficar visível. Nenhum dos dois gasta rede à toa: só disparam se
+   ainda existir poster pendente na tela. */
+const POSTERS_PENDENTES = new Set();
+function posterTentarDeNovo(){
+  if(!POSTERS_PENDENTES.size) return;
+  [...POSTERS_PENDENTES].forEach(img => {
+    if(!img.isConnected){ POSTERS_PENDENTES.delete(img); return; }
+    const url = img.dataset.poster || '';
+    if(!url){ POSTERS_PENDENTES.delete(img); return; }
+    img.dataset.tentativa = 0;
+    img.removeAttribute('src');
+    img.src = url + (url.indexOf('?') >= 0 ? '&' : '?') + 'cc=' + Date.now();
+  });
+}
+if(typeof window !== 'undefined'){
+  window.addEventListener('online', posterTentarDeNovo);
+  document.addEventListener('visibilitychange', () => { if(!document.hidden) posterTentarDeNovo(); });
+}
+
+function posterCarregou(img){
+  POSTERS_PENDENTES.delete(img);
+  img.dataset.tentativa = 0;
+  img.style.display = '';
+  const box = img.closest('.poster-box') || img.closest('.sc-poster-wrap');
+  if(box){ box.classList.remove('sem-poster'); box.classList.add('has-image'); }
+}
+window.posterCarregou = posterCarregou;
+
 function posterFalhou(img){
   const n = Number(img.dataset.tentativa || 0) + 1;
   img.dataset.tentativa = n;
@@ -229,12 +263,19 @@ function posterFalhou(img){
   if(n > POSTER_TENTATIVAS || !url){
     const box = img.closest('.poster-box') || img.closest('.sc-poster-wrap');
     if(box){ box.classList.remove('has-image'); box.classList.add('sem-poster'); }
-    img.remove();
+    /* não remove mais o <img>: sem ele não haveria como tentar de novo
+       sozinho quando a rede voltar. Escondido, ele não atrapalha o
+       placeholder "Sem capa" que o .sem-poster mostra. */
+    img.style.display = 'none';
+    if(url) POSTERS_PENDENTES.add(img);
     return;
   }
   /* tira o src antes de repor: reatribuir o MESMO valor não dispara request nova */
   img.removeAttribute('src');
-  const alvo = (n === POSTER_TENTATIVAS)
+  /* da 2ª tentativa em diante já vai com parâmetro novo: repetir a MESMA URL
+     costuma bater na resposta ruim que ficou na cache HTTP do navegador —
+     era por isso que as tentativas intermediárias quase nunca salvavam. */
+  const alvo = (n >= 2)
     ? url + (url.indexOf('?') >= 0 ? '&' : '?') + 'cc=' + Date.now()
     : url;
   setTimeout(() => { img.src = alvo; }, 400 * n);
@@ -247,8 +288,15 @@ window.posterFalhou = posterFalhou;
    quem chama mostra o placeholder. */
 function htmlPoster(url, alt){
   if(!url) return '';
+  /* fetchpriority=high: a capa é o elemento principal da home e concorria em
+     pé de igualdade com o precache do service worker na primeira visita —
+     numa conexão ruim ela perdia a corrida e caía no onerror.
+     loading=eager pelo mesmo motivo (nunca adiar a capa).
+     onload marca o sucesso: é o que tira o "Sem capa" quando uma tentativa
+     posterior finalmente funciona. */
   return `<img src="${esc(url)}" alt="${esc(alt || '')}" decoding="async"`
-       + ` data-poster="${esc(url)}" onerror="posterFalhou(this)">`;
+       + ` loading="eager" fetchpriority="high"`
+       + ` data-poster="${esc(url)}" onload="posterCarregou(this)" onerror="posterFalhou(this)">`;
 }
 
 /* Turmas que se apresentaram numa noite, sem repetir e na ordem de palco.
@@ -4945,8 +4993,6 @@ async function paginaHall(){
     }
     desenharCompEdicoes();
 
-    const maxN = Math.max(...EDICOES.map(e => e.noites));
-
     /* período do gráfico de evolução (mantém a escolha do usuário) */
     const anosDisp = [...s.anos].sort((a,b) => a.ano - b.ano).map(a => a.ano);
     const selDe = document.getElementById('hallDe'), selAte = document.getElementById('hallAte');
@@ -4965,19 +5011,38 @@ async function paginaHall(){
       options: { responsive: true, maintainAspectRatio: false, plugins: { legend: { position: 'right' } } }
     });
 
-    /* heatmap: anos × noites */
-    let hm = '<div class="hm-row"><div class="hm-lbl"></div>' +
-      Array.from({ length: maxN }, (_, i) => `<div class="hm-lbl">N${i+1}</div>`).join('') + '</div>';
-    edRealizadas.forEach(d => {
-      hm += `<div class="hm-row"><div class="hm-lbl">${d.cfg.ano}</div>`;
-      for(let nn = 1; nn <= maxN; nn++){
-        const x = s.noites.find(v => v.ano === d.cfg.ano && v.noite === nn);
-        hm += x
-          ? `<a class="hm-cell" href="${x.url}" style="background:${corDaNota(x.avg)}" title="Noite ${nn} de ${x.ano}: ${x.avg.toFixed(1)} (${x.n} notas)">${x.avg.toFixed(1)}</a>`
-          : `<div class="hm-cell empty">–</div>`;
-      }
-      hm += '</div>';
-    });
+    /* heatmap: anos × noites — DECRESCENTE e só com o que já foi votado.
+       Antes desenhava toda edição realizada, na ordem crescente do config, e
+       com maxN colunas fixas (o maior nº de noites de QUALQUER edição). Numa
+       edição em andamento isso enchia a tabela de "–": o ano corrente
+       aparecia lá embaixo, quase vazio, e anos antigos com menos noites
+       carregavam colunas fantasma. Agora:
+         - a edição mais recente vem primeiro (é a que interessa);
+         - ano sem NENHUMA noite votada nem entra (aparece quando votarem);
+         - o nº de colunas é o da maior noite que já tem voto, não o do config.
+       s.noites só recebe noite com nota (ver calcularStats), então "tem voto"
+       é exatamente "está em s.noites". */
+    const anosHeat = edRealizadas
+      .filter(d => s.noites.some(v => v.ano === d.cfg.ano))
+      .sort((a, b) => b.cfg.ano - a.cfg.ano);
+    const colsHeat = anosHeat.length ? Math.max(...s.noites.map(v => v.noite)) : 0;
+    let hm = '';
+    if(!anosHeat.length){
+      hm = '<div class="empty-note">Ainda não há notas suficientes. As noites vão aparecendo aqui conforme as peças forem sendo votadas.</div>';
+    }else{
+      hm = '<div class="hm-row"><div class="hm-lbl"></div>' +
+        Array.from({ length: colsHeat }, (_, i) => `<div class="hm-lbl">N${i+1}</div>`).join('') + '</div>';
+      anosHeat.forEach(d => {
+        hm += `<div class="hm-row"><div class="hm-lbl">${d.cfg.ano}</div>`;
+        for(let nn = 1; nn <= colsHeat; nn++){
+          const x = s.noites.find(v => v.ano === d.cfg.ano && v.noite === nn);
+          hm += x
+            ? `<a class="hm-cell" href="${x.url}" style="background:${corDaNota(x.avg)}" title="Noite ${nn} de ${x.ano}: ${x.avg.toFixed(1)} (${x.n} notas)">${x.avg.toFixed(1)}</a>`
+            : `<div class="hm-cell empty">–</div>`;
+        }
+        hm += '</div>';
+      });
+    }
     document.getElementById('hallHeatmap').innerHTML = hm;
 
     /* ---- 1. Prateleira dos Campeões ---- */

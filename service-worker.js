@@ -15,7 +15,7 @@
    Ao publicar uma versão nova do site, troque o número em CACHE_VERSION
    para forçar a limpeza do cache antigo. */
  
-const CACHE_VERSION = 'cetecritic-v35';
+const CACHE_VERSION = 'cetecritic-v36';
 
 /* Cache SEPARADO para as imagens de outro domínio (os posters moram no
    Supabase Storage). Fica fora do CACHE_VERSION de propósito: um poster não
@@ -76,7 +76,33 @@ const PRECACHE_IMG = (typeof EDICOES !== 'undefined' && Array.isArray(EDICOES))
   ? EDICOES.map(e => e && e.poster).filter(p => /^https?:\/\//i.test(String(p || '')))
   : [];
 
+/* Guarda uma imagem de OUTRO domínio no CACHE_IMG.
+
+   ⚠️ Aqui morava o bug da "capa que não carrega no primeiro acesso":
+   o código usava `cacheImg.add(...)`. Pela especificação, `Cache.add()`
+   REJEITA quando a resposta não é `ok` — e uma resposta `no-cors` de outra
+   origem é OPACA: `status` 0, `ok` false. Ou seja, o add lançava sempre, o
+   `.catch(() => {})` engolia o erro em silêncio e NENHUM poster jamais
+   entrava no cache. O pré-cache das capas existia só no papel: toda visita
+   nova dependia 100% da rede naquele instante, e qualquer soluço (ou o cold
+   start do Storage) virava "Sem capa".
+
+   `Cache.put()` aceita resposta opaca — que é tudo que um <img> precisa. */
+async function guardarImagem_(cache, url){
+  try{
+    const req = new Request(url, { mode: 'no-cors', credentials: 'omit' });
+    const resp = await fetch(req);
+    if(resp && (resp.ok || resp.type === 'opaque')) await cache.put(req, resp.clone());
+  }catch(e){ /* sem rede agora: a primeira exibição busca e cacheia sozinha */ }
+}
+
 self.addEventListener('install', event => {
+  /* ANTES do await: o skipWaiting no fim da fila fazia o SW só assumir o
+     controle depois de baixar TODO o precache. Na primeira visita a página
+     rodava sem controlador, então nem o poster nem nada passava pelo cache
+     do SW. Chamando já aqui, a ativação acontece assim que o precache
+     termina e o clients.claim pega a aba atual o quanto antes. */
+  self.skipWaiting();
   event.waitUntil((async () => {
     const cache = await caches.open(CACHE_VERSION);
     /* cacheia um a um: se um endereço faltar, não derruba os outros */
@@ -85,10 +111,7 @@ self.addEventListener('install', event => {
     ));
     /* as capas vão pro cache de imagens, que sobrevive à troca de versão */
     const cacheImg = await caches.open(CACHE_IMG);
-    await Promise.all(PRECACHE_IMG.map(url =>
-      cacheImg.add(new Request(url, { mode: 'no-cors' })).catch(() => {})
-    ));
-    self.skipWaiting();
+    await Promise.all(PRECACHE_IMG.map(url => guardarImagem_(cacheImg, url)));
   })());
 });
 
@@ -158,11 +181,22 @@ self.addEventListener('fetch', event => {
           return fetch(req);
         }
         const cache = await caches.open(CACHE_IMG);
-        const cacheado = await cache.match(req);
+        /* ignoreSearch: a última tentativa do posterFalhou() no core.js
+           anexa ?cc=<timestamp> pra furar cache HTTP ruim. Sem isso ela
+           nunca casaria com a capa já guardada e sairia pela rede à toa. */
+        const cacheado = (await cache.match(req)) || (await cache.match(req, { ignoreSearch: true }));
         if (cacheado) return cacheado;
-        const resp = await fetch(req);
-        if (resp && (resp.ok || resp.type === 'opaque')) cache.put(req, resp.clone()).catch(() => {});
-        return resp;
+        try {
+          const resp = await fetch(req);
+          if (resp && (resp.ok || resp.type === 'opaque')) cache.put(req, resp.clone()).catch(() => {});
+          return resp;
+        } catch (e) {
+          /* rede caiu no meio: uma capa de OUTRA edição não serve, então
+             devolve um erro limpo em vez de deixar o respondWith rejeitar
+             (o que o navegador mostra como "falha de rede" genérica e
+             dispara o onerror — que agora sabe tentar de novo). */
+          return new Response('', { status: 504, statusText: 'Imagem indisponível' });
+        }
       })());
     }
     return;
