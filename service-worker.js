@@ -15,7 +15,7 @@
    Ao publicar uma versão nova do site, troque o número em CACHE_VERSION
    para forçar a limpeza do cache antigo. */
  
-const CACHE_VERSION = 'cetecritic-v36';
+const CACHE_VERSION = 'cetecritic-v37';
 
 /* Cache SEPARADO para as imagens de outro domínio (os posters moram no
    Supabase Storage). Fica fora do CACHE_VERSION de propósito: um poster não
@@ -54,6 +54,13 @@ const PRECACHE = [
   '/assets/logo-rodape.png',
   '/assets/favicon.png',
   '/manifest.webmanifest',
+  /* interséries — bundle próprio, casco próprio. /api/* continua NUNCA
+     sendo cacheado (ver o fetch handler abaixo): os dados do interséries
+     vêm sempre frescos da rede, e o cache instantâneo deles é feito no
+     interseries.js, no localStorage. */
+  '/interseries-template.html',
+  '/assets/interseries.js',
+  '/assets/interseries.css',
   /* páginas e dados do Cetec Festival ATUAL (o definido em EDICAO_EM_DESTAQUE) */
   ...(ANO_ATUAL ? [
     `/${ANO_ATUAL}/index.html`,

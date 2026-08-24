@@ -1,0 +1,371 @@
+/* =====================================================================
+   CETEC INTERSÉRIES — ESTILO (assets/interseries.css)
+   =====================================================================
+   Carregado DEPOIS de estilo.css, e só com o que não cabe nas variáveis
+   dele.
+
+   ⚠️ REGRA DURA: NENHUMA COR LITERAL NESTE ARQUIVO.
+   Tudo sai de var(--bg), var(--surface), var(--surface-2), var(--border),
+   var(--text), var(--text-muted), var(--gold), var(--gray-cell) — as
+   variáveis que o estilo.css define no :root e redefine em
+   :root[data-theme="light"]. É o que faz uma mudança de paleta do
+   CETECritic se propagar para o interséries sozinha, e é o que faz os dois
+   temas funcionarem sem escrever nada duas vezes.
+
+   A ÚNICA cor que vem de fora é a da equipe (is_equipes.cor), aplicada
+   INLINE pelo JavaScript numa faixa de 3px — nunca como fundo. São cores
+   escolhidas por turmas, sem compromisso com contraste, e o site tem dois
+   temas.
+
+   Densidade: é um site de dados. Corpo de tabela em 13px, linha de partida
+   em 40px. A referência é o vlr.gg — muita informação legível numa tela,
+   sem espaço desperdiçado.
+   ===================================================================== */
+
+:root{
+  /* tokens locais, todos derivados dos do estilo.css */
+  --is-vivo:      var(--gold);
+  --is-zebra:     var(--surface-2);
+  --is-linha-h:   40px;
+  --is-corpo:     13px;
+  --is-max:       980px;
+  --is-card-w:    190px;   /* largura fixa do card no chaveamento */
+  --is-col-gap:   54px;    /* espaço entre rodadas — cabe o conector */
+}
+
+/* o estilo.css reserva 278px à esquerda para a barra lateral do festival.
+   O interséries não tem barra lateral: tem cabeçalho próprio. */
+body.is-body{ padding: 0 0 56px; display:block; }
+.is-wrap{ width:100%; max-width: var(--is-max); margin: 0 auto; padding: 0 14px; }
+
+/* ---------------- cabeçalho ---------------- */
+.is-topo{
+  position: sticky; top: 0; z-index: 50;
+  background: var(--surface); border-bottom: 1px solid var(--border);
+}
+.is-topo-linha{
+  max-width: var(--is-max); margin: 0 auto; padding: 10px 14px;
+  display:flex; align-items:center; gap: 12px;
+}
+.is-marca{
+  font-family:'Bebas Neue', sans-serif; font-size: 19px; letter-spacing: 1.6px;
+  color: var(--gold); text-decoration:none; white-space:nowrap; line-height:1;
+}
+.is-marca small{ display:block; font-family:'Inter',sans-serif; font-size:9px; letter-spacing:.8px; color: var(--text-muted); }
+.is-nav{ display:flex; gap: 2px; margin-left: 6px; overflow-x:auto; scrollbar-width:none; }
+.is-nav::-webkit-scrollbar{ display:none; }
+.is-nav a{
+  color: var(--text-muted); text-decoration:none; font-size: 12px; font-weight: 700;
+  padding: 7px 10px; border-radius: 6px; white-space:nowrap;
+}
+.is-nav a:hover{ background: var(--surface-2); color: var(--text); }
+.is-nav a.ativo{ color: var(--gold); background: var(--surface-2); }
+.is-saldo{
+  margin-left:auto; display:flex; align-items:center; gap: 8px;
+  font-size: 12px; font-weight: 800; color: var(--gold); white-space:nowrap;
+}
+.is-saldo .lbl{ color: var(--text-muted); font-weight: 600; }
+.is-saldo a{ color: var(--gold); text-decoration:none; }
+.is-entrar{
+  font-size:11px; font-weight:700; color: var(--text); background: var(--surface-2);
+  border:1px solid var(--border); border-radius:6px; padding:6px 10px; text-decoration:none;
+}
+
+/* ---------------- filtro de categoria (chips) ---------------- */
+.is-chips{
+  position: sticky; top: 47px; z-index: 45;
+  background: var(--bg); border-bottom: 1px solid var(--border);
+  overflow-x: auto; scrollbar-width: none; -webkit-overflow-scrolling: touch;
+}
+.is-chips::-webkit-scrollbar{ display:none; }
+.is-chips-in{ max-width: var(--is-max); margin: 0 auto; padding: 8px 14px; display:flex; gap: 6px; }
+.is-chip{
+  flex: 0 0 auto; font-size: 12px; font-weight: 700; padding: 6px 12px;
+  border: 1px solid var(--border); border-radius: 999px; background: var(--surface);
+  color: var(--text-muted); cursor: pointer; font-family: inherit; white-space: nowrap;
+}
+.is-chip:hover{ color: var(--text); }
+.is-chip.ativo{ color: var(--gold); border-color: var(--gold); }
+
+/* ---------------- blocos ---------------- */
+.is-secao{ margin: 18px 0; }
+.is-secao > h2{
+  font-family:'Bebas Neue', sans-serif; font-size: 17px; letter-spacing: 1.2px;
+  color: var(--text); margin-bottom: 8px; display:flex; align-items:center; gap:8px;
+}
+.is-secao > h2 .cont{ font-family:'Inter',sans-serif; font-size:11px; font-weight:700; color: var(--text-muted); letter-spacing:0; }
+.is-card{ background: var(--surface); border: 1px solid var(--border); border-radius: 10px; overflow:hidden; }
+.is-vazio{ padding: 22px 14px; text-align:center; color: var(--text-muted); font-size: 12px; }
+.is-dia{
+  padding: 7px 12px; font-size: 11px; font-weight: 800; letter-spacing: .6px;
+  text-transform: uppercase; color: var(--text-muted);
+  background: var(--surface-2); border-bottom: 1px solid var(--border);
+}
+
+/* =====================================================================
+   A LINHA DE PARTIDA — a unidade atômica
+   =====================================================================
+   Aparece na home, na lista, na página da categoria, na da equipe e no
+   chaveamento. Um componente, um CSS, cinco lugares.
+
+   Altura FIXA: linha que varia de altura destrói a sensação de tabela, que
+   é a coisa que faz um site esportivo parecer um site esportivo.
+   A linha INTEIRA é o alvo do clique, não um link de 4px.
+   ===================================================================== */
+.is-linha{
+  display: grid;
+  grid-template-columns: 62px 1fr 150px;
+  align-items: center;
+  height: var(--is-linha-h);
+  padding: 0 10px; gap: 8px;
+  border-bottom: 1px solid var(--border);
+  text-decoration: none; color: var(--text);
+  font-size: var(--is-corpo);
+}
+.is-linha:last-child{ border-bottom: none; }
+.is-linha:hover{ background: var(--surface-2); }
+
+.is-estado{
+  font-size: 11px; font-weight: 800; letter-spacing: .4px;
+  color: var(--text-muted); text-transform: uppercase;
+  display:flex; align-items:center; gap: 5px; white-space:nowrap;
+}
+.is-estado.vivo{ color: var(--is-vivo); }
+.is-estado .ponto{
+  width: 6px; height: 6px; border-radius: 50%; background: var(--is-vivo);
+  animation: isPulsa 1.4s ease-in-out infinite;
+}
+@keyframes isPulsa{ 0%,100%{ opacity:1; transform:scale(1); } 50%{ opacity:.35; transform:scale(.8); } }
+
+.is-confronto{ display:grid; grid-template-columns: 1fr 62px 1fr; align-items:center; gap: 6px; min-width:0; }
+.is-time{ display:flex; align-items:center; gap: 6px; min-width: 0; }
+.is-time.dir{ justify-content: flex-end; }
+.is-time .nome{ overflow:hidden; text-overflow:ellipsis; white-space:nowrap; font-weight: 600; }
+.is-time.venceu .nome{ font-weight: 800; }
+.is-time.perdeu .nome{ color: var(--text-muted); }
+.is-time .indef{ font-style: italic; color: var(--text-muted); font-weight: 500; }
+
+/* a faixa de 3px é o ÚNICO lugar onde a cor da equipe entra, e ela vem
+   inline do JavaScript. Nunca como fundo: ver o comentário do topo. */
+.is-faixa{ width: 3px; height: 20px; border-radius: 2px; flex: 0 0 auto; background: var(--gray-cell); }
+.is-escudo{
+  width: 20px; height: 20px; border-radius: 4px; flex: 0 0 auto; object-fit: cover;
+  background: var(--surface-2);
+}
+.is-iniciais{
+  width: 20px; height: 20px; border-radius: 4px; flex: 0 0 auto;
+  background: var(--surface-2); border: 1px solid var(--border);
+  font-size: 9px; font-weight: 800; color: var(--text-muted);
+  display: flex; align-items: center; justify-content: center; letter-spacing: -.3px;
+}
+.is-marcador{
+  display:flex; align-items:center; justify-content:center; gap: 5px;
+  font-variant-numeric: tabular-nums; font-size: 14px; font-weight: 800;
+}
+.is-marcador .x{ color: var(--text-muted); font-weight: 500; font-size: 11px; }
+.is-marcador .perdeu{ color: var(--text-muted); }
+.is-marcador.aberto{ font-size: 12px; font-weight: 700; color: var(--text-muted); }
+.is-cotacao{ font-size: 11px; font-weight: 700; color: var(--text-muted); font-variant-numeric: tabular-nums; }
+.is-cotacao b{ color: var(--gold); }
+
+.is-meta{
+  font-size: 11px; color: var(--text-muted); text-align: right;
+  overflow:hidden; text-overflow:ellipsis; white-space:nowrap;
+}
+
+/* =====================================================================
+   TABELAS DE NÚMERO
+   ===================================================================== */
+.is-tabela{ width: 100%; border-collapse: collapse; font-size: var(--is-corpo); }
+.is-tabela th{
+  font-size: 10px; font-weight: 800; letter-spacing: .5px; text-transform: uppercase;
+  color: var(--text-muted); text-align: right; padding: 8px 6px;
+  background: var(--surface-2); border-bottom: 1px solid var(--border); white-space:nowrap;
+}
+.is-tabela th:first-child, .is-tabela td:first-child{ text-align: left; }
+.is-tabela td{ padding: 0 6px; height: var(--is-linha-h); text-align: right; font-variant-numeric: tabular-nums; border-bottom: 1px solid var(--border); }
+.is-tabela tbody tr:nth-child(even){ background: var(--is-zebra); }
+.is-tabela tbody tr:last-child td{ border-bottom: none; }
+.is-tabela td.equipe{ display: flex; align-items: center; gap: 6px; height: var(--is-linha-h); }
+.is-tabela .pos{ width: 26px; color: var(--text-muted); font-weight: 700; }
+.is-tabela .pts{ font-weight: 800; color: var(--gold); }
+.is-tabela tr.classifica td.equipe{ box-shadow: inset 2px 0 0 var(--gold); }
+.is-nota{ padding: 8px 12px; font-size: 11px; color: var(--text-muted); border-top: 1px solid var(--border); }
+.is-ast{ color: var(--gold); font-weight: 800; }
+
+/* =====================================================================
+   ABAS (página de categoria)
+   ===================================================================== */
+.is-abas{ display:flex; gap: 2px; border-bottom: 1px solid var(--border); overflow-x:auto; scrollbar-width:none; }
+.is-abas::-webkit-scrollbar{ display:none; }
+.is-aba{
+  background: none; border: none; border-bottom: 2px solid transparent;
+  color: var(--text-muted); font-family: inherit; font-size: 12px; font-weight: 700;
+  padding: 10px 12px; cursor: pointer; white-space: nowrap;
+}
+.is-aba:hover{ color: var(--text); }
+.is-aba.ativo{ color: var(--gold); border-bottom-color: var(--gold); }
+
+/* =====================================================================
+   CHAVEAMENTO — CSS Grid, sem biblioteca
+   =====================================================================
+   Uma coluna por rodada; os conectores são pseudo-elementos.
+   No celular ROLA NA HORIZONTAL dentro do próprio container, com colunas
+   de largura fixa. Nunca encolher os cards para caber: vira ilegível.
+   ===================================================================== */
+.is-chave-rolo{ overflow-x: auto; overflow-y: hidden; padding: 12px; -webkit-overflow-scrolling: touch; }
+.is-chave{ display: flex; gap: var(--is-col-gap); min-width: min-content; align-items: stretch; }
+.is-rodada{ display: flex; flex-direction: column; justify-content: space-around; gap: 12px; flex: 0 0 var(--is-card-w); }
+.is-rodada-nome{
+  font-size: 10px; font-weight: 800; letter-spacing: .6px; text-transform: uppercase;
+  color: var(--text-muted); text-align: center; margin-bottom: 2px;
+}
+.is-ch-card{
+  position: relative; background: var(--surface-2); border: 1px solid var(--border);
+  border-radius: 8px; text-decoration: none; color: var(--text); display: block;
+}
+.is-ch-card:hover{ border-color: var(--gold); }
+.is-ch-lado{
+  display: grid; grid-template-columns: 3px 20px 1fr 26px; align-items: center; gap: 6px;
+  padding: 6px 8px 6px 0; font-size: 12px; height: 34px;
+}
+.is-ch-lado + .is-ch-lado{ border-top: 1px solid var(--border); }
+.is-ch-lado .nome{ overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.is-ch-lado.venceu .nome{ font-weight: 800; }
+.is-ch-lado.perdeu .nome, .is-ch-lado.perdeu .pl{ color: var(--text-muted); }
+.is-ch-lado .pl{ text-align: right; font-variant-numeric: tabular-nums; font-weight: 800; }
+.is-ch-lado .indef{ font-style: italic; color: var(--text-muted); }
+
+/* conector: sai do meio do card para a direita e sobe/desce até o par */
+.is-rodada:not(:last-child) .is-ch-card::after{
+  content: ''; position: absolute; top: 50%; left: 100%;
+  width: calc(var(--is-col-gap) / 2); height: 1px; background: var(--border);
+}
+.is-rodada:not(:first-child) .is-ch-card::before{
+  content: ''; position: absolute; top: 50%; right: 100%;
+  width: calc(var(--is-col-gap) / 2); height: 1px; background: var(--border);
+}
+.is-par{ display:flex; flex-direction:column; justify-content:space-around; gap:12px; position:relative; flex:1; }
+/* a barra vertical que junta os dois cards de um par */
+.is-par.duplo::after{
+  content:''; position:absolute; right: calc(var(--is-col-gap) / -2);
+  top: 25%; bottom: 25%; width: 1px; background: var(--border);
+}
+.is-campeao{
+  align-self: center; text-align: center; padding: 14px 18px;
+  border: 1px solid var(--gold); border-radius: 10px; background: var(--surface-2);
+}
+.is-campeao .lbl{ font-size: 10px; letter-spacing: 1px; text-transform: uppercase; color: var(--gold); font-weight: 800; }
+.is-campeao .nome{ font-family:'Bebas Neue',sans-serif; font-size: 22px; letter-spacing: 1px; margin-top: 4px; }
+.is-terceiro{ margin-top: 18px; padding-top: 14px; border-top: 1px dashed var(--border); }
+
+/* =====================================================================
+   MERCADOS E APOSTA
+   ===================================================================== */
+.is-mercado{ border-bottom: 1px solid var(--border); padding: 12px; }
+.is-mercado:last-child{ border-bottom: none; }
+.is-mercado-topo{ display:flex; align-items:baseline; gap: 8px; margin-bottom: 10px; flex-wrap: wrap; }
+.is-mercado-titulo{ font-size: 13px; font-weight: 800; }
+.is-mercado-sub{ font-size: 11px; color: var(--text-muted); margin-left:auto; font-variant-numeric: tabular-nums; }
+.is-opcoes{ display: grid; grid-template-columns: repeat(auto-fit, minmax(140px, 1fr)); gap: 8px; }
+.is-opcao{
+  background: var(--surface-2); border: 1px solid var(--border); border-radius: 8px;
+  padding: 9px 10px; cursor: pointer; font-family: inherit; text-align: left; color: var(--text);
+  display: flex; flex-direction: column; gap: 5px; position: relative; overflow: hidden;
+}
+.is-opcao:hover{ border-color: var(--gold); }
+.is-opcao.minha{ border-color: var(--gold); }
+.is-opcao .rot{ font-size: 12px; font-weight: 700; }
+.is-opcao .num{ font-size: 11px; color: var(--text-muted); font-variant-numeric: tabular-nums; }
+/* barra de proporção do bolo: largura vem inline do JS */
+.is-barra{ height: 3px; background: var(--gray-cell); border-radius: 2px; overflow: hidden; }
+.is-barra i{ display:block; height: 100%; background: var(--gold); }
+.is-fecha{ font-size: 11px; color: var(--text-muted); font-variant-numeric: tabular-nums; }
+.is-fecha b{ color: var(--gold); }
+.is-minha-aposta{
+  margin-top: 8px; font-size: 11px; color: var(--text-muted);
+  display:flex; align-items:center; gap: 8px; flex-wrap: wrap;
+}
+.is-minha-aposta b{ color: var(--text); }
+
+.is-form-aposta{ display:flex; gap: 8px; margin-top: 10px; align-items:center; flex-wrap: wrap; }
+.is-form-aposta input{
+  width: 110px; background: var(--bg); border: 1px solid var(--border); border-radius: 7px;
+  color: var(--text); padding: 8px 10px; font-family: inherit; font-size: 13px;
+  font-variant-numeric: tabular-nums;
+}
+.is-form-aposta input:focus{ outline: none; border-color: var(--gold); }
+.is-dica{ font-size: 11px; color: var(--text-muted); }
+
+/* =====================================================================
+   EXTRATO E PLACAR
+   ===================================================================== */
+.is-extrato{ font-size: 12px; }
+.is-extrato .linha{
+  display: grid; grid-template-columns: 1fr auto; gap: 10px; padding: 9px 12px;
+  border-bottom: 1px solid var(--border);
+}
+.is-extrato .linha:last-child{ border-bottom: none; }
+.is-extrato .quando{ font-size: 10px; color: var(--text-muted); }
+.is-extrato .valor{ font-weight: 800; font-variant-numeric: tabular-nums; align-self: center; }
+.is-extrato .valor.mais{ color: var(--gold); }
+.is-extrato .valor.menos{ color: var(--text-muted); }
+
+.is-podio{ display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; margin-bottom: 12px; }
+.is-podio .p{
+  background: var(--surface); border: 1px solid var(--border); border-radius: 10px;
+  padding: 12px 8px; text-align: center;
+}
+.is-podio .p.um{ border-color: var(--gold); }
+.is-podio .lugar{ font-size: 10px; font-weight: 800; color: var(--text-muted); letter-spacing: .5px; }
+.is-podio .quem{ font-size: 13px; font-weight: 800; margin: 4px 0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+.is-podio .fichas{ font-size: 12px; color: var(--gold); font-weight: 800; font-variant-numeric: tabular-nums; }
+
+/* =====================================================================
+   ESTADOS DE PÁGINA
+   ===================================================================== */
+.is-erro{
+  max-width: 460px; margin: 60px auto; text-align: center;
+  background: var(--surface); border: 1px solid var(--border); border-radius: 12px; padding: 26px 22px;
+}
+.is-erro h2{ font-family:'Bebas Neue',sans-serif; font-size: 22px; letter-spacing: 1px; margin-bottom: 8px; }
+.is-erro p{ font-size: 13px; color: var(--text-muted); line-height: 1.5; margin-bottom: 16px; }
+.is-erro a{ color: var(--gold); }
+.is-carregando{ padding: 40px; text-align: center; color: var(--text-muted); font-size: 12px; }
+
+.is-avisos{ margin: 12px 0; }
+.is-aviso{
+  background: var(--surface); border: 1px solid var(--gold); border-radius: 10px;
+  padding: 10px 14px; font-size: 12px; color: var(--text); display:flex; gap:8px; align-items:center;
+}
+.is-aviso b{ color: var(--gold); }
+
+.is-regras{ font-size: 13px; line-height: 1.65; }
+.is-regras h3{ font-family:'Bebas Neue',sans-serif; font-size: 16px; letter-spacing: 1px; margin: 18px 0 6px; color: var(--gold); }
+.is-regras p, .is-regras li{ color: var(--text-muted); }
+.is-regras li{ margin-left: 18px; margin-bottom: 4px; }
+.is-regras strong{ color: var(--text); }
+.is-exemplo{
+  background: var(--surface-2); border: 1px solid var(--border); border-radius: 8px;
+  padding: 10px 12px; margin: 8px 0; font-size: 12px; font-variant-numeric: tabular-nums;
+}
+
+/* =====================================================================
+   CELULAR
+   ===================================================================== */
+@media (max-width: 720px){
+  :root{ --is-linha-h: 44px; }
+  .is-linha{ grid-template-columns: 54px 1fr; }
+  /* a coluna de categoria·fase sai da linha no celular: o espaço é do
+     confronto, e a informação está na página da partida */
+  .is-linha .is-meta{ display: none; }
+  .is-topo-linha{ padding: 8px 12px; gap: 8px; }
+  .is-marca{ font-size: 16px; }
+  .is-nav a{ padding: 6px 8px; font-size: 11px; }
+  .is-chips{ top: 43px; }
+  /* GP e GC saem da classificação; saldo importa mais que os brutos */
+  .is-tabela .so-desktop{ display: none; }
+  .is-podio{ grid-template-columns: 1fr; }
+  .is-podio .p{ display:flex; align-items:center; gap: 10px; text-align:left; padding: 10px 12px; }
+  .is-podio .quem{ margin: 0; flex: 1; }
+}

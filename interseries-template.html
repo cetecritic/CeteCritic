@@ -1,0 +1,46 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Interséries — CETECritic</title>
+<meta name="description" content="Tabelas, chaveamento, resultados e apostas do CETEC Interséries.">
+<link rel="icon" href="/assets/favicon.png">
+<link rel="stylesheet" href="/assets/estilo.css">
+<link rel="stylesheet" href="/assets/interseries.css">
+</head>
+<body class="is-body">
+<!-- =====================================================================
+     PÁGINA-MODELO DO INTERSÉRIES
+     =====================================================================
+     Servida via rewrite (vercel.json) para /interseries e
+     /interseries/qualquer/coisa. Descobre o que renderizar pela própria
+     URL — categoria nova, partida nova, equipe nova não criam arquivo nem
+     exigem deploy. É o mesmo truque do edicao-template.html.
+
+     ⚠️ Este arquivo NÃO carrega /config.js nem /assets/core.js, e isso é
+     de propósito: o interséries é um bundle próprio. O core.js tem 426 KB
+     e é o item A2 da lista de riscos do projeto — engordá-lo aqui seria
+     repetir o pecado com plena consciência dele.
+
+     A única coisa compartilhada com o festival é a SESSÃO, que vive no
+     localStorage sob 'cetec-sessao' e é por origem — razão pela qual o
+     interséries mora em cetecritic.xyz/interseries e não num subdomínio.
+     ===================================================================== -->
+<script>
+  /* /interseries/categoria/futsal-masculino → ['interseries','categoria','futsal-masculino'] */
+  var _p = location.pathname.split('/').filter(Boolean);
+  var PAGINA = { tipo: _p[1] || 'inicio', arg: _p[2] ? decodeURIComponent(_p[2]) : null };
+  var BASE = '/';
+
+  /* tema aplicado o quanto antes, para reduzir o "flash" claro/escuro.
+     Cópia declarada do core.js — ver o topo do interseries.js. */
+  try{
+    var _t = localStorage.getItem('cetec-tema') || 'escuro';
+    if(_t === 'auto') _t = window.matchMedia('(prefers-color-scheme: light)').matches ? 'claro' : 'escuro';
+    document.documentElement.dataset.theme = (_t === 'claro') ? 'light' : 'dark';
+  }catch(e){}
+</script>
+<script src="/assets/interseries.js"></script>
+</body>
+</html>

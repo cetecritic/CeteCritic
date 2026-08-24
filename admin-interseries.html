@@ -1,0 +1,1067 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<meta name="robots" content="noindex, nofollow">
+<title>Painel do Interséries — CETECritic</title>
+<link rel="icon" href="/assets/favicon.png">
+<link rel="stylesheet" href="/assets/estilo.css">
+<link rel="stylesheet" href="/assets/interseries.css">
+<style>
+/* =====================================================================
+   PAINEL DO INTERSÉRIES — admin-interseries.html
+   =====================================================================
+   Arquivo PRÓPRIO, e não uma aba nova no admin.html. O admin.html tem
+   2.234 linhas e é o item A3 dos riscos — o arquivo mais difícil de editar
+   do projeto. Isso não se resolve acrescentando.
+
+   Ele lê a MESMA sessão (`cetec-sessao`) e fala com /api/interseries.
+   O CSS abaixo é só do painel; as cores continuam vindo todas das
+   variáveis do estilo.css.
+   ===================================================================== */
+body.is-admin{ padding: 0 0 60px; display:block; }
+.ad-wrap{ max-width: 1100px; margin: 0 auto; padding: 0 14px; }
+.ad-topo{ position:sticky; top:0; z-index:60; background:var(--surface); border-bottom:1px solid var(--border); }
+.ad-topo-in{ max-width:1100px; margin:0 auto; padding:10px 14px; display:flex; align-items:center; gap:12px; flex-wrap:wrap; }
+.ad-titulo{ font-family:'Bebas Neue',sans-serif; font-size:19px; letter-spacing:1.5px; color:var(--gold); }
+.ad-quem{ margin-left:auto; font-size:12px; color:var(--text-muted); }
+.ad-quem b{ color:var(--gold); }
+.ad-abas{ display:flex; gap:2px; overflow-x:auto; scrollbar-width:none; padding:0 14px 8px; max-width:1100px; margin:0 auto; }
+.ad-abas::-webkit-scrollbar{ display:none; }
+.ad-aba{ background:none; border:1px solid transparent; color:var(--text-muted); font-family:inherit;
+  font-size:12px; font-weight:700; padding:7px 12px; border-radius:7px; cursor:pointer; white-space:nowrap; }
+.ad-aba:hover{ background:var(--surface-2); color:var(--text); }
+.ad-aba.ativo{ color:var(--gold); border-color:var(--gold); }
+.ad-aba[disabled]{ opacity:.35; cursor:not-allowed; }
+
+.ad-bloco{ background:var(--surface); border:1px solid var(--border); border-radius:10px; padding:14px; margin:14px 0; }
+.ad-bloco h3{ font-family:'Bebas Neue',sans-serif; font-size:16px; letter-spacing:1px; margin-bottom:4px; }
+.ad-bloco .sub{ font-size:11px; color:var(--text-muted); margin-bottom:12px; line-height:1.5; }
+.ad-grade{ display:grid; grid-template-columns:repeat(auto-fit,minmax(180px,1fr)); gap:10px; }
+label.ad-campo{ display:flex; flex-direction:column; gap:4px; font-size:11px; font-weight:700; color:var(--text-muted); }
+.ad-campo input, .ad-campo select, .ad-campo textarea{
+  background:var(--bg); border:1px solid var(--border); border-radius:7px; color:var(--text);
+  padding:8px 10px; font-family:inherit; font-size:13px; width:100%;
+}
+.ad-campo input:focus, .ad-campo select:focus, .ad-campo textarea:focus{ outline:none; border-color:var(--gold); }
+.ad-campo textarea{ min-height:90px; font-family:ui-monospace,'SFMono-Regular',Menlo,monospace; font-size:12px; }
+.ad-acoes{ display:flex; gap:8px; margin-top:12px; flex-wrap:wrap; align-items:center; }
+.ad-msg{ font-size:12px; margin-top:8px; }
+.ad-msg.erro{ color:var(--gold); }
+.ad-lista{ margin-top:12px; border:1px solid var(--border); border-radius:8px; overflow:hidden; }
+.ad-item{ display:grid; grid-template-columns:1fr auto; gap:8px; align-items:center;
+  padding:9px 12px; border-bottom:1px solid var(--border); font-size:13px; }
+.ad-item:last-child{ border-bottom:none; }
+.ad-item:nth-child(even){ background:var(--surface-2); }
+.ad-item .peq{ font-size:11px; color:var(--text-muted); }
+.ad-btns{ display:flex; gap:6px; }
+.ad-tag{ font-size:10px; font-weight:800; text-transform:uppercase; letter-spacing:.5px;
+  border:1px solid var(--border); border-radius:5px; padding:2px 6px; color:var(--text-muted); }
+.ad-tag.ok{ color:var(--gold); border-color:var(--gold); }
+
+/* ---- a tela do dia de jogo ----
+   É a tela mais importante do painel inteiro, e é a que se costuma
+   desenhar por último e mal. Feita para ser usada num celular à beira da
+   quadra, com UMA MÃO: campos grandes, pouco texto, um botão por partida. */
+.dj-card{ background:var(--surface); border:1px solid var(--border); border-radius:12px; padding:14px; margin-bottom:12px; }
+.dj-topo{ font-size:11px; color:var(--text-muted); margin-bottom:10px; }
+.dj-placar{ display:grid; grid-template-columns:1fr 70px 24px 70px 1fr; gap:8px; align-items:center; }
+.dj-nome{ font-size:15px; font-weight:800; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+.dj-nome.dir{ text-align:right; }
+.dj-placar input{ background:var(--bg); border:1px solid var(--border); border-radius:10px; color:var(--text);
+  font-size:26px; font-weight:800; text-align:center; padding:12px 0; width:100%; font-family:inherit;
+  font-variant-numeric:tabular-nums; }
+.dj-placar input:focus{ outline:none; border-color:var(--gold); }
+.dj-x{ text-align:center; color:var(--text-muted); font-size:16px; }
+.dj-linha2{ display:flex; gap:8px; margin-top:12px; align-items:center; flex-wrap:wrap; }
+.dj-linha2 select{ flex:1; min-width:150px; background:var(--bg); border:1px solid var(--border);
+  border-radius:8px; color:var(--text); padding:10px; font-family:inherit; font-size:13px; }
+.dj-salvar{ flex:1; min-width:140px; font-size:15px; padding:14px 18px; }
+.dj-passos{ margin-top:10px; font-size:12px; display:flex; flex-direction:column; gap:4px; }
+.dj-passo{ display:flex; gap:8px; align-items:baseline; }
+.dj-passo .st{ font-weight:800; min-width:74px; }
+.dj-passo.bom .st{ color:var(--gold); }
+.dj-passo.ruim .st{ color:var(--text); }
+
+/* ---- pré-visualização do CSV ---- */
+.csv-resumo{ display:flex; gap:14px; flex-wrap:wrap; margin:10px 0; font-size:12px; font-weight:700; }
+.csv-resumo span b{ color:var(--gold); }
+.csv-linhas{ max-height:420px; overflow:auto; border:1px solid var(--border); border-radius:8px; }
+.csv-linha{ display:grid; grid-template-columns:44px 84px 1fr; gap:8px; padding:7px 10px;
+  border-bottom:1px solid var(--border); font-size:12px; align-items:baseline; }
+.csv-linha:last-child{ border-bottom:none; }
+.csv-linha .n{ color:var(--text-muted); font-variant-numeric:tabular-nums; }
+.csv-linha .acao{ font-size:10px; font-weight:800; text-transform:uppercase; letter-spacing:.4px; }
+.csv-linha .dados{ font-family:ui-monospace,Menlo,monospace; font-size:11px; color:var(--text-muted);
+  overflow:hidden; text-overflow:ellipsis; }
+.csv-linha.erro .acao, .csv-linha.erro .dados{ color:var(--gold); }
+.csv-linha.criar .acao{ color:var(--gold); }
+.csv-linha.ignorar{ opacity:.55; }
+
+@media (max-width:720px){
+  .dj-placar{ grid-template-columns:1fr 60px 18px 60px 1fr; }
+  .dj-nome{ font-size:13px; }
+  .csv-linha{ grid-template-columns:34px 70px 1fr; }
+}
+</style>
+</head>
+<body class="is-admin">
+
+<header class="ad-topo">
+  <div class="ad-topo-in">
+    <span class="ad-titulo">PAINEL · INTERSÉRIES</span>
+    <a class="is-entrar" href="/interseries/">Ver o site</a>
+    <span class="ad-quem" id="adQuem">…</span>
+  </div>
+  <nav class="ad-abas" id="adAbas"></nav>
+</header>
+
+<main class="ad-wrap" id="adMain">
+  <div class="is-carregando">Carregando…</div>
+</main>
+
+<!-- ⚠️ Este painel carrega o MESMO assets/interseries.js do site público,
+     para reusar agora(), apiIS(), esc(), lerCsv() e a leitura da sessão —
+     uma cópia só, não duas. O bundle só se auto-inicializa se a página
+     definir `PAGINA`, e aqui ela não é definida de propósito. -->
+<script src="/assets/interseries.js"></script>
+<script>
+/* =====================================================================
+   ESTADO DO PAINEL
+   ===================================================================== */
+var EU_ADMIN = null;          // { papel, acoes[] } do ping
+var DADOS = { temporadas: [], temporada: null, categorias: [], equipes: [], config: {} };
+var ABA = 'diagnostico';
+
+var ABAS = [
+  { id:'diagnostico', rot:'Diagnóstico', acao:'ping' },
+  { id:'temporada',   rot:'Temporada',   acao:'salvarTemporada' },
+  { id:'categorias',  rot:'Categorias',  acao:'salvarCategoria' },
+  { id:'equipes',     rot:'Equipes',     acao:'salvarEquipe' },
+  { id:'estrutura',   rot:'Fases e grupos', acao:'salvarFase' },
+  { id:'partidas',    rot:'Partidas',    acao:'salvarPartida' },
+  { id:'diadejogo',   rot:'Dia de jogo', acao:'salvarResultado' },
+  { id:'csv',         rot:'Importar CSV', acao:'importarCsv' },
+  { id:'mercados',    rot:'Mercados',    acao:'salvarMercado' },
+  { id:'liquidacao',  rot:'Liquidação',  acao:'liquidarMercado' },
+  { id:'fichas',      rot:'Fichas',      acao:'extratoUsuario' },
+  { id:'config',      rot:'Config',      acao:'salvarConfigIS' }
+];
+
+function pode(acao){ return !!(EU_ADMIN && EU_ADMIN.acoes && EU_ADMIN.acoes.indexOf(acao) >= 0); }
+function el(id){ return document.getElementById(id); }
+function msg(alvo, texto, ehErro){
+  var e = (typeof alvo === 'string') ? el(alvo) : alvo;
+  if(e){ e.className = 'ad-msg' + (ehErro ? ' erro' : ''); e.textContent = texto; }
+}
+async function chamar(action, dados){
+  return await apiIS(Object.assign({ action: action }, dados || {}));
+}
+
+/* =====================================================================
+   CARGA
+   ===================================================================== */
+async function carregarPainel(){
+  var s = usuarioLogado();
+  if(!s){
+    el('adMain').innerHTML = '<div class="is-erro"><h2>Entre primeiro</h2>' +
+      '<p>O painel do interséries usa a mesma conta do CETECritic.</p>' +
+      '<a class="btn btn-solid" href="/perfil.html">Ir para o login</a></div>';
+    return;
+  }
+  var ping = await chamar('ping');
+  if(!ping.ok){
+    el('adMain').innerHTML = '<div class="is-erro"><h2>Sem permissão</h2>' +
+      '<p>' + esc(ping.error || 'sua conta não tem papel no interséries.') + '</p>' +
+      '<p>Os papéis vivem em <b>is_config.dados.equipe</b>. O primeiro é concedido por SQL — ver a § 2 do LEIA-ME-INTERSERIES.md.</p>' +
+      '<a class="btn btn-ghost" href="/interseries/">Ver o site</a></div>';
+    return;
+  }
+  EU_ADMIN = ping;
+  el('adQuem').innerHTML = esc(ping.usuario) + ' · <b>' + esc(ping.papel) + '</b> · build v' + ping.versao;
+
+  var est = await apiGet({ estado: 1 });
+  DADOS.temporada = est.temporada || null;
+  DADOS.categorias = est.categorias || [];
+  DADOS.equipes = est.equipes || [];
+  DADOS.config = est.config || {};
+
+  montarAbas();
+  render();
+}
+
+function montarAbas(){
+  el('adAbas').innerHTML = ABAS.map(function(a){
+    var liberada = pode(a.acao);
+    return '<button class="ad-aba' + (ABA === a.id ? ' ativo' : '') + '" data-aba="' + a.id + '"' +
+      (liberada ? '' : ' disabled title="seu papel não usa esta seção"') + '>' + a.rot + '</button>';
+  }).join('');
+  Array.prototype.forEach.call(el('adAbas').querySelectorAll('.ad-aba'), function(b){
+    b.addEventListener('click', function(){ ABA = b.dataset.aba; montarAbas(); render(); });
+  });
+}
+
+function render(){
+  var m = el('adMain');
+  if(ABA === 'diagnostico') return telaDiagnostico(m);
+  if(ABA === 'temporada')   return telaTemporada(m);
+  if(ABA === 'categorias')  return telaCategorias(m);
+  if(ABA === 'equipes')     return telaEquipes(m);
+  if(ABA === 'estrutura')   return telaEstrutura(m);
+  if(ABA === 'partidas')    return telaPartidas(m);
+  if(ABA === 'diadejogo')   return telaDiaDeJogo(m);
+  if(ABA === 'csv')         return telaCsv(m);
+  if(ABA === 'mercados')    return telaMercados(m);
+  if(ABA === 'liquidacao')  return telaLiquidacao(m);
+  if(ABA === 'fichas')      return telaFichas(m);
+  if(ABA === 'config')      return telaConfig(m);
+}
+
+/* =====================================================================
+   DIAGNÓSTICO
+   =====================================================================
+   Existe porque várias travas deste projeto FALHAM ABERTAS: sem a tabela
+   `rate_limite` os limites não travam ninguém, e o único sinal é uma linha
+   de log que ninguém lê durante o evento. Aqui isso vira uma resposta que
+   dá pra conferir na véspera, em dois segundos.
+   ===================================================================== */
+function telaDiagnostico(m){
+  var s = EU_ADMIN.saude || {};
+  m.innerHTML =
+    '<div class="ad-bloco"><h3>O que está no ar agora</h3>' +
+      '<div class="sub">Confira isto na véspera. As travas deste projeto degradam com elegância — quando uma migração não rodou, nada quebra na cara, o site só serve sem a proteção.</div>' +
+      '<div class="ad-lista">' +
+        item('Papel desta conta', EU_ADMIN.papel, true) +
+        item('Versão do build no ar', 'v' + EU_ADMIN.versao, true) +
+        item('Interséries ligado', EU_ADMIN.ativo ? 'sim' : 'NÃO — o site público mostra a tela de desligado', EU_ADMIN.ativo) +
+        item('Temporada atual', EU_ADMIN.temporada_atual ? ('#' + EU_ADMIN.temporada_atual) : 'nenhuma definida', !!EU_ADMIN.temporada_atual) +
+        item('Tabela rate_limite', s.rate_limite ? 'disponível' : 'AUSENTE — os limites de taxa liberam tudo (rode migracao-seguranca.sql)', !!s.rate_limite) +
+        item('Equipe do interséries', s.equipe_definida ? 'definida' : 'VAZIA', !!s.equipe_definida) +
+      '</div>' +
+      '<div class="ad-acoes"><button class="btn btn-ghost" onclick="carregarPainel()">Reconferir</button></div>' +
+    '</div>' +
+    '<div class="ad-bloco"><h3>Ações que o seu papel permite</h3>' +
+      '<div class="sub">A interface esconde o que o papel não usa, mas quem manda é o servidor: toda ação passa por <b>podeExecutarIS</b> antes de rodar.</div>' +
+      '<div style="display:flex;flex-wrap:wrap;gap:6px">' +
+        (EU_ADMIN.acoes || []).map(function(a){ return '<span class="ad-tag">' + esc(a) + '</span>'; }).join('') +
+      '</div></div>';
+}
+function item(rot, val, bom){
+  return '<div class="ad-item"><div>' + esc(rot) + '<div class="peq">' + esc(val) + '</div></div>' +
+    '<span class="ad-tag' + (bom ? ' ok' : '') + '">' + (bom ? 'ok' : 'atenção') + '</span></div>';
+}
+
+/* =====================================================================
+   TEMPORADA
+   ===================================================================== */
+function telaTemporada(m){
+  var t = DADOS.temporada || {};
+  m.innerHTML =
+    '<div class="ad-bloco"><h3>Temporada</h3>' +
+      '<div class="sub">A temporada é o guarda-chuva do ano. O status governa a mesada: só temporada <b>ativa</b>, dentro da janela de datas, credita ficha por dia.</div>' +
+      '<div class="ad-grade">' +
+        campo('Nome', 'tpNome', t.nome || '') +
+        campo('Slug', 'tpSlug', t.slug || '') +
+        campo('Começa em', 'tpComeca', (t.comeca_em || '').slice(0, 16), 'datetime-local') +
+        campo('Termina em', 'tpTermina', (t.termina_em || '').slice(0, 16), 'datetime-local') +
+        select('Status', 'tpStatus', ['rascunho','ativa','encerrada'], t.status || 'rascunho') +
+      '</div>' +
+      '<div class="ad-acoes">' +
+        '<button class="btn btn-solid" id="tpSalvar">' + (t.id ? 'Salvar alterações' : 'Criar temporada') + '</button>' +
+        (t.id ? '<button class="btn btn-ghost" id="tpNova">Criar outra</button>' : '') +
+        '<span class="ad-msg" id="tpMsg"></span>' +
+      '</div>' +
+    '</div>';
+
+  el('tpSalvar').onclick = async function(){
+    var r = await chamar('salvarTemporada', {
+      id: t.id || null, nome: el('tpNome').value, slug: el('tpSlug').value,
+      comeca_em: el('tpComeca').value ? new Date(el('tpComeca').value).toISOString() : null,
+      termina_em: el('tpTermina').value ? new Date(el('tpTermina').value).toISOString() : null,
+      status: el('tpStatus').value
+    });
+    if(!r.ok) return msg('tpMsg', r.error, true);
+    if(r.temporada && r.temporada.id && !DADOS.config.temporada_atual){
+      await chamar('definirTemporadaAtual', { temporada_id: r.temporada.id });
+    }
+    msg('tpMsg', 'Salvo.');
+    carregarPainel();
+  };
+  if(el('tpNova')) el('tpNova').onclick = function(){ DADOS.temporada = null; render(); };
+}
+
+/* =====================================================================
+   CATEGORIAS
+   ===================================================================== */
+function telaCategorias(m){
+  m.innerHTML =
+    '<div class="ad-bloco"><h3>Nova categoria</h3>' +
+      '<div class="sub">A categoria é a unidade que importa: não é "vôlei", é "vôlei feminino". Cada uma tem regulamento, tabela e campeão próprios — e tudo aqui é <b>dado</b>, nunca <code>if</code> no código.</div>' +
+      '<div class="ad-grade">' +
+        campo('Modalidade', 'ctMod', '') + campo('Nome', 'ctNome', '') + campo('Slug', 'ctSlug', '') +
+        select('Naipe', 'ctNaipe', ['masculino','feminino','misto','livre'], 'livre') +
+        select('Formato', 'ctFormato', ['grupos_mata_mata','pontos_corridos','mata_mata','chave_unica'], 'grupos_mata_mata') +
+        select('Tipo de placar', 'ctPlacar', ['gols','sets','pontos'], 'gols') +
+        select('Permite empate', 'ctEmpate', ['sim','não'], 'sim') +
+        campo('Pontos vitória', 'ctPV', '3', 'number') +
+        campo('Pontos empate', 'ctPE', '1', 'number') +
+        campo('Pontos derrota', 'ctPD', '0', 'number') +
+        campo('Desempate (vírgulas)', 'ctDes', 'pontos,vitorias,saldo,pro,confronto') +
+      '</div>' +
+      '<div class="ad-acoes"><button class="btn btn-solid" id="ctSalvar">Criar categoria</button>' +
+        '<span class="ad-msg" id="ctMsg"></span></div>' +
+    '</div>' +
+    '<div class="ad-bloco"><h3>Categorias da temporada</h3>' +
+      '<div class="ad-lista">' + (DADOS.categorias.length ? DADOS.categorias.map(function(c){
+        return '<div class="ad-item"><div>' + esc(c.nome) +
+          '<div class="peq">' + esc(c.slug) + ' · ' + esc(c.formato) + ' · ' + esc(c.placar_tipo) +
+          ' · empate ' + (c.permite_empate ? 'sim' : 'não') + ' · ' + esc((c.desempate || []).join(' → ')) + '</div></div>' +
+          '<div class="ad-btns"><span class="ad-tag' + (c.status === 'em_andamento' ? ' ok' : '') + '">' + esc(c.status) + '</span>' +
+          '<button class="btn btn-ghost btn-mini" data-arquivar="' + c.id + '">Encerrar</button></div></div>';
+      }).join('') : '<div class="is-vazio">Nenhuma categoria ainda.</div>') + '</div></div>';
+
+  el('ctSalvar').onclick = async function(){
+    var r = await chamar('salvarCategoria', {
+      modalidade: el('ctMod').value, nome: el('ctNome').value, slug: el('ctSlug').value,
+      naipe: el('ctNaipe').value, formato: el('ctFormato').value, placar_tipo: el('ctPlacar').value,
+      permite_empate: el('ctEmpate').value === 'sim',
+      pontos_vitoria: Number(el('ctPV').value), pontos_empate: Number(el('ctPE').value),
+      pontos_derrota: Number(el('ctPD').value),
+      desempate: el('ctDes').value.split(',').map(function(s){ return s.trim(); }).filter(Boolean),
+      ordem: DADOS.categorias.length
+    });
+    if(!r.ok) return msg('ctMsg', r.error, true);
+    msg('ctMsg', 'Criada.');
+    carregarPainel();
+  };
+  Array.prototype.forEach.call(m.querySelectorAll('[data-arquivar]'), function(b){
+    b.onclick = async function(){
+      var r = await chamar('arquivarCategoria', { id: Number(b.dataset.arquivar) });
+      if(r.ok) carregarPainel();
+    };
+  });
+}
+
+/* =====================================================================
+   EQUIPES
+   ===================================================================== */
+function telaEquipes(m){
+  m.innerHTML =
+    '<div class="ad-bloco"><h3>Nova equipe</h3>' +
+      '<div class="sub">A <b>sigla</b> é a chave natural dos CSVs — curta e estável. A cor aparece só como faixa de 3px na lateral do card, nunca como fundo.</div>' +
+      '<div class="ad-grade">' +
+        campo('Sigla', 'eqSigla', '') + campo('Nome', 'eqNome', '') +
+        campo('Turma', 'eqTurma', '') + campo('Série', 'eqSerie', '') +
+        campo('Cor', 'eqCor', '', 'color') + campo('Escudo (URL)', 'eqEscudo', '') +
+      '</div>' +
+      '<div class="ad-acoes"><button class="btn btn-solid" id="eqSalvar">Criar equipe</button>' +
+        '<span class="ad-msg" id="eqMsg"></span></div></div>' +
+
+    '<div class="ad-bloco"><h3>Inscrever equipes nas categorias</h3>' +
+      '<div class="sub">Quem disputa o quê. Isto é o que faz a tabela começar <b>completa com zeros</b> em vez de vazia no primeiro dia.</div>' +
+      '<div class="ad-grade">' +
+        select('Categoria', 'vcCat', DADOS.categorias.map(function(c){ return c.id + '|' + c.nome; }), '') +
+      '</div>' +
+      '<div class="ad-lista" id="vcLista"></div></div>' +
+
+    '<div class="ad-bloco"><h3>Atletas</h3>' +
+      '<div class="sub">Fase 3. Cadastre quando houver certeza de que alguém vai anotar quem fez cada gol — aba de artilharia vazia é pior do que não ter aba.</div>' +
+      '<div class="ad-grade">' +
+        select('Equipe', 'atEq', DADOS.equipes.map(function(e){ return e.id + '|' + e.nome; }), '') +
+        campo('Nome', 'atNome', '') + campo('Número', 'atNum', '', 'number') + campo('Posição', 'atPos', '') +
+      '</div>' +
+      '<div class="ad-acoes"><button class="btn btn-solid" id="atSalvar">Adicionar atleta</button>' +
+        '<span class="ad-msg" id="atMsg"></span></div></div>' +
+
+    '<div class="ad-bloco"><h3>Equipes da temporada <span class="ad-tag">' + DADOS.equipes.length + '</span></h3>' +
+      '<div class="ad-lista">' + (DADOS.equipes.length ? DADOS.equipes.map(function(e){
+        return '<div class="ad-item"><div>' +
+          '<i class="is-faixa" style="display:inline-block;vertical-align:-4px' + (e.cor ? ';background:' + esc(e.cor) : '') + '"></i> ' +
+          esc(e.nome) + '<div class="peq">' + esc(e.sigla) + (e.turma ? ' · turma ' + esc(e.turma) : '') + '</div></div>' +
+          '<a class="btn btn-ghost btn-mini" href="/interseries/equipe/' + e.id + '">Ver</a></div>';
+      }).join('') : '<div class="is-vazio">Nenhuma equipe. Use o importador de CSV — é bem mais rápido.</div>') + '</div></div>';
+
+  el('eqSalvar').onclick = async function(){
+    var r = await chamar('salvarEquipe', {
+      sigla: el('eqSigla').value, nome: el('eqNome').value, turma: el('eqTurma').value,
+      serie: el('eqSerie').value, cor: el('eqCor').value, escudo: el('eqEscudo').value
+    });
+    if(!r.ok) return msg('eqMsg', r.error, true);
+    msg('eqMsg', 'Criada.'); carregarPainel();
+  };
+  el('atSalvar').onclick = async function(){
+    var r = await chamar('salvarAtleta', {
+      equipe_id: Number(el('atEq').value), nome: el('atNome').value,
+      numero: el('atNum').value, posicao: el('atPos').value
+    });
+    msg('atMsg', r.ok ? 'Adicionado.' : r.error, !r.ok);
+  };
+  el('vcCat').onchange = pintarVinculos;
+  pintarVinculos();
+
+  async function pintarVinculos(){
+    var catId = Number(el('vcCat').value);
+    if(!catId){ el('vcLista').innerHTML = '<div class="is-vazio">Escolha uma categoria.</div>'; return; }
+    var cat = DADOS.categorias.filter(function(c){ return c.id === catId; })[0];
+    var j = await apiGet({ categoria: cat.slug });
+    var inscritas = {};
+    (j.categoria_equipes || []).forEach(function(x){ inscritas[String(x.equipe_id)] = true; });
+    el('vcLista').innerHTML = DADOS.equipes.map(function(e){
+      var dentro = !!inscritas[String(e.id)];
+      return '<div class="ad-item"><div>' + esc(e.nome) + '<div class="peq">' + esc(e.sigla) + '</div></div>' +
+        '<button class="btn ' + (dentro ? 'btn-solid' : 'btn-ghost') + ' btn-mini" data-vinc="' + e.id + '" data-dentro="' + dentro + '">' +
+        (dentro ? 'Inscrita' : 'Inscrever') + '</button></div>';
+    }).join('');
+    Array.prototype.forEach.call(el('vcLista').querySelectorAll('[data-vinc]'), function(b){
+      b.onclick = async function(){
+        await chamar('vincularEquipeCategoria', {
+          categoria_id: catId, equipe_id: Number(b.dataset.vinc), remover: b.dataset.dentro === 'true'
+        });
+        pintarVinculos();
+      };
+    });
+  }
+}
+
+/* =====================================================================
+   FASES, GRUPOS E CHAVEAMENTO
+   ===================================================================== */
+function telaEstrutura(m){
+  m.innerHTML =
+    '<div class="ad-bloco"><h3>Escolha a categoria</h3>' +
+      '<div class="ad-grade">' + select('Categoria', 'esCat', DADOS.categorias.map(function(c){ return c.id + '|' + c.nome; }), '') + '</div>' +
+    '</div><div id="esCorpo"></div>';
+  el('esCat').onchange = pintarEstrutura;
+  pintarEstrutura();
+
+  async function pintarEstrutura(){
+    var catId = Number(el('esCat').value);
+    var corpo = el('esCorpo');
+    if(!catId){ corpo.innerHTML = '<div class="ad-bloco"><div class="is-vazio">Escolha uma categoria acima.</div></div>'; return; }
+    var cat = DADOS.categorias.filter(function(c){ return c.id === catId; })[0];
+    var j = await apiGet({ categoria: cat.slug });
+
+    corpo.innerHTML =
+      '<div class="ad-bloco"><h3>Fases</h3>' +
+        '<div class="sub">Só existem dois tipos: <b>classificatoria</b> e <b>mata_mata</b>. Pontos corridos é uma fase classificatória <b>sem nenhum grupo</b> — não invente um terceiro tipo, a view da classificação depende desse par.</div>' +
+        '<div class="ad-grade">' + campo('Nome da fase', 'fsNome', '') +
+          select('Tipo', 'fsTipo', ['classificatoria','mata_mata'], 'classificatoria') +
+          campo('Ordem', 'fsOrdem', String((j.fases || []).length), 'number') + '</div>' +
+        '<div class="ad-acoes"><button class="btn btn-solid" id="fsSalvar">Criar fase</button><span class="ad-msg" id="fsMsg"></span></div>' +
+        '<div class="ad-lista">' + ((j.fases || []).length ? j.fases.map(function(f){
+          return '<div class="ad-item"><div>' + esc(f.nome) + '<div class="peq">' + esc(f.tipo) +
+            ' · ordem ' + f.ordem + (f.num_vagas ? ' · ' + f.num_vagas + ' vagas' : '') + '</div></div>' +
+            '<span class="ad-tag">#' + f.id + '</span></div>';
+        }).join('') : '<div class="is-vazio">Nenhuma fase.</div>') + '</div></div>' +
+
+      '<div class="ad-bloco"><h3>Sortear grupos</h3>' +
+        '<div class="sub">Determinístico: a <b>semente</b> é registrada e o sorteio se repete igual com ela. Nunca <code>Math.random()</code> em algo cujo resultado precisa ser o mesmo para todo mundo.</div>' +
+        '<div class="ad-grade">' +
+          select('Fase', 'sgFase', (j.fases || []).filter(function(f){ return f.tipo === 'classificatoria'; }).map(function(f){ return f.id + '|' + f.nome; }), '') +
+          campo('Nº de grupos', 'sgN', '2', 'number') +
+          campo('Semente (opcional)', 'sgSemente', '') + '</div>' +
+        '<div class="ad-acoes"><button class="btn btn-ghost" id="sgPrevia">Simular</button>' +
+          '<button class="btn btn-solid" id="sgGravar">Sortear e gravar</button><span class="ad-msg" id="sgMsg"></span></div>' +
+        '<div id="sgSaida"></div></div>' +
+
+      '<div class="ad-bloco"><h3>Gerar turno da fase de grupos</h3>' +
+        '<div class="sub">Todos contra todos, dentro de cada grupo. Uma tabela de 12 turmas tem 66 jogos só na fase de grupos, e ninguém digita isso num formulário. Confrontos que já existem são pulados.</div>' +
+        '<div class="ad-grade">' +
+          select('Fase', 'gtFase', (j.fases || []).filter(function(f){ return f.tipo === 'classificatoria'; }).map(function(f){ return f.id + '|' + f.nome; }), '') + '</div>' +
+        '<div class="ad-acoes"><button class="btn btn-ghost" id="gtPrevia">Simular</button>' +
+          '<button class="btn btn-solid" id="gtGravar">Gerar e gravar</button><span class="ad-msg" id="gtMsg"></span></div></div>' +
+
+      '<div class="ad-bloco"><h3>Gerar chaveamento</h3>' +
+        '<div class="sub">Cria as partidas de mata-mata já com as origens ligadas — <b>incluindo a disputa de 3º lugar</b>, que sai dos perdedores da semifinal. Um botão que economiza uma hora e vinte erros de digitação.</div>' +
+        '<div class="ad-grade">' + select('Vagas', 'chVagas', ['2','4','8','16'], '4') + '</div>' +
+        '<div class="ad-acoes"><button class="btn btn-ghost" id="chPrevia">Ver as sementes</button>' +
+          '<button class="btn btn-solid" id="chGravar">Gerar e gravar</button><span class="ad-msg" id="chMsg"></span></div>' +
+        '<div id="chSaida"></div></div>';
+
+    el('fsSalvar').onclick = async function(){
+      var r = await chamar('salvarFase', { categoria_id: catId, nome: el('fsNome').value,
+        tipo: el('fsTipo').value, ordem: Number(el('fsOrdem').value) });
+      if(!r.ok) return msg('fsMsg', r.error, true);
+      pintarEstrutura();
+    };
+    async function sortear(gravar){
+      var r = await chamar('sortearGrupos', { fase_id: Number(el('sgFase').value),
+        num_grupos: Number(el('sgN').value), semente: el('sgSemente').value, gravar: gravar });
+      if(!r.ok) return msg('sgMsg', r.error, true);
+      msg('sgMsg', gravar ? 'Grupos gravados. Semente: ' + r.semente : 'Simulação — nada foi gravado. Semente: ' + r.semente);
+      el('sgSaida').innerHTML = '<div class="ad-lista">' + Object.keys(r.distribuicao || {}).map(function(g){
+        return '<div class="ad-item"><div>Grupo ' + esc(g) + '<div class="peq">' +
+          r.distribuicao[g].map(function(id){
+            var e = DADOS.equipes.filter(function(x){ return x.id === id; })[0];
+            return e ? e.sigla : id;
+          }).join(' · ') + '</div></div></div>';
+      }).join('') + '</div>';
+      if(gravar) pintarEstrutura();
+    }
+    el('sgPrevia').onclick = function(){ sortear(false); };
+    el('sgGravar').onclick = function(){ sortear(true); };
+
+    async function turno(gravar){
+      var r = await chamar('gerarTurnoGrupos', { fase_id: Number(el('gtFase').value), gravar: gravar });
+      if(!r.ok) return msg('gtMsg', r.error, true);
+      msg('gtMsg', gravar ? (r.criadas + ' partida(s) criada(s).') : ('Criaria ' + r.criaria + ' partida(s). Nada foi gravado.'));
+    }
+    el('gtPrevia').onclick = function(){ turno(false); };
+    el('gtGravar').onclick = function(){ turno(true); };
+
+    async function chave(gravar){
+      var r = await chamar('gerarChaveamento', { categoria_id: catId, num_vagas: Number(el('chVagas').value), gravar: gravar });
+      if(!r.ok) return msg('chMsg', r.error, true);
+      if(!gravar){
+        msg('chMsg', 'Nada foi gravado. Confira a ordem das sementes.');
+        el('chSaida').innerHTML = '<div class="ad-lista">' + (r.sementes || []).map(function(id, i){
+          var e = DADOS.equipes.filter(function(x){ return x.id === id; })[0];
+          return '<div class="ad-item"><div>' + (i + 1) + 'ª semente<div class="peq">' + esc(e ? e.nome : id) + '</div></div></div>';
+        }).join('') + '</div>';
+      } else {
+        msg('chMsg', (r.partidas_criadas || []).length + ' partida(s) de mata-mata criada(s).');
+        el('chSaida').innerHTML = '';
+      }
+    }
+    el('chPrevia').onclick = function(){ chave(false); };
+    el('chGravar').onclick = function(){ chave(true); };
+  }
+}
+
+/* =====================================================================
+   PARTIDAS
+   ===================================================================== */
+function telaPartidas(m){
+  m.innerHTML =
+    '<div class="ad-bloco"><h3>Nova partida</h3>' +
+      '<div class="ad-grade">' +
+        select('Categoria', 'pnCat', DADOS.categorias.map(function(c){ return c.id + '|' + c.nome; }), '') +
+        select('Equipe A', 'pnA', DADOS.equipes.map(function(e){ return e.id + '|' + e.nome; }), '') +
+        select('Equipe B', 'pnB', DADOS.equipes.map(function(e){ return e.id + '|' + e.nome; }), '') +
+        campo('Começa em', 'pnQuando', '', 'datetime-local') +
+        campo('Local', 'pnLocal', '') +
+      '</div>' +
+      '<div class="ad-acoes"><button class="btn btn-solid" id="pnSalvar">Criar partida</button>' +
+        '<span class="ad-msg" id="pnMsg"></span></div></div>' +
+    '<div class="ad-bloco"><h3>Partidas</h3>' +
+      '<div class="ad-grade">' + select('Filtrar por categoria', 'pfCat', DADOS.categorias.map(function(c){ return c.slug + '|' + c.nome; }), '') + '</div>' +
+      '<div id="pfLista" class="ad-lista"></div></div>';
+
+  el('pnSalvar').onclick = async function(){
+    var r = await chamar('salvarPartida', {
+      categoria_id: Number(el('pnCat').value), equipe_a: Number(el('pnA').value), equipe_b: Number(el('pnB').value),
+      comeca_em: el('pnQuando').value ? new Date(el('pnQuando').value).toISOString() : null,
+      local: el('pnLocal').value
+    });
+    if(!r.ok) return msg('pnMsg', r.error, true);
+    msg('pnMsg', 'Criada.'); pintarPartidas();
+  };
+  el('pfCat').onchange = pintarPartidas;
+  pintarPartidas();
+
+  async function pintarPartidas(){
+    var j = await apiGet({ partidas: 1, categoria: el('pfCat').value || null, limite: 500 });
+    el('pfLista').innerHTML = (j.partidas || []).length ? j.partidas.map(function(p){
+      return '<div class="ad-item"><div>' +
+        esc((p.equipe_a_obj || {}).sigla || '?') + ' × ' + esc((p.equipe_b_obj || {}).sigla || '?') +
+        '<div class="peq">#' + p.id + ' · ' + (p.comeca_em ? esc(new Date(p.comeca_em).toLocaleString('pt-BR')) : 'sem data') +
+        (p.local ? ' · ' + esc(p.local) : '') + '</div></div>' +
+        '<div class="ad-btns"><span class="ad-tag' + (p.status === 'encerrada' ? ' ok' : '') + '">' + esc(p.status) + '</span>' +
+        '<button class="btn btn-ghost btn-mini" data-cancelar="' + p.id + '">Cancelar</button></div></div>';
+    }).join('') : '<div class="is-vazio">Nenhuma partida.</div>';
+    Array.prototype.forEach.call(el('pfLista').querySelectorAll('[data-cancelar]'), function(b){
+      b.onclick = async function(){
+        var motivo = prompt('Motivo do cancelamento (os mercados desta partida serão cancelados e as apostas estornadas):');
+        if(motivo === null) return;
+        var r = await chamar('cancelarPartida', { partida_id: Number(b.dataset.cancelar), motivo: motivo });
+        if(!r.ok) return alert(r.error);
+        pintarPartidas();
+      };
+    });
+  }
+}
+
+/* =====================================================================
+   A TELA DO DIA DE JOGO
+   =====================================================================
+   Salvar um placar dispara, em ordem: gravar o resultado → propagar o
+   chaveamento → liquidar os mercados da partida. SE UM PASSO FALHAR, OS
+   ANTERIORES PERMANECEM, e a tela diz exatamente onde parou, com um botão
+   de tentar de novo. Como tudo é idempotente, tentar de novo é sempre
+   seguro — é a recompensa por ter feito a idempotência direito.
+   ===================================================================== */
+function telaDiaDeJogo(m){
+  m.innerHTML =
+    '<div class="ad-bloco"><h3>Dia de jogo</h3>' +
+      '<div class="sub">Só as partidas de hoje (e as ainda abertas de dias anteriores). Digite o placar e salve. Se a partida for de mata-mata e terminar empatada, escolha quem avançou — o sistema <b>recusa</b> propagar sem isso, de propósito.</div>' +
+      '<div class="ad-acoes"><button class="btn btn-ghost" id="djRecarregar">Recarregar lista</button>' +
+      '<label class="ad-campo" style="flex-direction:row;align-items:center;gap:6px">' +
+        '<input type="checkbox" id="djTodas" style="width:auto"> mostrar todas as pendentes</label></div>' +
+    '</div><div id="djLista"><div class="is-carregando">Carregando…</div></div>';
+
+  el('djRecarregar').onclick = pintarDia;
+  el('djTodas').onchange = pintarDia;
+  pintarDia();
+
+  async function pintarDia(){
+    var j = await apiGet({ partidas: 1, limite: 500 });
+    var hoje = new Date(agora().getTime() - 3 * 3600 * 1000).toISOString().slice(0, 10);
+    var lista = (j.partidas || []).filter(function(p){
+      if(p.status === 'cancelada' || p.status === 'wo') return false;
+      if(el('djTodas').checked) return p.status !== 'encerrada';
+      if(!p.comeca_em) return false;
+      var dia = new Date(Date.parse(p.comeca_em) - 3 * 3600 * 1000).toISOString().slice(0, 10);
+      return dia === hoje || (p.status !== 'encerrada' && Date.parse(p.comeca_em) < agora().getTime());
+    });
+
+    el('djLista').innerHTML = lista.length ? lista.map(function(p){
+      var a = p.equipe_a_obj || {}, b = p.equipe_b_obj || {};
+      return '<div class="dj-card" data-p="' + p.id + '">' +
+        '<div class="dj-topo">#' + p.id + ' · ' + esc((categoriaDe(p.categoria_id) || {}).nome || '') +
+          (p.comeca_em ? ' · ' + esc(new Date(p.comeca_em).toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' })) : '') +
+          (p.local ? ' · ' + esc(p.local) : '') + ' · ' + esc(p.status) + '</div>' +
+        '<div class="dj-placar">' +
+          '<div class="dj-nome">' + esc(a.nome || 'A definir') + '</div>' +
+          '<input type="number" inputmode="numeric" min="0" step="1" data-pa="' + p.id + '" value="' + (p.placar_a != null ? p.placar_a : '') + '">' +
+          '<div class="dj-x">×</div>' +
+          '<input type="number" inputmode="numeric" min="0" step="1" data-pb="' + p.id + '" value="' + (p.placar_b != null ? p.placar_b : '') + '">' +
+          '<div class="dj-nome dir">' + esc(b.nome || 'A definir') + '</div>' +
+        '</div>' +
+        '<div class="dj-linha2">' +
+          '<select data-venc="' + p.id + '">' +
+            '<option value="">Vencedor pelo placar</option>' +
+            (a.id ? '<option value="' + a.id + '"' + (String(p.vencedor_id) === String(a.id) ? ' selected' : '') + '>Avançou: ' + esc(a.sigla || a.nome) + '</option>' : '') +
+            (b.id ? '<option value="' + b.id + '"' + (String(p.vencedor_id) === String(b.id) ? ' selected' : '') + '>Avançou: ' + esc(b.sigla || b.nome) + '</option>' : '') +
+          '</select>' +
+          '<button class="btn btn-solid dj-salvar" data-salvar="' + p.id + '">' +
+            (p.status === 'encerrada' ? 'Corrigir resultado' : 'Salvar resultado') + '</button>' +
+        '</div>' +
+        '<div class="dj-passos" data-passos="' + p.id + '"></div>' +
+      '</div>';
+    }).join('') : '<div class="ad-bloco"><div class="is-vazio">Nenhuma partida pendente hoje.</div></div>';
+
+    Array.prototype.forEach.call(el('djLista').querySelectorAll('[data-salvar]'), function(btn){
+      btn.onclick = async function(){
+        var id = btn.dataset.salvar;
+        var pa = el('djLista').querySelector('[data-pa="' + id + '"]').value;
+        var pb = el('djLista').querySelector('[data-pb="' + id + '"]').value;
+        var vc = el('djLista').querySelector('[data-venc="' + id + '"]').value;
+        var caixa = el('djLista').querySelector('[data-passos="' + id + '"]');
+        btn.disabled = true; btn.textContent = 'Salvando…';
+        var r = await chamar('salvarResultado', {
+          partida_id: Number(id), placar_a: Number(pa), placar_b: Number(pb),
+          vencedor_id: vc ? Number(vc) : null
+        });
+        btn.disabled = false; btn.textContent = 'Salvar resultado';
+        if(!r.ok){ caixa.innerHTML = passo('Resultado', false, r.error); return; }
+        var p = r.passos;
+        caixa.innerHTML =
+          passo('Resultado', true, p.resultado === 'corrigido' ? 'corrigido (estorno + novo prêmio)' : 'gravado') +
+          passo('Chaveamento', p.chaveamento.ok, p.chaveamento.ok
+            ? ((p.chaveamento.partidas_preenchidas || []).length ? 'preencheu ' + p.chaveamento.partidas_preenchidas.join(', ') : 'nada a propagar')
+            : p.chaveamento.error) +
+          passo('Liquidação', p.liquidacao.ok, resumoLiquidacao(p.liquidacao)) +
+          ((!p.chaveamento.ok || !p.liquidacao.ok)
+            ? '<div class="peq" style="margin-top:6px">Os passos anteriores permanecem. Tudo é idempotente — <b>salvar de novo é seguro</b> e só refaz o que faltou.</div>' : '');
+        pintarDia();
+      };
+    });
+  }
+  function passo(nome, bom, texto){
+    return '<div class="dj-passo ' + (bom ? 'bom' : 'ruim') + '"><span class="st">' + (bom ? '✓ ' : '✕ ') + nome + '</span>' +
+      '<span class="peq">' + esc(texto || '') + '</span></div>';
+  }
+  function resumoLiquidacao(l){
+    if(!l) return '';
+    var partes = [];
+    if((l.mercados_liquidados || []).length) partes.push(l.mercados_liquidados.length + ' liquidado(s)');
+    if((l.mercados_reliquidados || []).length) partes.push(l.mercados_reliquidados.length + ' reliquidado(s)');
+    if((l.mercados_pendentes || []).length) partes.push(l.mercados_pendentes.length + ' na fila para apuração manual');
+    if((l.falhas || []).length) partes.push(l.falhas.length + ' com falha');
+    if(l.error) partes.push(l.error);
+    return partes.join(' · ') || 'nenhum mercado nesta partida';
+  }
+}
+function categoriaDe(id){
+  return DADOS.categorias.filter(function(c){ return String(c.id) === String(id); })[0] || null;
+}
+
+/* =====================================================================
+   IMPORTAÇÃO DE CSV
+   =====================================================================
+   A pré-visualização é OBRIGATÓRIA: `gravar: false` é o padrão, a tela
+   mostra criar / atualizar (com antes e depois) / ignorar / erro linha a
+   linha, e gravar exige um segundo clique.
+
+   E o importador NUNCA APAGA: linha que existe no banco e sumiu do CSV
+   fica em paz. Importar não é sincronizar.
+   ===================================================================== */
+var CSV_ULTIMO = null;
+function telaCsv(m){
+  m.innerHTML =
+    '<div class="ad-bloco"><h3>Importar CSV</h3>' +
+      '<div class="sub">UTF-8 (com ou sem BOM), separador <code>;</code> ou <code>,</code> detectado sozinho, cabeçalho sem acento e sem diferenciar maiúsculas, data <code>AAAA-MM-DD</code>, hora <code>HH:MM</code>, fuso -03:00.</div>' +
+      '<div class="ad-grade">' +
+        select('Tipo', 'csTipo', ['equipes','atletas','partidas','resultados','eventos'], 'equipes') +
+        '<label class="ad-campo">Arquivo<input type="file" id="csArq" accept=".csv,text/csv"></label>' +
+      '</div>' +
+      '<label class="ad-campo" style="margin-top:10px">Ou cole aqui<textarea id="csTexto" placeholder="sigla;nome;turma;serie;cor&#10;3B;3º B;B;3;#e63946"></textarea></label>' +
+      '<div class="ad-acoes">' +
+        '<button class="btn btn-ghost" id="csPrevia">Pré-visualizar</button>' +
+        '<button class="btn btn-solid" id="csGravar" disabled>Gravar</button>' +
+        '<span class="ad-msg" id="csMsg"></span>' +
+      '</div>' +
+      '<div id="csSaida"></div>' +
+    '</div>' +
+    '<div class="ad-bloco"><h3>Modelos</h3><div class="sub">Copie o cabeçalho certo:</div>' +
+      '<div class="ad-lista">' +
+        modelo('equipes', 'sigla;nome;turma;serie;cor') +
+        modelo('atletas', 'equipe;nome;numero;posicao') +
+        modelo('partidas', 'categoria;fase;grupo;rodada;data;hora;local;equipe_a;equipe_b') +
+        modelo('resultados', 'categoria;data;equipe_a;equipe_b;placar_a;placar_b;vencedor') +
+        modelo('eventos', 'categoria;data;equipe_a;equipe_b;atleta;tipo;minuto') +
+      '</div>' +
+      '<div class="peq" style="margin-top:10px"><b>categoria</b> é o <b>slug</b>, não o nome — sobrevive a alguém corrigir o título. ' +
+      '<b>vencedor</b> só em mata-mata decidido fora do placar (pênaltis); em fase de grupos fica vazio.</div></div>';
+
+  el('csArq').onchange = function(){
+    var f = el('csArq').files[0];
+    if(!f) return;
+    var fr = new FileReader();
+    fr.onload = function(){ el('csTexto').value = fr.result; msg('csMsg', 'Arquivo carregado. Clique em pré-visualizar.'); };
+    fr.readAsText(f, 'utf-8');
+  };
+
+  el('csPrevia').onclick = function(){ enviar(false); };
+  el('csGravar').onclick = function(){ enviar(true); };
+
+  async function enviar(gravar){
+    var texto = el('csTexto').value;
+    if(!texto.trim()) return msg('csMsg', 'cole o conteúdo ou escolha um arquivo', true);
+    var parsed = lerCsv(texto);
+    if(!parsed.linhas.length) return msg('csMsg', 'não encontrei nenhuma linha de dados', true);
+
+    /* datas normalizadas no CLIENTE: assim o erro de formato aparece na
+       hora, e o servidor cuida só das regras de negócio */
+    var problema = null;
+    parsed.linhas.forEach(function(l, i){
+      if(l.data){
+        var d = normalizarData(l.data);
+        if(d.erro){ if(!problema) problema = 'linha ' + (i + 1) + ': ' + d.erro; }
+        else l.data = d.data;
+      }
+    });
+    if(problema) return msg('csMsg', problema, true);
+
+    msg('csMsg', 'separador detectado: "' + parsed.separador + '" · colunas: ' + parsed.colunas.join(', '));
+    var r = await chamar('importarCsv', {
+      tipo: el('csTipo').value, temporada_id: DADOS.temporada && DADOS.temporada.id,
+      linhas: parsed.linhas, gravar: gravar
+    });
+    if(!r.ok) return msg('csMsg', r.error, true);
+    CSV_ULTIMO = r;
+    el('csGravar').disabled = false;
+    el('csSaida').innerHTML =
+      '<div class="csv-resumo">' +
+        '<span>criar <b>' + (r.resumo.criar || 0) + '</b></span>' +
+        '<span>atualizar <b>' + (r.resumo.atualizar || 0) + '</b></span>' +
+        '<span>ignorar <b>' + (r.resumo.ignorar || 0) + '</b></span>' +
+        '<span>erro <b>' + (r.resumo.erro || 0) + '</b></span>' +
+        (gravar ? '<span style="color:var(--gold)">GRAVADO</span>' : '<span>simulação — nada foi gravado</span>') +
+      '</div>' +
+      '<div class="csv-linhas">' + r.linhas.map(function(l){
+        var desc = l.acao === 'erro' ? l.erro
+          : l.acao === 'atualizar' ? ('de ' + resumir(l.de) + '  →  para ' + resumir(l.para))
+          : resumir(l.dados);
+        return '<div class="csv-linha ' + l.acao + '"><span class="n">' + l.n + '</span>' +
+          '<span class="acao">' + l.acao + '</span><span class="dados">' + esc(desc) + '</span></div>';
+      }).join('') + '</div>';
+    if(gravar){ el('csGravar').disabled = true; carregarPainel(); }
+  }
+  function resumir(o){
+    if(!o) return '';
+    return Object.keys(o).filter(function(k){ return o[k] != null && o[k] !== '' && k.charAt(0) !== '_'; })
+      .slice(0, 8).map(function(k){ return k + '=' + o[k]; }).join(' ');
+  }
+  function modelo(nome, cab){
+    return '<div class="ad-item"><div>' + nome + '<div class="peq" style="font-family:ui-monospace,Menlo,monospace">' + esc(cab) + '</div></div></div>';
+  }
+}
+
+/* =====================================================================
+   MERCADOS
+   ===================================================================== */
+function telaMercados(m){
+  m.innerHTML =
+    '<div class="ad-bloco"><h3>Criar mercados em lote</h3>' +
+      '<div class="sub">Cria um mercado por partida selecionada, com as opções montadas a partir da categoria. Categoria com <b>permite_empate = false</b> (vôlei) simplesmente não ganha a opção "Empate". O mercado fecha no horário da partida.</div>' +
+      '<div class="ad-grade">' +
+        select('Categoria', 'mkCat', DADOS.categorias.map(function(c){ return c.slug + '|' + c.nome; }), '') +
+        select('Tipo', 'mkTipo', ['vencedor','margem'], 'vencedor') + '</div>' +
+      '<div id="mkPartidas" class="ad-lista"></div>' +
+      '<div class="ad-acoes"><button class="btn btn-solid" id="mkCriar">Criar mercados das partidas marcadas</button>' +
+        '<span class="ad-msg" id="mkMsg"></span></div></div>' +
+    '<div class="ad-bloco"><h3>Mercados existentes</h3>' +
+      '<div class="ad-grade">' + select('Status', 'mkStatus', ['aberto','fechado','liquidado','cancelado'], 'aberto') + '</div>' +
+      '<div id="mkLista" class="ad-lista"></div></div>';
+
+  el('mkCat').onchange = pintarCandidatas;
+  el('mkStatus').onchange = pintarMercadosExistentes;
+  el('mkCriar').onclick = async function(){
+    var ids = Array.prototype.map.call(el('mkPartidas').querySelectorAll('input:checked'), function(i){ return Number(i.value); });
+    if(!ids.length) return msg('mkMsg', 'marque ao menos uma partida', true);
+    var r = await chamar('criarMercadosEmLote', { partidas: ids, tipo: el('mkTipo').value });
+    if(!r.ok) return msg('mkMsg', r.error, true);
+    msg('mkMsg', (r.criados || []).length + ' criado(s)' + ((r.pulados || []).length ? ' · ' + r.pulados.length + ' pulado(s): ' + r.pulados.map(function(p){ return '#' + p.id + ' (' + p.motivo + ')'; }).join(', ') : ''));
+    pintarCandidatas(); pintarMercadosExistentes();
+  };
+  pintarCandidatas(); pintarMercadosExistentes();
+
+  async function pintarCandidatas(){
+    var j = await apiGet({ partidas: 1, categoria: el('mkCat').value || null, status: 'agendada', limite: 300 });
+    el('mkPartidas').innerHTML = (j.partidas || []).length ? j.partidas.map(function(p){
+      return '<div class="ad-item"><label style="display:flex;gap:8px;align-items:center;cursor:pointer">' +
+        '<input type="checkbox" value="' + p.id + '" style="width:auto">' +
+        '<span>' + esc((p.equipe_a_obj || {}).sigla || '?') + ' × ' + esc((p.equipe_b_obj || {}).sigla || '?') +
+        '<span class="peq"> · ' + (p.comeca_em ? esc(new Date(p.comeca_em).toLocaleString('pt-BR')) : 'sem data') + '</span></span></label></div>';
+    }).join('') : '<div class="is-vazio">Nenhuma partida agendada.</div>';
+  }
+  async function pintarMercadosExistentes(){
+    var j = await apiGet({ mercados: 1, status: el('mkStatus').value });
+    el('mkLista').innerHTML = (j.mercados || []).length ? j.mercados.map(function(mk){
+      return '<div class="ad-item"><div>' + esc(mk.titulo) +
+        '<div class="peq">#' + mk.id + ' · ' + esc(mk.tipo) + ' · ' + Number(mk.bolo || 0) + ' fichas · ' +
+        Number(mk.apostadores || 0) + ' apostador(es) · fecha ' + esc(new Date(mk.fecha_em).toLocaleString('pt-BR')) + '</div></div>' +
+        '<div class="ad-btns">' +
+          (mk.status === 'aberto' ? '<button class="btn btn-ghost btn-mini" data-fechar="' + mk.id + '">Fechar</button>' : '') +
+          (mk.status !== 'liquidado' && mk.status !== 'cancelado' ? '<button class="btn btn-ghost btn-mini" data-cancelarmk="' + mk.id + '">Cancelar</button>' : '') +
+        '</div></div>';
+    }).join('') : '<div class="is-vazio">Nenhum mercado com este status.</div>';
+
+    Array.prototype.forEach.call(el('mkLista').querySelectorAll('[data-fechar]'), function(b){
+      b.onclick = async function(){ await chamar('fecharMercado', { id: Number(b.dataset.fechar) }); pintarMercadosExistentes(); };
+    });
+    Array.prototype.forEach.call(el('mkLista').querySelectorAll('[data-cancelarmk]'), function(b){
+      b.onclick = async function(){
+        var motivo = prompt('Motivo (as apostas voltam integralmente para quem apostou):');
+        if(motivo === null) return;
+        var r = await chamar('cancelarMercado', { id: Number(b.dataset.cancelarmk), motivo: motivo });
+        if(!r.ok) return alert(r.error);
+        pintarMercadosExistentes();
+      };
+    });
+  }
+}
+
+/* =====================================================================
+   LIQUIDAÇÃO — a fila, com prévia do rateio ANTES de gravar
+   ===================================================================== */
+function telaLiquidacao(m){
+  m.innerHTML =
+    '<div class="ad-bloco"><h3>Fila de liquidação</h3>' +
+      '<div class="sub">Mercados fechados esperando apuração. Os de <b>vencedor</b> costumam liquidar sozinhos ao salvar o placar; os de <b>margem</b> e <b>livre</b> pedem uma escolha humana — de propósito, porque a faixa mora no rótulo, que é texto livre, e um resolvedor que lê rótulo erra calado.</div>' +
+      '<div id="lqLista" class="ad-lista"></div></div>' +
+    '<div id="lqPrevia"></div>';
+  pintarFila();
+
+  async function pintarFila(){
+    var j = await apiGet({ mercados: 1, status: 'fechado,aberto' });
+    var pendentes = (j.mercados || []).filter(function(mk){ return Date.parse(mk.fecha_em) <= agora().getTime() || mk.status === 'fechado'; });
+    el('lqLista').innerHTML = pendentes.length ? pendentes.map(function(mk){
+      return '<div class="ad-item"><div>' + esc(mk.titulo) +
+        '<div class="peq">#' + mk.id + ' · ' + Number(mk.bolo || 0) + ' fichas de ' + Number(mk.apostadores || 0) + ' apostador(es)</div></div>' +
+        '<button class="btn btn-solid btn-mini" data-apurar="' + mk.id + '">Apurar</button></div>';
+    }).join('') : '<div class="is-vazio">Nada na fila.</div>';
+
+    Array.prototype.forEach.call(el('lqLista').querySelectorAll('[data-apurar]'), function(b){
+      b.onclick = function(){ abrirPrevia(Number(b.dataset.apurar)); };
+    });
+  }
+
+  async function abrirPrevia(id, opcaoSimulada){
+    var r = await chamar('previaLiquidacao', { id: id, opcao_id: opcaoSimulada || null });
+    if(!r.ok) return alert(r.error);
+    var p = r.previa;
+    el('lqPrevia').innerHTML =
+      '<div class="ad-bloco"><h3>Prévia — ' + esc(r.mercado.titulo) + '</h3>' +
+        '<div class="sub">Escolha a opção vencedora e confira o rateio <b>antes</b> de gravar. Depois de liquidado, corrigir é reliquidar: estorno e novo prêmio, nada apagado.</div>' +
+        '<div class="ad-grade">' +
+          '<label class="ad-campo">Opção vencedora<select id="lqOpcao">' +
+            '<option value="">— escolha —</option>' +
+            r.opcoes.map(function(o){
+              return '<option value="' + o.id + '"' + (String(r.opcao_simulada) === String(o.id) ? ' selected' : '') + '>' + esc(o.rotulo) + '</option>';
+            }).join('') + '</select></label>' +
+        '</div>' +
+        '<div class="csv-resumo">' +
+          '<span>bolo <b>' + p.bolo + '</b></span>' +
+          '<span>acertaram <b>' + p.acertos + '</b> fichas</span>' +
+          '<span>sobra <b>' + p.sobra + '</b></span>' +
+          '<span>' + (p.fecha ? 'pago + sobra = bolo ✓' : '⚠️ A CONTA NÃO FECHA — não grave') + '</span>' +
+        '</div>' +
+        '<div class="ad-lista">' + (p.premios.length ? p.premios.map(function(x){
+          return '<div class="ad-item"><div>' + esc(x.usuario) + '<div class="peq">' + esc(x.tipo) + '</div></div>' +
+            '<b style="color:var(--gold)">+' + x.valor + '</b></div>';
+        }).join('') : '<div class="is-vazio">Ninguém receberia nada com esta opção.</div>') + '</div>' +
+        '<div class="ad-acoes">' +
+          '<button class="btn btn-ghost" id="lqSimular">Recalcular</button>' +
+          '<button class="btn btn-solid" id="lqGravar"' + (p.fecha ? '' : ' disabled') + '>Liquidar de verdade</button>' +
+          (r.mercado.status === 'liquidado' ? '<button class="btn btn-ghost" id="lqReliquidar">Reliquidar (estorna e refaz)</button>' : '') +
+          '<span class="ad-msg" id="lqMsg"></span>' +
+        '</div></div>';
+
+    el('lqSimular').onclick = function(){ abrirPrevia(id, Number(el('lqOpcao').value)); };
+    el('lqGravar').onclick = async function(){
+      var op = Number(el('lqOpcao').value);
+      if(!op) return msg('lqMsg', 'escolha a opção vencedora', true);
+      var rr = await chamar('liquidarMercado', { id: id, opcao_id: op });
+      if(!rr.ok) return msg('lqMsg', rr.error, true);
+      msg('lqMsg', 'Liquidado. ' + rr.pagos + ' pagamento(s), sobra ' + rr.sobra + '. ' + (rr.fecha ? 'A conta fecha.' : '⚠️ A CONTA NÃO FECHOU.'));
+      pintarFila();
+    };
+    if(el('lqReliquidar')) el('lqReliquidar').onclick = async function(){
+      var op = Number(el('lqOpcao').value);
+      var rr = await chamar('reliquidarMercado', { id: id, opcao_id: op || null });
+      msg('lqMsg', rr.ok ? ('Reliquidado: ' + rr.estornados + ' estorno(s), nova versão v' + (rr.versao)) : rr.error, !rr.ok);
+      pintarFila();
+    };
+  }
+}
+
+/* =====================================================================
+   FICHAS
+   ===================================================================== */
+function telaFichas(m){
+  m.innerHTML =
+    '<div class="ad-bloco"><h3>Extrato de um usuário</h3>' +
+      '<div class="ad-grade">' + campo('Usuário', 'fhUser', '') + '</div>' +
+      '<div class="ad-acoes"><button class="btn btn-solid" id="fhVer">Ver extrato</button>' +
+        '<span class="ad-msg" id="fhMsg"></span></div>' +
+      '<div id="fhSaida"></div></div>' +
+    '<div class="ad-bloco"><h3>Ajuste manual</h3>' +
+      '<div class="sub">Sempre com <b>motivo</b> — é ele que explica a linha no extrato de quem recebeu. O ajuste é um lançamento a mais, nunca um <code>UPDATE</code>: o razão é append-only.</div>' +
+      '<div class="ad-grade">' + campo('Usuário', 'ajUser', '') +
+        campo('Valor (com sinal)', 'ajValor', '', 'number') + campo('Motivo', 'ajMotivo', '') + '</div>' +
+      '<div class="ad-acoes"><button class="btn btn-solid" id="ajSalvar">Lançar ajuste</button>' +
+        '<span class="ad-msg" id="ajMsg"></span></div></div>';
+
+  /* uma chave por formulário aberto: é o que faz o clique duplo não
+     creditar duas vezes */
+  var idem = 'aj-' + Date.now() + '-' + Math.random().toString(36).slice(2, 8);
+
+  el('fhVer').onclick = async function(){
+    var r = await chamar('extratoUsuario', { alvo: el('fhUser').value });
+    if(!r.ok) return msg('fhMsg', r.error, true);
+    msg('fhMsg', 'Saldo: ' + r.saldo + ' fichas · ' + r.extrato.length + ' lançamento(s)');
+    el('fhSaida').innerHTML = '<div class="ad-lista">' + r.extrato.map(function(l){
+      return '<div class="ad-item"><div>' + esc(l.motivo || l.tipo) +
+        '<div class="peq">' + esc(new Date(l.ts).toLocaleString('pt-BR')) + ' · ' + esc(l.tipo) +
+        (l.ref ? ' · ' + esc(l.ref) : '') + '</div></div>' +
+        '<b style="color:' + (Number(l.valor) >= 0 ? 'var(--gold)' : 'var(--text-muted)') + '">' +
+        (Number(l.valor) > 0 ? '+' : '') + l.valor + '</b></div>';
+    }).join('') + '</div>';
+  };
+  el('ajSalvar').onclick = async function(){
+    var r = await chamar('ajustarFichas', {
+      alvo: el('ajUser').value, valor: Number(el('ajValor').value),
+      motivo: el('ajMotivo').value, idempotencia: idem
+    });
+    if(!r.ok) return msg('ajMsg', r.error, true);
+    msg('ajMsg', 'Lançado. Saldo agora: ' + r.saldo);
+    idem = 'aj-' + Date.now() + '-' + Math.random().toString(36).slice(2, 8);
+  };
+}
+
+/* =====================================================================
+   CONFIG — inclui o interruptor de morte
+   ===================================================================== */
+function telaConfig(m){
+  var c = DADOS.config || {};
+  m.innerHTML =
+    '<div class="ad-bloco"><h3>Interruptor de morte</h3>' +
+      '<div class="sub">Existe para o caso de o interséries dar problema durante a semana do festival de teatro, que tem <b>prioridade absoluta</b>. Desligado: o site público mostra uma tela explicativa, toda aposta é recusada no servidor e o painel continua funcionando. Sair do ar tem que ser uma flag, nunca um deploy às pressas.</div>' +
+      '<div class="ad-acoes">' +
+        '<button class="btn ' + (c.ativo ? 'btn-ghost' : 'btn-solid') + '" id="cfLigar">' +
+        (c.ativo ? 'Desligar o interséries' : 'Ligar o interséries') + '</button>' +
+        '<span class="ad-tag' + (c.ativo ? ' ok' : '') + '">' + (c.ativo ? 'ligado' : 'DESLIGADO') + '</span>' +
+        '<span class="ad-msg" id="cfMsg"></span></div></div>' +
+
+    '<div class="ad-bloco"><h3>Economia</h3>' +
+      '<div class="sub">O teto por mercado é o que impede o campeão da temporada de ser "quem apostou tudo num jogo óbvio e teve sorte". Não existe recarga: quem zera espera a mesada do dia seguinte.</div>' +
+      '<div class="ad-grade">' +
+        campo('Saldo inicial', 'cfInicial', String(c.saldo_inicial || 1000), 'number') +
+        campo('Mesada diária', 'cfMesada', String(c.mesada_diaria || 250), 'number') +
+        campo('Teto por mercado (%)', 'cfTeto', String(c.teto_percentual || 25), 'number') +
+        campo('Aposta mínima', 'cfMin', String(c.aposta_minima || 10), 'number') +
+      '</div>' +
+      '<div class="ad-acoes"><button class="btn btn-solid" id="cfSalvar">Salvar economia</button>' +
+        '<span class="ad-msg" id="cfMsg2"></span></div></div>' +
+
+    '<div class="ad-bloco"><h3>Equipe do interséries</h3>' +
+      '<div class="sub">Um por linha, no formato <code>usuario=papel</code>. Papéis: <b>is_admin</b> (tudo), <b>is_esportes</b> (competição, resultados, CSV), <b>is_apostas</b> (mercados, liquidação, fichas). ' +
+      'Separar os dois últimos é de propósito: quem digita o placar decide quem ganha fichas. Um <code>admin=true</code> do CETECritic <b>não</b> ganha papel automaticamente.</div>' +
+      '<label class="ad-campo"><textarea id="cfEquipe" placeholder="maria=is_admin&#10;joao=is_esportes"></textarea></label>' +
+      '<div class="ad-acoes"><button class="btn btn-solid" id="cfEquipeSalvar">Salvar equipe</button>' +
+        '<span class="ad-msg" id="cfMsg3"></span></div></div>' +
+
+    '<div class="ad-bloco"><h3>Turmas dos apostadores</h3>' +
+      '<div class="sub">Um por linha, <code>usuario=SIGLA</code>. É o que alimenta o placar <b>por turma</b> — provavelmente o recurso que mais gera rivalidade, que é o ponto do evento inteiro. Quem não estiver aqui aparece só no placar individual.</div>' +
+      '<label class="ad-campo"><textarea id="cfTurmas" placeholder="maria=3B&#10;joao=1A"></textarea></label>' +
+      '<div class="ad-acoes"><button class="btn btn-solid" id="cfTurmasSalvar">Salvar turmas</button>' +
+        '<span class="ad-msg" id="cfMsg4"></span></div></div>';
+
+  el('cfLigar').onclick = async function(){
+    var r = await chamar('salvarConfigIS', { ativo: !c.ativo });
+    if(!r.ok) return msg('cfMsg', r.error, true);
+    carregarPainel();
+  };
+  el('cfSalvar').onclick = async function(){
+    var r = await chamar('salvarConfigIS', {
+      saldo_inicial: Number(el('cfInicial').value), mesada_diaria: Number(el('cfMesada').value),
+      teto_percentual: Number(el('cfTeto').value), aposta_minima: Number(el('cfMin').value)
+    });
+    msg('cfMsg2', r.ok ? 'Salvo.' : r.error, !r.ok);
+    if(r.ok) carregarPainel();
+  };
+  el('cfEquipeSalvar').onclick = async function(){
+    var mapa = linhasParaMapa(el('cfEquipe').value);
+    if(!Object.keys(mapa).length) return msg('cfMsg3', 'a lista está vazia — isso trancaria todo mundo fora do painel', true);
+    var r = await chamar('salvarConfigIS', { equipe: mapa });
+    msg('cfMsg3', r.ok ? 'Equipe salva.' : r.error, !r.ok);
+  };
+  el('cfTurmasSalvar').onclick = async function(){
+    var r = await chamar('salvarConfigIS', { turmas: linhasParaMapa(el('cfTurmas').value) });
+    msg('cfMsg4', r.ok ? 'Turmas salvas.' : r.error, !r.ok);
+  };
+  function linhasParaMapa(txt){
+    var mapa = {};
+    String(txt || '').split('\n').forEach(function(l){
+      var p = l.split('=');
+      if(p.length === 2 && p[0].trim() && p[1].trim()) mapa[p[0].trim()] = p[1].trim();
+    });
+    return mapa;
+  }
+}
+
+/* =====================================================================
+   PEQUENOS AJUDANTES DE FORMULÁRIO
+   ===================================================================== */
+function campo(rot, id, valor, tipo){
+  return '<label class="ad-campo">' + esc(rot) +
+    '<input id="' + id + '" type="' + (tipo || 'text') + '" value="' + esc(valor || '') + '"></label>';
+}
+/* as opções chegam como "valor|rótulo" ou como texto simples */
+function select(rot, id, opcoes, valor){
+  return '<label class="ad-campo">' + esc(rot) + '<select id="' + id + '">' +
+    (opcoes.length && String(opcoes[0]).indexOf('|') >= 0 ? '<option value="">— escolha —</option>' : '') +
+    opcoes.map(function(o){
+      var v = String(o), r = String(o);
+      if(v.indexOf('|') >= 0){ var p = v.split('|'); v = p[0]; r = p.slice(1).join('|'); }
+      return '<option value="' + esc(v) + '"' + (String(valor) === v ? ' selected' : '') + '>' + esc(r) + '</option>';
+    }).join('') + '</select></label>';
+}
+
+carregarPainel();
+</script>
+</body>
+</html>

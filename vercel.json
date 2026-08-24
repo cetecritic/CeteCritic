@@ -15,6 +15,9 @@
     { "source": "/:ano(\\d{4})/noites/noite-:noite(\\d+).js", "destination": "/api/content?file=noites&ano=:ano&noite=:noite" },
     { "source": "/:ano(\\d{4})/noites/:qualquer",             "destination": "/api/content?file=noites&ano=:ano" },
 
+    { "source": "/interseries",         "destination": "/interseries-template.html" },
+    { "source": "/interseries/:resto*", "destination": "/interseries-template.html" },
+
     { "source": "/:ano(\\d{4})/:pagina(.+\\.html)", "destination": "/edicao-template.html" },
     { "source": "/:ano(\\d{4})",                    "destination": "/edicao-template.html" }
   ],
