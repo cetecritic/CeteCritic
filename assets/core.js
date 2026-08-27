@@ -1372,7 +1372,7 @@ function htmlSidebar(){
   let h = `<div class="sidebar-logo">
     <a class="sidebar-logo-link" href="${BASE}index.html" title="Ir para o início">
       <img src="${BASE}assets/logo.png" alt="" onerror="this.style.display='none'">
-      <span>CETE<br>Critic</span>
+      <span>CETECritic</span>
     </a>
     <button class="nav-toggle" id="navToggle" aria-label="Abrir menu">☰</button>
     <div class="sidebar-quick">
