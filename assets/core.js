@@ -1372,7 +1372,7 @@ function htmlSidebar(){
   let h = `<div class="sidebar-logo">
     <a class="sidebar-logo-link" href="${BASE}index.html" title="Ir para o início">
       <img src="${BASE}assets/logo.png" alt="" onerror="this.style.display='none'">
-      <span>CETEC<br>Critic</span>
+      <span>CETE<br>Critic</span>
     </a>
     <button class="nav-toggle" id="navToggle" aria-label="Abrir menu">☰</button>
     <div class="sidebar-quick">
@@ -5598,7 +5598,7 @@ async function paginaHome(){
         <div class="poster-hint"><b>Sem capa</b>Capa da edição em destaque</div>
       </div>
       <div class="home-info">
-        <h1 class="home-title">CETEC<span>Critic</span></h1>
+        <h1 class="home-title">CETE<span>Critic</span></h1>
         <p class="home-tagline">${esc(slogan)}</p>
         <div class="home-actions">
           <a class="btn btn-solid" href="${pastaDest}index.html">${ED && edicaoComecou() && !votacaoEncerrada() ? '⭐ Votar agora' : `Ver ${esc(ED ? ED.titulo : 'a edição em destaque')}`}</a>
